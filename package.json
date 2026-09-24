@@ -1,0 +1,39 @@
+{
+  "dependencies": {
+    "@inkjs/ui": "^2.0.0",
+    "@openai/codex-sdk": "^0.156.1",
+    "ink": "^7.1.1",
+    "react": "^19.3.0"
+  },
+  "name": "pace",
+  "version": "0.1.0",
+  "description": "Terminal coding client using the Codex SDK and optional Jev routing",
+  "bin": { "pace": "dist/cli.js" },
+  "main": "index.js",
+  "scripts": {
+    "test": "vitest run --pool=threads --maxWorkers=1 --no-isolate",
+    "dev": "tsx src/cli.tsx",
+    "build": "tsc",
+    "start": "node dist/cli.js",
+    "prepare": "npm run build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SideArker/Pace.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/SideArker/Pace/issues"
+  },
+  "homepage": "https://github.com/SideArker/Pace#readme",
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "@types/react": "^19.3.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.1"
+  }
+}
