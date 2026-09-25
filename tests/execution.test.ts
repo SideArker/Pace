@@ -57,7 +57,8 @@ it('never routes to a disabled model and saves turn usage', async () => {
 });
 it('reads usage from the SDK turn-completed event', async () => {
   const usage = { input_tokens: 20, cached_input_tokens: 4, cache_write_input_tokens: 0, output_tokens: 8, reasoning_output_tokens: 2 };
-  const thread = { id: 'thread-1', async runStreamed() { return { events: (async function* () {
+  let receivedPrompt = '';
+  const thread = { id: 'thread-1', async runStreamed(prompt: string) { receivedPrompt = prompt; return { events: (async function* () {
     yield { type: 'thread.started', thread_id: 'thread-1' };
     yield { type: 'item.completed', item: { type: 'agent_message', id: 'msg-1', text: 'done' } };
     yield { type: 'turn.completed', usage };
@@ -65,8 +66,9 @@ it('reads usage from the SDK turn-completed event', async () => {
   const runner = new SdkRunner();
   let options: unknown;
   (runner as unknown as { codex: { startThread: (value: unknown) => typeof thread } }).codex = { startThread: value => { options = value; return thread; } };
-  const result = await runner.run('work', '/example/project', { model: 'configured', effort: 'medium' }, undefined, () => {});
+  const result = await runner.run('Create a planning artifact', '/example/project', { model: 'configured', effort: 'medium' }, undefined, () => {});
   expect(result).toMatchObject({ threadId: 'thread-1', result: 'done', usage });
+  expect(receivedPrompt).toContain('.pace/artifacts/');
   expect(options).toMatchObject({ workingDirectory: '/example/project', sandboxMode: 'workspace-write', approvalPolicy: 'never', networkAccessEnabled: false, model: 'configured', modelReasoningEffort: 'medium' });
 });
 it('gives Codex an independent Vex MCP launch without exposing the key value', () => {

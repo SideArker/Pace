@@ -3,7 +3,8 @@ import type { CodexRunner, Progress } from "../integrations/codex.js";
 import { VexRouter } from "../integrations/vex.js";
 import { selectRoute } from "./router.js";
 import { PaceStore } from "./sessions.js";
-export type TurnOutcome = { session: Session; result: string; note: string; route: Route; usage?: Awaited<ReturnType<CodexRunner['run']>>['usage'] };
+import { artifactSnapshot, changedArtifacts } from "./artifacts.js";
+export type TurnOutcome = { session: Session; result: string; note: string; route: Route; artifacts: string[]; usage?: Awaited<ReturnType<CodexRunner['run']>>['usage'] };
 export class VexUnavailableError extends Error {
   constructor(cause: unknown) { super(`Vex MCP unavailable: ${String(cause)}`); }
 }
@@ -76,6 +77,7 @@ export class Orchestrator {
       text: `${note}: ${route.model ?? "Codex default"}${route.effort ? ` · ${route.effort}` : ""}`,
     });
     try {
+      const artifactsBefore = await artifactSnapshot(session.projectPath).catch(() => new Map<string, number>());
       const execution = await this.runner.run(
         prompt,
         session.projectPath,
@@ -89,6 +91,8 @@ export class Orchestrator {
         },
         signal,
       );
+      const artifactsAfter = await artifactSnapshot(session.projectPath).catch(() => new Map<string, number>());
+      const artifacts = changedArtifacts(artifactsBefore, artifactsAfter);
       if (execution.threadId) session.threadId = execution.threadId;
       session.turns = [
         ...session.turns,
@@ -97,11 +101,12 @@ export class Orchestrator {
           result: execution.result.slice(0, 500),
           at: new Date().toISOString(),
           route,
+          artifacts,
           usage: execution.usage,
         },
       ].slice(-20);
       await save();
-      return { session, result: execution.result, note, route, usage: execution.usage };
+      return { session, result: execution.result, note, route, artifacts, usage: execution.usage };
     } catch (error) {
       session.turns = [
         ...session.turns,

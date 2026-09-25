@@ -6,6 +6,7 @@ import {
   type Usage,
 } from "@openai/codex-sdk";
 import type { Route } from "../types.js";
+import { artifactPrompt } from "../core/artifacts.js";
 import { vexServerPath } from './vex.js';
 export type Progress =
   | { kind: "status" | "message" | "error" | "thread"; text: string }
@@ -92,7 +93,7 @@ export class SdkRunner implements CodexRunner {
     const thread = threadId
       ? this.codex.resumeThread(threadId, options)
       : this.codex.startThread(options);
-    const { events } = await thread.runStreamed(prompt, { signal });
+    const { events } = await thread.runStreamed(artifactPrompt(prompt), { signal });
     let result = "";
     let completed = false;
     let failure: string | undefined;
