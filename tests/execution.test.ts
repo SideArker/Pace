@@ -24,7 +24,10 @@ it('resumes the saved SDK thread and route on follow-up', async () => {
   const restored = (await store.latest('/example/project'))!;
   await orchestrator.turn('second', restored, config, () => {});
   expect(calls).toEqual([{ id: undefined, route: config.defaultRoute }, { id: 'codex-thread-1', route: config.defaultRoute }]);
-  expect((await store.latest('/example/project'))?.turns).toHaveLength(2);
+  const turns = (await store.latest('/example/project'))?.turns;
+  expect(turns).toHaveLength(2);
+  expect(turns?.[1]?.routeNote).toContain('Auto needs two configured routes');
+  expect(turns?.[1]?.durationMs).toEqual(expect.any(Number));
 });
 it('renders real event statuses but never reasoning', () => {
   expect(eventProgress({ type: 'item.started', item: { id: 'x', type: 'command_execution', command: 'test', aggregated_output: '', status: 'in_progress' } })).toEqual({ kind: 'status', text: 'Running command…' });

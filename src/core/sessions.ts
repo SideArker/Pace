@@ -72,6 +72,8 @@ function parseSession(value: unknown, project: string): Session | undefined {
         typeof turn.result === "string" &&
         typeof turn.at === "string" &&
         (turn.route === undefined || (isRecord(turn.route) && (turn.route.model === undefined || typeof turn.route.model === "string") && (turn.route.effort === undefined || EFFORTS.includes(turn.route.effort as (typeof EFFORTS)[number])))) &&
+        (turn.routeNote === undefined || typeof turn.routeNote === "string") &&
+        (turn.durationMs === undefined || (typeof turn.durationMs === "number" && Number.isFinite(turn.durationMs) && turn.durationMs >= 0)) &&
         (turn.usage === undefined || isUsage(turn.usage)) &&
         (turn.artifacts === undefined || (Array.isArray(turn.artifacts) && turn.artifacts.every((artifact: unknown) => typeof artifact === "string" && /^\.pace\/artifacts\/[^/\\]+\.md$/.test(artifact)))) &&
         (turn.failed === undefined || typeof turn.failed === "boolean"),

@@ -17,6 +17,8 @@ export type TurnSummary = {
   result: string;
   at: string;
   route?: Route;
+  routeNote?: string;
+  durationMs?: number;
   artifacts?: string[];
   usage?: Usage;
   failed?: boolean;

@@ -6,7 +6,7 @@ import { routeRequest } from "../integrations/vex.js";
 import { PaceStore } from "./sessions.js";
 import { artifactSnapshot, changedArtifacts } from "./artifacts.js";
 import { validRoute } from "../config.js";
-export type TurnOutcome = { session: Session; result: string; note: string; route: Route; artifacts: string[]; usage?: Awaited<ReturnType<CodexRunner['run']>>['usage'] };
+export type TurnOutcome = { session: Session; result: string; note: string; route: Route; durationMs: number; artifacts: string[]; usage?: Awaited<ReturnType<CodexRunner['run']>>['usage'] };
 export class VexUnavailableError extends Error {
   constructor(cause: unknown) { super(`Vex MCP unavailable: ${String(cause)}`); }
 }
@@ -23,6 +23,7 @@ export class Orchestrator {
     onProgress: (progress: Progress) => void,
     signal?: AbortSignal,
   ): Promise<TurnOutcome> {
+    const startedAt = performance.now();
     // Keep MCP availability mandatory for every coding turn.
     try { await this.vex.verify?.(); }
     catch (error) { throw new VexUnavailableError(error); }
@@ -99,6 +100,7 @@ export class Orchestrator {
       );
       const artifactsAfter = await artifactSnapshot(session.projectPath).catch(() => new Map<string, number>());
       const artifacts = changedArtifacts(artifactsBefore, artifactsAfter);
+      const durationMs = Math.round(performance.now() - startedAt);
       if (execution.threadId) session.threadId = execution.threadId;
       session.turns = [
         ...session.turns,
@@ -107,12 +109,14 @@ export class Orchestrator {
           result: execution.result.slice(0, 500),
           at: new Date().toISOString(),
           route,
+          routeNote: note,
+          durationMs,
           artifacts,
           usage: execution.usage,
         },
       ].slice(-20);
       await save();
-      return { session, result: execution.result, note, route, artifacts, usage: execution.usage };
+      return { session, result: execution.result, note, route, durationMs, artifacts, usage: execution.usage };
     } catch (error) {
       session.turns = [
         ...session.turns,
@@ -121,6 +125,8 @@ export class Orchestrator {
           result: String(error).slice(0, 500),
           at: new Date().toISOString(),
           route,
+          routeNote: note,
+          durationMs: Math.round(performance.now() - startedAt),
           failed: true,
         },
       ].slice(-20);
