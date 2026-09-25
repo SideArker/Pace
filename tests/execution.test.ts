@@ -18,7 +18,7 @@ it('resumes the saved SDK thread and route on follow-up', async () => {
     return { threadId: 'codex-thread-1', result: 'done', completed: true };
   } };
   const config: Config = { models: [{ model: 'configured', efforts: ['medium'] }], defaultRoute: { model: 'configured', effort: 'medium' }, routingMode: 'auto' };
-  const orchestrator = new Orchestrator(store, runner);
+  const orchestrator = new Orchestrator(store, runner, { verify: async () => {}, choose: async () => undefined });
   const session = newSession('/example/project', 'auto');
   await orchestrator.turn('first', session, config, () => {});
   const restored = (await store.latest('/example/project'))!;

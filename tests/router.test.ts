@@ -24,6 +24,19 @@ describe('routing', () => {
     expect(request).toContain('debugging');
     expect(routeRequest('work', [{ model: 'route-one', efforts: ['low', 'high'] }]).options.map(option => option.id)).toEqual(['0:low', '0:high']);
   });
+  it('separates a greeting from a complex payment-system task without sending either prompt', () => {
+    const models = [{ model: 'gpt-6-luna', efforts: ['low' as const] }, { model: 'gpt-6-sol', efforts: ['high' as const, 'xhigh' as const] }];
+    const hello = routeRequest('Hello', models);
+    const payment = routeRequest('Plan and build an advanced payment system', models);
+    expect(hello.context).toMatchObject({ category: 'conversation', complexDomain: false, architecture: false });
+    expect(payment.context).toMatchObject({ category: 'coding', complexDomain: true, architecture: true });
+    expect(hello.options.map(option => option.id)).toEqual(['0:low', '1:high', '1:xhigh']);
+    expect(JSON.stringify(hello)).not.toContain('Hello');
+    expect(JSON.stringify(payment)).not.toContain('Plan and build');
+    const routes = parseConfig({ routingMode: 'auto', models, defaultRoute: { model: 'gpt-6-luna', effort: 'low' } });
+    expect(selectRoute(routes, { contractVersion: '1', choice: '0:low', abstained: false, confidence: .9, probabilities: { '0:low': .9, '1:high': .07, '1:xhigh': .03 } }).route).toEqual({ model: 'gpt-6-luna', effort: 'low' });
+    expect(selectRoute(routes, { contractVersion: '1', choice: '1:xhigh', abstained: false, confidence: .9, probabilities: { '0:low': .05, '1:high': .15, '1:xhigh': .8 } }).route).toEqual({ model: 'gpt-6-sol', effort: 'xhigh' });
+  });
   it('rejects unsupported effort in config', () => {
     expect(() => parseConfig({ ...config, models: [{ model: 'route-one', efforts: ['unknown'] }] })).toThrow();
     expect(() => parseConfig({ ...config, models: [{ model: 'route-one', efforts: ['max'] }] })).toThrow();

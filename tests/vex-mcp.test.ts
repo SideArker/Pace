@@ -41,7 +41,7 @@ it('uses one persistent MCP connection and selects a validated route before Code
   } finally { await vex.close(); await server.close(); }
 });
 
-it('falls back on a Vex tool error and reports it once', async () => {
+it('blocks a coding turn when the Vex tool fails', async () => {
   directory = await mkdtemp(join(tmpdir(), 'pace-vex-'));
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const server = new Server({ name: 'mock-vex', version: '1' }, { capabilities: { tools: {} } });
@@ -51,15 +51,10 @@ it('falls back on a Vex tool error and reports it once', async () => {
   const vex = new VexRouter('', () => clientTransport);
   const config: Config = { routingMode: 'auto', defaultRoute: { model: 'one', effort: 'medium' }, models: [{ model: 'one', efforts: ['medium'] }, { model: 'two', efforts: ['high'] }] };
   const seen: Route[] = [];
-  const errors: string[] = [];
   const runner: CodexRunner = { async run(_prompt, _project, route) { seen.push(route); return { result: 'done', completed: true }; } };
   const orchestrator = new Orchestrator(new PaceStore(directory), runner, vex);
   try {
-    await orchestrator.turn('first', newSession('/project', 'auto'), config, progress => { if (progress.kind === 'error') errors.push(progress.text); });
-    await orchestrator.turn('second', newSession('/project', 'auto'), config, progress => { if (progress.kind === 'error') errors.push(progress.text); });
-    expect(seen).toEqual([config.defaultRoute, config.defaultRoute]);
-    expect(errors).toHaveLength(1);
-    expect(errors[0]).toContain('HTTP 401');
-    expect(errors[0]).not.toContain('secret');
+    await expect(orchestrator.turn('first', newSession('/project', 'auto'), config, () => {})).rejects.toThrow('HTTP 401');
+    expect(seen).toEqual([]);
   } finally { await vex.close(); await server.close(); }
 });

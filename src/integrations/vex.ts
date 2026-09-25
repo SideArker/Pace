@@ -19,12 +19,15 @@ export function vexServerPath(): string | undefined {
 
 export function routeRequest(prompt: string, models: ModelOption[]) {
   // Keep user text, repository content and paths out of the remote decision.
-  const category = /\b(test|bug|fix|error|fail|regression)\b/i.test(prompt) ? 'debugging' : /\b(refactor|migrate|rename|cleanup)\b/i.test(prompt) ? 'refactoring' : 'coding';
+  const greeting = /^(hi|hello|hey|thanks|thank you|good (morning|afternoon|evening))[!.?\s]*$/i.test(prompt.trim());
+  const category = greeting ? 'conversation' : /\b(test|bug|fix|error|fail|regression)\b/i.test(prompt) ? 'debugging' : /\b(refactor|migrate|rename|cleanup)\b/i.test(prompt) ? 'refactoring' : 'coding';
   const words = prompt.trim().split(/\s+/).length;
   const size = words < 12 ? 'short' : words < 40 ? 'medium' : 'long';
+  const complexDomain = /\b(payment|payments|billing|financial|security|auth|authentication|distributed)\b/i.test(prompt);
+  const architecture = /\b(system|architecture|architect|design|platform|end.to.end)\b/i.test(prompt);
   return {
     question: 'Which configured Codex model and effort should handle this task?',
-    context: { category, requestLength: size, multipleFiles: /\b(all|multiple|several)\s+files?\b/i.test(prompt), testsMentioned: /\b(tests?|specs?)\b/i.test(prompt) },
+    context: { category, requestLength: size, multipleFiles: /\b(all|multiple|several)\s+files?\b/i.test(prompt), testsMentioned: /\b(tests?|specs?)\b/i.test(prompt), complexDomain, architecture },
     options: models.flatMap((model, index) => model.efforts.map(effort => ({ id: `${index}:${effort}`, description: `Codex model ${model.model}, reasoning effort ${effort}` }))),
     constraints: 'Choose only from the supplied routes; abstain when evidence is insufficient.',
   };
@@ -45,6 +48,8 @@ export class VexRouter {
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         await Promise.race([client.connect(transport), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Vex MCP connection timed out')), 8000); })]);
+        const tools = await client.listTools(undefined, { timeout: 8000 });
+        if (!tools.tools.some(tool => tool.name === 'vex_choose')) throw new Error('Vex MCP does not offer vex_choose');
         this.client = client;
         this.transport = transport;
       } catch (error) {
@@ -71,6 +76,13 @@ export class VexRouter {
     }
     return result.structuredContent;
   }
+
+  async verify(): Promise<void> {
+    await this.start();
+    await this.client!.ping({ timeout: 5000 });
+  }
+
+  get connected(): boolean { return this.client !== undefined; }
 
   async close(): Promise<void> {
     await this.connecting?.catch(() => {});

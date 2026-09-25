@@ -4,13 +4,14 @@ import { VexRouter } from "../integrations/vex.js";
 import { selectRoute } from "./router.js";
 import { PaceStore } from "./sessions.js";
 export type TurnOutcome = { session: Session; result: string; note: string; route: Route; usage?: Awaited<ReturnType<CodexRunner['run']>>['usage'] };
+export class VexUnavailableError extends Error {
+  constructor(cause: unknown) { super(`Vex MCP unavailable: ${String(cause)}`); }
+}
 export class Orchestrator {
-  private vexErrorReported = false;
-  reportVexError(): void { this.vexErrorReported = true; }
   constructor(
     readonly store: PaceStore,
     readonly runner: CodexRunner,
-    readonly vex: Pick<VexRouter, 'choose'> = new VexRouter(),
+    readonly vex: Pick<VexRouter, 'choose'> & Partial<Pick<VexRouter, 'verify'>> = new VexRouter(),
   ) {}
   async turn(
     prompt: string,
@@ -19,6 +20,9 @@ export class Orchestrator {
     onProgress: (progress: Progress) => void,
     signal?: AbortSignal,
   ): Promise<TurnOutcome> {
+    // Keep MCP availability mandatory for every coding turn.
+    try { await this.vex.verify?.(); }
+    catch (error) { throw new VexUnavailableError(error); }
     const enabled = config.models.filter(model => model.enabled !== false);
     if (config.models.length && !enabled.length) throw new Error('No models enabled. Use /models <name> on before running a turn.');
     if (session.threadId && !session.route.model && config.models.length) throw new Error('Saved thread used the Codex default model, which Pace cannot identify. Use /new to apply your enabled model list.');
@@ -45,14 +49,8 @@ export class Orchestrator {
       const routeCount = enabled.reduce((count, model) => count + model.efforts.length, 0);
       if (session.routingMode === "auto" && routeCount >= 2 && routeCount <= 12) {
         onProgress({ kind: "status", text: "Routing…" });
-        try {
-          suggestion = await this.vex.choose(prompt, enabled);
-        } catch (error) {
-          if (!this.vexErrorReported) {
-            onProgress({ kind: 'error', text: `Vex unavailable: ${String(error)}` });
-            this.vexErrorReported = true;
-          }
-        }
+        try { suggestion = await this.vex.choose(prompt, enabled); }
+        catch (error) { throw new VexUnavailableError(error); }
       }
       const selected = selectRoute(
         { ...usableConfig, routingMode: session.routingMode },
