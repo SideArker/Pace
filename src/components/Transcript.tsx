@@ -12,15 +12,25 @@ export type Line = {
 };
 
 const colors = { thinking: "magentaBright", command: "cyan", files: "yellow", tool: "blueBright", search: "blue", plan: "magenta" } as const;
-const paceMark = String.raw` ____    _    ____ _____
+const paceMark = [
+  { color: "#46E6A7", lines: ["  ______  ", " /  __  \\", "|  |__) |", "|  ____/ ", "|  |     ", "|__|     "] },
+  { color: "#25D9CD", lines: ["   ____    ", "  / __ \\   ", " / /__\\ \\  ", "|  ____  | ", "| |    | | ", "|_|    |_| "] },
+  { color: "#36BDF2", lines: ["  ______  ", " /  ____|", "|  |     ", "|  |     ", "|  |____ ", " \\______|"] },
+  { color: "#9BA9FF", lines: [" ________ ", "|  ______|", "|  |___   ", "|   ___|  ", "|  |_____ ", "|________|"] },
+] as const;
+const compactMark = String.raw` ____    _    ____ _____
 |  _ \  / \  / ___| ____|
 | |_) |/ _ \| |   |  _|
 |  __// ___ \ |___| |___
 |_|  /_/   \_\____|_____|`;
 
-export function Header({ project, vexState }: { project: string; vexState: "connecting" | "connected" | "failed" }) {
+export function Header({ project, vexState, width }: { project: string; vexState: "connecting" | "connected" | "failed"; width: number }) {
+  const wide = width >= 52;
   return <Box flexDirection="column">
-    <Text color="greenBright" bold>{paceMark}</Text>
+    {wide
+      ? <Box gap={2}>{paceMark.map(({ color, lines }) => <Text key={color} color={color} bold>{lines.join("\n")}</Text>)}</Box>
+      : <Text color="greenBright" bold>{compactMark}</Text>}
+    {wide ? <Text color="gray">{"// "}<Text color="cyan">CODE IN MOTION</Text>{" ".repeat(2)}{"-".repeat(26)}{" >"}</Text> : null}
     <Box gap={2} marginLeft={1}><Text color="gray">{basename(project)}</Text><Text color={vexState === "connected" ? "green" : vexState === "failed" ? "red" : "yellow"}>Vex MCP {vexState === "connected" ? "connected" : vexState === "failed" ? "unavailable" : "connecting"}</Text></Box>
   </Box>;
 }

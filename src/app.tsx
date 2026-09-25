@@ -568,7 +568,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   };
   return (
     <Box flexDirection="column" paddingX={1}>
-      {showHeader ? <Header project={project} vexState={vexState} /> : null}
+      {showHeader ? <Header project={project} vexState={vexState} width={stdout.columns ?? 80} /> : null}
       <Transcript lines={lines} outputsExpanded={outputsExpanded} detailsExpanded={detailsExpanded} rows={stdout.rows ?? 24} scrollBack={scrollBack} />
       {modelMenu ? <ModelMenu mode={modelMenu} models={menuModels} selectedModel={menuModel} selectedIndex={menuIndex} config={config} /> : null}
       {resumeMenu ? <ResumeMenu choices={resumeChoices} selectedIndex={menuIndex} /> : null}
