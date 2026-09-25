@@ -55,6 +55,22 @@ it('never routes to a disabled model and saves turn usage', async () => {
   session.route = { model: 'blocked', effort: 'medium' };
   await expect(new Orchestrator(store, runner, vex).turn('again', session, config, () => {})).rejects.toThrow('disabled');
 });
+it('uses Sol high for sensitive architecture after Vex abstains but keeps Hello on Luna low', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  const seen: Route[] = [];
+  const runner: CodexRunner = { async run(_prompt, _project, route) { seen.push(route); return { result: 'done', completed: true }; } };
+  const config: Config = { routingMode: 'auto', defaultRoute: { model: 'gpt-6-luna', effort: 'low' }, models: [
+    { model: 'gpt-6-luna', efforts: ['low'] },
+    { model: 'gpt-6-sol', efforts: ['high', 'xhigh'] },
+  ] };
+  const vex = { verify: async () => {}, choose: async () => ({ contractVersion: '1', abstained: true }) };
+  const orchestrator = new Orchestrator(new PaceStore(dir), runner, vex);
+  const hello = await orchestrator.turn('Hello', newSession('/example/project', 'auto'), config, () => {});
+  const payment = await orchestrator.turn('Plan and build an advanced payment system', newSession('/example/project', 'auto'), config, () => {});
+  expect(seen).toEqual([{ model: 'gpt-6-luna', effort: 'low' }, { model: 'gpt-6-sol', effort: 'high' }]);
+  expect(hello.note).toContain('configured default');
+  expect(payment.note).toContain('Policy fallback');
+});
 it('reads usage from the SDK turn-completed event', async () => {
   const usage = { input_tokens: 20, cached_input_tokens: 4, cache_write_input_tokens: 0, output_tokens: 8, reasoning_output_tokens: 2 };
   let receivedPrompt = '';

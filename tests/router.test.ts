@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { selectRoute } from '../src/core/router.js';
+import { selectRoute, sensitiveArchitectureFallback } from '../src/core/router.js';
 import { parseConfig } from '../src/config.js';
 import { routeRequest } from '../src/integrations/vex.js';
 const config = parseConfig({ routingMode: 'auto', models: [
@@ -36,6 +36,13 @@ describe('routing', () => {
     const routes = parseConfig({ routingMode: 'auto', models, defaultRoute: { model: 'gpt-6-luna', effort: 'low' } });
     expect(selectRoute(routes, { contractVersion: '1', choice: '0:low', abstained: false, confidence: .9, probabilities: { '0:low': .9, '1:high': .07, '1:xhigh': .03 } }).route).toEqual({ model: 'gpt-6-luna', effort: 'low' });
     expect(selectRoute(routes, { contractVersion: '1', choice: '1:xhigh', abstained: false, confidence: .9, probabilities: { '0:low': .05, '1:high': .15, '1:xhigh': .8 } }).route).toEqual({ model: 'gpt-6-sol', effort: 'xhigh' });
+    const abstained = { contractVersion: '1', abstained: true };
+    const helloFallback = sensitiveArchitectureFallback(hello.context, routes);
+    const paymentFallback = sensitiveArchitectureFallback(payment.context, routes);
+    expect(helloFallback).toBeUndefined();
+    expect(paymentFallback).toEqual({ model: 'gpt-6-sol', effort: 'high' });
+    expect(selectRoute(routes, abstained, undefined, helloFallback).route).toEqual({ model: 'gpt-6-luna', effort: 'low' });
+    expect(selectRoute(routes, abstained, undefined, paymentFallback)).toEqual({ route: { model: 'gpt-6-sol', effort: 'high' }, note: 'Policy fallback after Vex abstained or was uncertain' });
   });
   it('rejects unsupported effort in config', () => {
     expect(() => parseConfig({ ...config, models: [{ model: 'route-one', efforts: ['unknown'] }] })).toThrow();

@@ -1,7 +1,7 @@
 import type { Config, Route } from '../types.js';
 import { isRecord, validRoute } from '../config.js';
 export type RouteResult = { route: Route; note: string };
-export function selectRoute(config: Config, suggestion: unknown, manual?: Route): RouteResult {
+export function selectRoute(config: Config, suggestion: unknown, manual?: Route, policyFallback?: Route): RouteResult {
   if (manual && validRoute(manual, config.models)) return { route: manual, note: 'Manual route' };
   if (config.routingMode === 'manual') return { route: config.defaultRoute, note: 'Configured default' };
   if (isRecord(suggestion) && suggestion.contractVersion === '1' && suggestion.abstained === false && typeof suggestion.choice === 'string') {
@@ -14,6 +14,14 @@ export function selectRoute(config: Config, suggestion: unknown, manual?: Route)
       return { route: { model: option.model, effort: effort as typeof option.efforts[number] }, note: 'Selected by Vex' };
     }
   }
-  return { route: config.defaultRoute, note: 'Vex unavailable or uncertain; configured default' };
+  if (policyFallback && validRoute(policyFallback, config.models))
+    return { route: policyFallback, note: 'Policy fallback after Vex abstained or was uncertain' };
+  return { route: config.defaultRoute, note: 'Vex abstained or was uncertain; configured default' };
+}
+export function sensitiveArchitectureFallback(context: { complexDomain: boolean; architecture: boolean }, config: Config): Route | undefined {
+  if (!context.complexDomain || !context.architecture) return undefined;
+  const sol = config.models.find(model => model.enabled !== false && model.model === 'gpt-6-sol');
+  const effort = sol?.efforts.includes('high') ? 'high' : sol?.efforts.includes('xhigh') ? 'xhigh' : undefined;
+  return effort ? { model: sol!.model, effort } : undefined;
 }
 export function sameRoute(a: Route, b: Route): boolean { return a.model === b.model && a.effort === b.effort; }

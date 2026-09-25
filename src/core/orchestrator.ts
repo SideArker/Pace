@@ -1,7 +1,8 @@
 import type { Config, Route, Session } from "../types.js";
 import type { CodexRunner, Progress } from "../integrations/codex.js";
 import { VexRouter } from "../integrations/vex.js";
-import { selectRoute } from "./router.js";
+import { selectRoute, sensitiveArchitectureFallback } from "./router.js";
+import { routeRequest } from "../integrations/vex.js";
 import { PaceStore } from "./sessions.js";
 import { artifactSnapshot, changedArtifacts } from "./artifacts.js";
 export type TurnOutcome = { session: Session; result: string; note: string; route: Route; artifacts: string[]; usage?: Awaited<ReturnType<CodexRunner['run']>>['usage'] };
@@ -61,6 +62,7 @@ export class Orchestrator {
             ? session.route
             : undefined
           : undefined,
+        session.routingMode === "auto" && routeCount >= 2 && routeCount <= 12 ? sensitiveArchitectureFallback(routeRequest(prompt, enabled).context, usableConfig) : undefined,
       );
       route = selected.route;
       note = selected.note;
