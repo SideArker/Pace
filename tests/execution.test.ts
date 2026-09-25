@@ -29,9 +29,11 @@ it('resumes the saved SDK thread and route on follow-up', async () => {
   expect(turns?.[1]?.routeNote).toContain('Auto needs two configured routes');
   expect(turns?.[1]?.durationMs).toEqual(expect.any(Number));
 });
-it('renders real event statuses but never reasoning', () => {
-  expect(eventProgress({ type: 'item.started', item: { id: 'x', type: 'command_execution', command: 'test', aggregated_output: '', status: 'in_progress' } })).toEqual({ kind: 'status', text: 'Running command…' });
-  expect(eventProgress({ type: 'item.completed', item: { id: 'x', type: 'reasoning', text: 'hidden' } })).toBeUndefined();
+it('exposes SDK activity with stable IDs and the available reasoning summary', () => {
+  expect(eventProgress({ type: 'item.started', item: { id: 'x', type: 'command_execution', command: 'test', aggregated_output: '', status: 'in_progress' } })).toEqual({ kind: 'activity', id: 'x', category: 'command', title: 'Running: test', detail: '', completed: false });
+  expect(eventProgress({ type: 'item.completed', item: { id: 'x', type: 'command_execution', command: 'test', aggregated_output: 'ok', exit_code: 0, status: 'completed' } })).toMatchObject({ kind: 'activity', id: 'x', detail: 'ok', completed: true });
+  expect(eventProgress({ type: 'item.completed', item: { id: 'thought', type: 'reasoning', text: 'Checking files' } })).toEqual({ kind: 'activity', id: 'thought', category: 'thinking', title: 'Thinking', detail: 'Checking files', completed: true });
+  expect(eventProgress({ type: 'item.completed', item: { id: 'patch', type: 'file_change', changes: [{ kind: 'update', path: 'src/app.tsx' }], status: 'completed' } })).toMatchObject({ category: 'files', detail: 'update src/app.tsx' });
   expect(eventProgress({ type: 'turn.failed', error: { message: 'bad' } })).toEqual({ kind: 'error', text: 'bad' });
 });
 it('never routes to a disabled model and saves turn usage', async () => {

@@ -1,0 +1,41 @@
+import React from "react";
+import { Box, Text } from "ink";
+import { basename } from "node:path";
+
+export type Line = {
+  id: number;
+  role: "you" | "codex" | "info" | "meta" | "error" | "artifact" | "divider" | "activity";
+  text: string;
+  spaceBefore: boolean;
+  activity?: { category: "thinking" | "command" | "files" | "tool" | "search" | "plan"; detail?: string; completed: boolean };
+  sourceId?: string;
+};
+
+const colors = { thinking: "magentaBright", command: "cyan", files: "yellow", tool: "blueBright", search: "blue", plan: "magenta" } as const;
+
+export function Header({ project, vexState }: { project: string; vexState: "connecting" | "connected" | "failed" }) {
+  return <Box gap={2}>
+    <Text color="greenBright" bold>{"  ╭─╮\n  │P│\n  ╰─╯"}</Text>
+    <Box flexDirection="column"><Text color="greenBright" bold>PACE</Text><Text color="gray">{basename(project)}</Text><Text color={vexState === "connected" ? "green" : vexState === "failed" ? "red" : "yellow"}>Vex MCP {vexState === "connected" ? "connected" : vexState === "failed" ? "unavailable" : "connecting"}</Text></Box>
+  </Box>;
+}
+
+export function Transcript({ lines, outputsExpanded, detailsExpanded, rows }: { lines: Line[]; outputsExpanded: boolean; detailsExpanded: boolean; rows: number }) {
+  // Keep the transcript in Ink's redraw area so old entries can actually disappear or collapse.
+  const visible = lines.slice(-Math.max(8, rows - 12));
+  return <Box flexDirection="column">
+    {visible.map(line => <Box key={line.id} flexDirection="column" marginTop={line.spaceBefore ? 1 : 0}>
+      {line.role === "you" ? <><Text color="cyanBright" bold>You</Text><Text>{line.text}</Text></>
+      : line.role === "codex" ? <><Text color="greenBright" bold>Pace</Text><Text>{line.text}</Text></>
+      : line.role === "activity" && line.activity ? <>
+        <Text color={colors[line.activity.category]}>{line.activity.completed ? "◆" : "◇"} {line.text}{line.activity.detail ? `  ${(line.activity.category === "command" ? outputsExpanded : detailsExpanded) ? "▾" : "▸"}` : ""}</Text>
+        {line.activity.detail && (line.activity.category === "command" ? outputsExpanded : detailsExpanded) ? <Text color="gray">{line.activity.detail.slice(-12000)}</Text> : null}
+      </>
+      : line.role === "divider" ? <Text color="gray">{"─".repeat(42)}</Text>
+      : line.role === "meta" ? <Text color="gray">{line.text}</Text>
+      : line.role === "artifact" ? <Text color="magenta">Artifact: {line.text}</Text>
+      : line.role === "error" ? <Text color="red">Pace: {line.text}</Text>
+      : <Text color="gray">{line.text}</Text>}
+    </Box>)}
+  </Box>;
+}

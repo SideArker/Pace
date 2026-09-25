@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Box, Static, Text, useApp, useInput } from "ink";
-import { TextInput } from "@inkjs/ui";
+import { Box, Text, useApp, useInput, useStdout } from "ink";
+import type { Progress } from "./integrations/codex.js";
 import type { Config, Session, Route } from "./types.js";
 import { PaceStore, newSession } from "./core/sessions.js";
 import { Orchestrator, VexUnavailableError } from "./core/orchestrator.js";
@@ -8,29 +8,13 @@ import { SdkRunner } from "./integrations/codex.js";
 import { VexRouter } from "./integrations/vex.js";
 import { EFFORTS, withModels } from "./config.js";
 import { artifactSnapshot } from "./core/artifacts.js";
-import {
-  formatTurnFooter,
-  formatUsageLimits,
-  modelName,
-} from "./turn-format.js";
+import { formatTurnFooter, modelName } from "./turn-format.js";
 import { readUsageLimits } from "./integrations/usage.js";
+import type { UsageLimits } from "./integrations/usage.js";
+import { Composer } from "./components/Composer.js";
+import { Header, Transcript, type Line } from "./components/Transcript.js";
+import { UsageBar } from "./components/UsageBar.js";
 import { spawn } from "node:child_process";
-import { basename } from "node:path";
-
-type Line = {
-  id: number;
-  role:
-    | "header"
-    | "you"
-    | "codex"
-    | "info"
-    | "meta"
-    | "error"
-    | "artifact"
-    | "divider";
-  text: string;
-  spaceBefore: boolean;
-};
 const commands = [
   "/help",
   "/models",
@@ -38,6 +22,7 @@ const commands = [
   "/new",
   "/resume",
   "/usage",
+  "/btw",
   "/artifacts",
   "/clear",
   "/exit",
@@ -51,13 +36,19 @@ const orchestrator = new Orchestrator(store, new SdkRunner(), vex);
 
 export default function App({ onClear }: { onClear: () => void }) {
   const { exit } = useApp();
+  const { stdout } = useStdout();
   const [config, setConfig] = useState<Config>();
   const [session, setSession] = useState<Session>();
   const [lines, setLines] = useState<Line[]>([]);
   const [status, setStatus] = useState("Loading…");
   const [busy, setBusy] = useState(false);
-  const [inputKey, setInputKey] = useState(0);
   const [draft, setDraft] = useState("");
+  const [history, setHistory] = useState<string[]>([]);
+  const [outputsExpanded, setOutputsExpanded] = useState(false);
+  const [detailsExpanded, setDetailsExpanded] = useState(true);
+  const [usageLimits, setUsageLimits] = useState<UsageLimits>();
+  const [usageError, setUsageError] = useState<string>();
+  const [showUsage, setShowUsage] = useState(false);
   const [selection, setSelection] = useState(0);
   const [tick, setTick] = useState(0);
   const [shellMode, setShellMode] = useState(false);
@@ -72,7 +63,6 @@ export default function App({ onClear }: { onClear: () => void }) {
   const [resumeChoices, setResumeChoices] = useState<Session[]>([]);
   const [menuModel, setMenuModel] = useState("");
   const [menuIndex, setMenuIndex] = useState(0);
-  const [clearEpoch, setClearEpoch] = useState(0);
   const nextId = useRef(0);
   const abort = useRef<AbortController | undefined>(undefined);
   const shells = useRef(new Set<{ kill: () => boolean }>());
@@ -86,14 +76,21 @@ export default function App({ onClear }: { onClear: () => void }) {
         spaceBefore: role === "you" && old.length > 0,
       },
     ]);
+  const activity = (event: Extract<Progress, { kind: "activity" }>) => setLines(old => {
+    const sourceId = event.id;
+    const update = { text: event.title, activity: { category: event.category, detail: event.detail, completed: event.completed } };
+    const index = old.findIndex(line => line.sourceId === sourceId);
+    if (index < 0) return [...old, { id: nextId.current++, role: "activity", sourceId, spaceBefore: false, ...update }];
+    return old.map((line, at) => at === index ? { ...line, ...update } : line);
+  });
   const matches =
     !shellMode && draft.startsWith("/") && !draft.includes(" ")
       ? commands.filter((command) => command.startsWith(draft))
       : [];
   const refreshUsage = () => {
     void readUsageLimits()
-      .then((limits) => add("meta", formatUsageLimits(limits)))
-      .catch(() => add("meta", "Usage unavailable"));
+      .then((limits) => { setUsageLimits(limits); setUsageError(limits ? undefined : "Usage unavailable"); })
+      .catch(() => setUsageError("Usage unavailable"));
   };
   const menuModels = [
     ...new Set([
@@ -267,6 +264,8 @@ export default function App({ onClear }: { onClear: () => void }) {
         setStatus("Cancelling…");
       } else exit();
     }
+    if (key.ctrl && input === "o") setOutputsExpanded(value => !value);
+    if (key.ctrl && input === "e") setDetailsExpanded(value => !value);
     if (modelMenu) {
       const size = modelMenu === "models" ? menuModels.length : EFFORTS.length;
       if (key.escape) {
@@ -295,19 +294,11 @@ export default function App({ onClear }: { onClear: () => void }) {
       else if (key.return) void activateSession(resumeChoices[menuIndex]!);
       return;
     }
-    if (matches.length && (key.upArrow || key.downArrow))
-      setSelection(
-        (value) =>
-          (value + (key.downArrow ? 1 : -1) + matches.length) % matches.length,
-      );
-    if (matches.length && key.tab) {
-      setDraft(matches[selection] ?? matches[0]!);
-      setInputKey((value) => value + 1);
-    }
   });
 
   const shell = (command: string) => {
-    add("info", `! ${command}`);
+    const id = `shell-${nextId.current++}`;
+    activity({ kind: "activity", id, category: "command", title: `Running: ${command}`, completed: false });
     const executable =
       process.platform === "win32"
         ? "C:\\Program Files\\Git\\bin\\bash.exe"
@@ -333,16 +324,12 @@ export default function App({ onClear }: { onClear: () => void }) {
       child.stderr.on("data", append);
       child.on("error", (error) => {
         failed = true;
-        add("error", `Shell error: ${String(error)}`);
+        activity({ kind: "activity", id, category: "command", title: `Failed: ${command}`, detail: String(error), completed: true });
       });
       child.on("close", (code) => {
         shells.current.delete(child);
         setShellJobs((value) => Math.max(0, value - 1));
-        if (!failed)
-          add(
-            code === 0 ? "info" : "error",
-            `${output.trimEnd() || "(no output)"}${clipped ? "\n[output truncated]" : ""}\nShell exit ${code ?? "unknown"}`,
-          );
+        if (!failed) activity({ kind: "activity", id, category: "command", title: `${code === 0 ? "Ran" : "Failed"}: ${command} (exit ${code ?? "unknown"})`, detail: `${output.trimEnd() || "(no output)"}${clipped ? "\n[output truncated]" : ""}`, completed: true });
       });
     } catch (error) {
       add("error", `Shell error: ${String(error)}`);
@@ -356,7 +343,6 @@ export default function App({ onClear }: { onClear: () => void }) {
       add("info", shellMode ? "$ !" : "> !");
       setShellMode((value) => !value);
       setDraft("");
-      setInputKey((key) => key + 1);
       add(
         "info",
         shellMode
@@ -367,13 +353,11 @@ export default function App({ onClear }: { onClear: () => void }) {
     }
     if (text.startsWith("! ")) {
       setDraft("");
-      setInputKey((key) => key + 1);
       shell(text.slice(2));
       return;
     }
     if (shellMode) {
       setDraft("");
-      setInputKey((key) => key + 1);
       shell(text);
       return;
     }
@@ -386,13 +370,12 @@ export default function App({ onClear }: { onClear: () => void }) {
     }
     setDraft("");
     setSelection(0);
-    setInputKey((key) => key + 1);
+    setHistory(old => [...old.slice(-99), raw]);
     if (text.startsWith("/")) {
       const [command, ...parts] = text.split(/\s+/);
       if (command === "/clear" && !parts.length) {
         onClear();
         setLines([]);
-        setClearEpoch((value) => value + 1);
         return;
       }
       if (command === "/exit") {
@@ -402,7 +385,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       if (command === "/help") {
         add(
           "info",
-          "/models · /auto · /new · /resume · /usage · /artifacts · /clear · /exit · ! toggles Bash · ! command runs once · Ctrl+C cancels Codex",
+          "/models · /auto · /new · /resume · /usage · /btw <question> · /artifacts · /clear · /exit · ! Bash · Ctrl+O outputs · Ctrl+E details · Shift+Enter newline · ↑/↓ history",
         );
         return;
       }
@@ -419,6 +402,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         return;
       }
       if (command === "/usage") {
+        setShowUsage(value => !value);
         refreshUsage();
         return;
       }
@@ -503,6 +487,10 @@ export default function App({ onClear }: { onClear: () => void }) {
           }
           if (progress.kind === "route")
             setStatus(`Using ${modelName(progress.route)}…`);
+          if (progress.kind === "activity") {
+            activity(progress);
+            setStatus(progress.title);
+          }
           if (progress.kind === "error") add("error", progress.text);
           if (progress.kind === "message") {
             setStatus("Finishing response…");
@@ -536,77 +524,8 @@ export default function App({ onClear }: { onClear: () => void }) {
   };
   return (
     <Box flexDirection="column" paddingX={1}>
-      {vexState === "connecting" || !session || !config ? (
-        <Box gap={1}>
-          <Text color="green" bold>
-            pace
-          </Text>
-          <Text dimColor>{basename(project)}</Text>
-          <Text color="yellow">Vex MCP connecting</Text>
-        </Box>
-      ) : null}
-      {vexState !== "connecting" && session && config ? (
-        <Static
-          key={clearEpoch}
-          items={[
-            { id: -1, role: "header" as const, text: "", spaceBefore: false },
-            ...lines,
-          ]}
-        >
-          {(line) => (
-            <Box
-              key={line.id}
-              flexDirection="column"
-              marginTop={
-                line.role === "divider" ||
-                line.role === "codex" ||
-                line.spaceBefore
-                  ? 1
-                  : 0
-              }
-            >
-              {line.role === "header" ? (
-                <Box gap={1}>
-                  <Text color="green" bold>
-                    pace
-                  </Text>
-                  <Text dimColor>{basename(project)}</Text>
-                  <Text color={vexState === "connected" ? "green" : "red"}>
-                    Vex MCP{" "}
-                    {vexState === "connected"
-                      ? "connected"
-                      : "unavailable — coding blocked"}
-                  </Text>
-                </Box>
-              ) : line.role === "you" ? (
-                <>
-                  <Text bold>You</Text>
-                  <Text>{line.text}</Text>
-                </>
-              ) : line.role === "codex" ? (
-                <>
-                  <Text color="green" bold>
-                    Pace
-                  </Text>
-                  <Text>{line.text}</Text>
-                </>
-              ) : line.role === "divider" ? (
-                <Text dimColor>
-                  {"─".repeat(Math.max(12, (process.stdout.columns ?? 80) - 2))}
-                </Text>
-              ) : line.role === "meta" ? (
-                <Text dimColor>{line.text}</Text>
-              ) : line.role === "artifact" ? (
-                <Text color="magenta">Artifact: {line.text}</Text>
-              ) : line.role === "error" ? (
-                <Text color="red">Pace: {line.text}</Text>
-              ) : (
-                <Text dimColor>{line.text}</Text>
-              )}
-            </Box>
-          )}
-        </Static>
-      ) : null}
+      <Header project={project} vexState={vexState} />
+      <Transcript lines={lines} outputsExpanded={outputsExpanded} detailsExpanded={detailsExpanded} rows={stdout.rows ?? 24} />
       {modelMenu ? (
         <Box flexDirection="column" borderStyle="round" paddingX={1}>
           <Text bold>
@@ -672,39 +591,19 @@ export default function App({ onClear }: { onClear: () => void }) {
         </Text>
       ) : null}
       <Box marginTop={1}>
-        <Text color="green">{shellMode ? "! " : "❯ "}</Text>
-        <TextInput
-          key={inputKey}
-          isDisabled={!session || !config || !!modelMenu || resumeMenu}
-          defaultValue={draft}
-          suggestions={
-            matches.length
-              ? [
-                  matches[selection] ?? matches[0]!,
-                  ...matches.filter((_, index) => index !== selection),
-                ]
-              : undefined
-          }
-          onChange={(value) => {
-            setDraft(value);
-            setSelection(0);
+        <Composer value={draft} onChange={value => { setDraft(value); setSelection(0); }} onSubmit={value => { void submit(value); }} history={history}
+          disabled={!session || !config || !!modelMenu || resumeMenu} shellMode={shellMode}
+          completion={matches[selection] ?? matches[0]}
+          onComplete={() => setDraft(matches[selection] ?? matches[0] ?? draft)}
+          onHistory={direction => {
+            if (!matches.length) return false;
+            setSelection(value => (value + (direction === "up" ? -1 : 1) + matches.length) % matches.length);
+            return true;
           }}
-          placeholder={
-            modelMenu || resumeMenu
-              ? "Close menu to type"
-              : shellMode
-                ? "Bash command; ! returns to Pace"
-                : vexState !== "connected"
-                  ? "Vex unavailable; commands still work"
-                  : busy
-                    ? "Pace is working; use ! for Bash"
-                    : "Ask Pace or type /"
-          }
-          onSubmit={(value) => {
-            void submit(value);
-          }}
+          placeholder={modelMenu || resumeMenu ? "Close menu to type" : shellMode ? "Bash command; ! returns to Pace" : vexState !== "connected" ? "Vex unavailable; commands still work" : busy ? "Pace is working; use ! for Bash" : "Ask Pace or type /"}
         />
       </Box>
+      {showUsage ? <UsageBar limits={usageLimits} error={usageError} /> : null}
       {!modelMenu && !resumeMenu && matches.length > 0 ? (
         <Box flexDirection="column">
           <Text dimColor>Commands · ↑/↓ select · Tab complete</Text>

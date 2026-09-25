@@ -11,7 +11,8 @@ import { artifactPrompt } from "../core/artifacts.js";
 import { vexServerPath } from './vex.js';
 export type Progress =
   | { kind: "status" | "message" | "error" | "thread"; text: string }
-  | { kind: "route"; route: Route };
+  | { kind: "route"; route: Route }
+  | { kind: "activity"; id: string; category: "thinking" | "command" | "files" | "tool" | "search" | "plan"; title: string; detail?: string; completed: boolean };
 export type Execution = {
   threadId?: string;
   result: string;
@@ -41,32 +42,31 @@ export function eventProgress(event: ThreadEvent): Progress | undefined {
   )
     return undefined;
   const item = event.item;
-  if (item.type === "reasoning") return undefined;
+  if (item.type === "reasoning")
+    return { kind: "activity", id: item.id, category: "thinking", title: "Thinking", detail: item.text, completed: event.type === "item.completed" };
   if (item.type === "agent_message" && event.type === "item.completed")
     return { kind: "message", text: item.text };
   if (item.type === "command_execution")
     return {
-      kind: "status",
-      text:
-        event.type === "item.completed"
-          ? `Command ${item.status}${item.exit_code === undefined ? "" : ` (${item.exit_code})`}`
-          : "Running command…",
+      kind: "activity", id: item.id, category: "command",
+      title: `${item.status === "in_progress" ? "Running" : item.status === "failed" ? "Failed" : "Ran"}: ${item.command}${item.exit_code === undefined ? "" : ` (exit ${item.exit_code})`}`,
+      detail: item.aggregated_output, completed: event.type === "item.completed",
     };
   if (item.type === "file_change")
     return {
-      kind: "status",
-      text:
-        event.type === "item.completed"
-          ? `${item.changes.length} file change(s) ${item.status}`
-          : "Editing files…",
+      kind: "activity", id: item.id, category: "files",
+      title: `${item.status === "failed" ? "Failed to edit" : "Edited"} ${item.changes.length} file${item.changes.length === 1 ? "" : "s"}`,
+      detail: item.changes.map(change => `${change.kind} ${change.path}`).join("\n"), completed: event.type === "item.completed",
     };
   if (item.type === "web_search")
-    return { kind: "status", text: "Searching web…" };
+    return { kind: "activity", id: item.id, category: "search", title: `Web search: ${item.query}`, completed: event.type === "item.completed" };
   if (item.type === "mcp_tool_call")
     return {
-      kind: "status",
-      text: `Tool ${item.server}/${item.tool}: ${item.status}`,
+      kind: "activity", id: item.id, category: "tool", title: `Tool ${item.server}/${item.tool}: ${item.status}`,
+      detail: item.error?.message, completed: event.type === "item.completed",
     };
+  if (item.type === "todo_list")
+    return { kind: "activity", id: item.id, category: "plan", title: "Plan", detail: item.items.map(step => `${step.completed ? "✓" : "○"} ${step.text}`).join("\n"), completed: event.type === "item.completed" };
   if (item.type === "error") return { kind: "error", text: item.message };
   return undefined;
 }
