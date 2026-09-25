@@ -52,10 +52,40 @@ it('never routes to a disabled model and saves turn usage', async () => {
   expect((await store.latest('/example/project'))?.turns[0]?.usage).toEqual(usage);
   await expect(new Orchestrator(store, runner, vex).turn('again', session, { ...config, models: config.models.map(model => ({ ...model, enabled: false })) }, () => {})).rejects.toThrow('No models enabled');
   expect(seen).toHaveLength(1);
+  session.routingMode = 'manual';
   session.route = { model: 'blocked', effort: 'medium' };
   await expect(new Orchestrator(store, runner, vex).turn('again', session, config, () => {})).rejects.toThrow('disabled');
   session.route = { model: 'allowed', effort: 'high' };
   await expect(new Orchestrator(store, runner, vex).turn('again', session, { ...config, models: [{ model: 'allowed', efforts: ['low'] }] }, () => {})).rejects.toThrow('no longer enabled');
+});
+it('routes every auto turn while resuming the same Codex thread', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  const calls: { id?: string; route: Route }[] = [];
+  const runner: CodexRunner = { async run(_prompt, _project, route, id) {
+    calls.push({ id, route });
+    return { threadId: 'thread-1', result: 'done', completed: true };
+  } };
+  const config: Config = { routingMode: 'auto', defaultRoute: { model: 'gpt-6-sol', effort: 'medium' }, models: [
+    { model: 'gpt-6-luna', efforts: ['low'] }, { model: 'gpt-6-sol', efforts: ['medium'] },
+  ] };
+  let choices = 0;
+  const vex = { verify: async () => {}, choose: async () => {
+    choices++;
+    return choices === 1
+      ? { contractVersion: '1', choice: '1:medium', abstained: false, confidence: .9, probabilities: { '0:low': .1, '1:medium': .9 } }
+      : { contractVersion: '1', abstained: true };
+  } };
+  const session = newSession('/example/project', 'auto');
+  const orchestrator = new Orchestrator(new PaceStore(dir), runner, vex);
+  await orchestrator.turn('Build a service', session, config, () => {});
+  const hello = await orchestrator.turn('hi', session, config, () => {});
+  expect(choices).toBe(2);
+  expect(calls).toEqual([
+    { id: undefined, route: { model: 'gpt-6-sol', effort: 'medium' } },
+    { id: 'thread-1', route: { model: 'gpt-6-luna', effort: 'low' } },
+  ]);
+  expect(hello.note).toContain('Policy fallback');
+  expect(session.turns.map(turn => turn.route)).toEqual(calls.map(call => call.route));
 });
 it('uses Sol high for sensitive architecture after Vex abstains but keeps Hello on Luna low', async () => {
   dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
@@ -70,7 +100,7 @@ it('uses Sol high for sensitive architecture after Vex abstains but keeps Hello 
   const hello = await orchestrator.turn('Hello', newSession('/example/project', 'auto'), config, () => {});
   const payment = await orchestrator.turn('Plan and build an advanced payment system', newSession('/example/project', 'auto'), config, () => {});
   expect(seen).toEqual([{ model: 'gpt-6-luna', effort: 'low' }, { model: 'gpt-6-sol', effort: 'high' }]);
-  expect(hello.note).toContain('configured default');
+  expect(hello.note).toContain('Policy fallback');
   expect(payment.note).toContain('Policy fallback');
 });
 it('reads usage from the SDK turn-completed event', async () => {
@@ -83,11 +113,16 @@ it('reads usage from the SDK turn-completed event', async () => {
   })() }; } };
   const runner = new SdkRunner();
   let options: unknown;
-  (runner as unknown as { codex: { startThread: (value: unknown) => typeof thread } }).codex = { startThread: value => { options = value; return thread; } };
+  (runner as unknown as { codex: { startThread: (value: unknown) => typeof thread; resumeThread: (id: string, value: unknown) => typeof thread } }).codex = {
+    startThread: value => { options = value; return thread; },
+    resumeThread: (id, value) => { expect(id).toBe('thread-1'); options = value; return thread; },
+  };
   const result = await runner.run('Create a planning artifact', '/example/project', { model: 'configured', effort: 'medium' }, undefined, () => {});
   expect(result).toMatchObject({ threadId: 'thread-1', result: 'done', usage });
   expect(receivedPrompt).toContain('.pace/artifacts/');
   expect(options).toMatchObject({ workingDirectory: '/example/project', sandboxMode: 'workspace-write', approvalPolicy: 'never', networkAccessEnabled: false, model: 'configured', modelReasoningEffort: 'medium' });
+  await runner.run('follow-up', '/example/project', { model: 'gpt-6-luna', effort: 'low' }, 'thread-1', () => {});
+  expect(options).toMatchObject({ model: 'gpt-6-luna', modelReasoningEffort: 'low' });
 });
 it('gives Codex an independent Vex MCP launch without exposing the key value', () => {
   expect(codexOptions('/installed/vex/dist/index.js')).toEqual({ config: { mcp_servers: { vex: { command: process.execPath, args: ['/installed/vex/dist/index.js', 'mcp', 'serve'], env_vars: ['OPENROUTER_API_KEY'] } } } });

@@ -45,4 +45,10 @@ export function sensitiveArchitectureFallback(context: { complexDomain: boolean;
   const effort = sol?.efforts.includes('high') ? 'high' : sol?.efforts.includes('xhigh') ? 'xhigh' : undefined;
   return effort ? { model: sol!.model, effort } : undefined;
 }
+export function greetingFallback(context: { category: string }, config: Config): Route | undefined {
+  if (context.category !== 'conversation') return undefined;
+  const luna = config.models.find(model => model.enabled !== false && model.model === 'gpt-6-luna');
+  const effort = luna?.efforts.includes('low') ? 'low' : luna?.defaultEffort ?? luna?.efforts[0];
+  return luna && effort ? { model: luna.model, effort } : undefined;
+}
 export function sameRoute(a: Route, b: Route): boolean { return a.model === b.model && a.effort === b.effort; }

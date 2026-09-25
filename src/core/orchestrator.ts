@@ -1,7 +1,7 @@
 import type { Config, Route, Session } from "../types.js";
 import type { CodexRunner, Progress } from "../integrations/codex.js";
 import { VexRouter } from "../integrations/vex.js";
-import { selectRoute, sensitiveArchitectureFallback } from "./router.js";
+import { greetingFallback, selectRoute, sensitiveArchitectureFallback } from "./router.js";
 import { routeRequest } from "../integrations/vex.js";
 import { PaceStore } from "./sessions.js";
 import { artifactSnapshot, changedArtifacts } from "./artifacts.js";
@@ -28,9 +28,9 @@ export class Orchestrator {
     catch (error) { throw new VexUnavailableError(error); }
     const enabled = config.models.filter(model => model.enabled !== false);
     if (config.models.length && !enabled.length) throw new Error('No models enabled. Open /models and enable one before running a turn.');
-    if (session.threadId && !session.route.model && config.models.length) throw new Error('Saved thread used the Codex default model, which Pace cannot identify. Use /new to apply your enabled model list.');
-    if (session.threadId && session.route.model && !enabled.some(model => model.model === session.route.model)) throw new Error(`Model ${session.route.model} is disabled. Enable it in /models or use /new.`);
-    if (session.threadId && !validRoute(session.route, enabled)) throw new Error(`Saved route ${session.route.model ?? "Codex default"}/${session.route.effort ?? "default"} is no longer enabled. Use /models to restore it or /new.`);
+    if (session.threadId && session.routingMode === "manual" && !session.route.model && config.models.length) throw new Error('Saved thread used the Codex default model, which Pace cannot identify. Use /auto or /new to apply your enabled model list.');
+    if (session.threadId && session.routingMode === "manual" && session.route.model && !enabled.some(model => model.model === session.route.model)) throw new Error(`Model ${session.route.model} is disabled. Enable it in /models or use /auto.`);
+    if (session.threadId && session.routingMode === "manual" && !validRoute(session.route, enabled)) throw new Error(`Saved route ${session.route.model ?? "Codex default"}/${session.route.effort ?? "default"} is no longer enabled. Use /models to restore it or /auto.`);
     const usableConfig = { ...config, models: enabled, defaultRoute: config.models.length && (!config.defaultRoute.model || !enabled.some(model => model.model === config.defaultRoute.model))
       ? { model: enabled[0]?.model, effort: enabled[0]?.defaultEffort ?? enabled[0]?.efforts[0] } : config.defaultRoute };
     const save = async () => {
@@ -45,9 +45,9 @@ export class Orchestrator {
     };
     let route: Route;
     let note: string;
-    if (session.threadId) {
+    if (session.threadId && session.routingMode === "manual") {
       route = session.route;
-      note = "Continuing Codex thread with its saved route";
+      note = "Continuing manual route";
     } else {
       let suggestion: unknown;
       const routeCount = enabled.reduce((count, model) => count + model.efforts.length, 0);
@@ -64,7 +64,9 @@ export class Orchestrator {
             ? session.route
             : undefined
           : undefined,
-        session.routingMode === "auto" && routeCount >= 2 && routeCount <= 12 ? sensitiveArchitectureFallback(routeRequest(prompt, enabled).context, usableConfig) : undefined,
+        session.routingMode === "auto" && routeCount >= 2 && routeCount <= 12
+          ? greetingFallback(routeRequest(prompt, enabled).context, usableConfig) ?? sensitiveArchitectureFallback(routeRequest(prompt, enabled).context, usableConfig)
+          : undefined,
       );
       route = selected.route;
       note = selected.note;
