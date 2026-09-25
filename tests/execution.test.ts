@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Orchestrator } from '../src/core/orchestrator.js';
 import { PaceStore, newSession } from '../src/core/sessions.js';
-import { eventProgress, type CodexRunner } from '../src/integrations/codex.js';
+import { eventProgress, SdkRunner, type CodexRunner } from '../src/integrations/codex.js';
 import type { Config, Route } from '../src/types.js';
 let dir: string;
 afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true }); });
@@ -52,4 +52,18 @@ it('never routes to a disabled model and saves turn usage', async () => {
   expect((await store.latest('/example/project'))?.turns[0]?.usage).toEqual(usage);
   await expect(new Orchestrator(store, runner, jev).turn('again', session, { ...config, models: config.models.map(model => ({ ...model, enabled: false })) }, () => {})).rejects.toThrow('No models enabled');
   expect(seen).toHaveLength(1);
+  session.route = { model: 'blocked', effort: 'medium' };
+  await expect(new Orchestrator(store, runner, jev).turn('again', session, config, () => {})).rejects.toThrow('disabled');
+});
+it('reads usage from the SDK turn-completed event', async () => {
+  const usage = { input_tokens: 20, cached_input_tokens: 4, cache_write_input_tokens: 0, output_tokens: 8, reasoning_output_tokens: 2 };
+  const thread = { id: 'thread-1', async runStreamed() { return { events: (async function* () {
+    yield { type: 'thread.started', thread_id: 'thread-1' };
+    yield { type: 'item.completed', item: { type: 'agent_message', id: 'msg-1', text: 'done' } };
+    yield { type: 'turn.completed', usage };
+  })() }; } };
+  const runner = new SdkRunner();
+  (runner as unknown as { codex: { startThread: () => typeof thread } }).codex = { startThread: () => thread };
+  const result = await runner.run('work', '/example/project', { model: 'configured', effort: 'medium' }, undefined, () => {});
+  expect(result).toMatchObject({ threadId: 'thread-1', result: 'done', usage });
 });
