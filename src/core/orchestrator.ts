@@ -1,7 +1,7 @@
 import type { Config, Route, Session } from "../types.js";
 import type { CodexRunner, Progress } from "../integrations/codex.js";
 import { VexRouter } from "../integrations/vex.js";
-import { policyRoute, selectRoute } from "./router.js";
+import { lightweightFallback, policyRoute, selectRoute } from "./router.js";
 import { routeRequest } from "../integrations/vex.js";
 import { PaceStore } from "./sessions.js";
 import { artifactSnapshot, changedArtifacts } from "./artifacts.js";
@@ -58,7 +58,8 @@ export class Orchestrator {
         catch (error) { throw new VexUnavailableError(error); }
       }
       const routeContext = routeRequest(prompt, enabled).context;
-      const selected = selectRoute(
+      const simpleRoute = session.routingMode === "auto" ? lightweightFallback(routeContext, usableConfig) : undefined;
+      const selected = simpleRoute ? { route: simpleRoute, note: "Policy route for simple question or exploration" } : selectRoute(
         { ...usableConfig, routingMode: session.routingMode },
         suggestion,
         session.routingMode === "manual"

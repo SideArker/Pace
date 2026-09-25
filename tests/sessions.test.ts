@@ -30,3 +30,11 @@ it('does not use the SDK default when an explicit model config is corrupt', asyn
   await writeFile(join(dir, 'config.json'), '{bad');
   await expect(store.loadConfig()).rejects.toThrow();
 });
+it('loads definitive routes for an untouched legacy automatic config', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  const store = new PaceStore(dir);
+  await writeFile(join(dir, 'config.json'), JSON.stringify({ models: [], defaultRoute: {}, routingMode: 'auto' }));
+  const config = await store.loadConfig();
+  expect(config.defaultRoute).toEqual({ model: 'gpt-6-sol', effort: 'medium' });
+  expect(config.models.map(model => model.model)).toEqual(['gpt-6-luna', 'gpt-6-sol', 'gpt-6-astra']);
+});

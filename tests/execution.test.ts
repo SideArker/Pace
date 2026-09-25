@@ -89,7 +89,7 @@ it('routes every auto turn while resuming the same Codex thread', async () => {
     { id: undefined, route: { model: 'gpt-6-sol', effort: 'medium' } },
     { id: 'thread-1', route: { model: 'gpt-6-luna', effort: 'low' } },
   ]);
-  expect(hello.note).toContain('Policy fallback');
+  expect(hello.note).toContain('Policy route');
   expect(session.turns.map(turn => turn.route)).toEqual(calls.map(call => call.route));
 });
 it('uses Sol high for sensitive architecture after Vex abstains but keeps greetings and factual questions on Luna low', async () => {
@@ -106,8 +106,8 @@ it('uses Sol high for sensitive architecture after Vex abstains but keeps greeti
   const factual = await orchestrator.turn('Hey, do you mind telling me what mitochondria is used for?', newSession('/example/project', 'auto'), config, () => {});
   const payment = await orchestrator.turn('Plan and build an advanced payment system', newSession('/example/project', 'auto'), config, () => {});
   expect(seen).toEqual([{ model: 'gpt-6-luna', effort: 'low' }, { model: 'gpt-6-luna', effort: 'low' }, { model: 'gpt-6-sol', effort: 'high' }]);
-  expect(hello.note).toContain('Policy fallback');
-  expect(factual.note).toContain('Policy fallback');
+  expect(hello.note).toContain('Policy route');
+  expect(factual.note).toContain('Policy route');
   expect(payment.note).toContain('Policy fallback');
 });
 it('reads usage from the SDK turn-completed event', async () => {
@@ -132,6 +132,9 @@ it('reads usage from the SDK turn-completed event', async () => {
   expect(options).toMatchObject({ workingDirectory: actualProjectPath, sandboxMode: 'workspace-write', approvalPolicy: 'never', networkAccessEnabled: false, model: 'configured', modelReasoningEffort: 'medium' });
   await runner.run('follow-up', savedProjectPath, { model: 'gpt-6-luna', effort: 'low' }, 'thread-1', () => {});
   expect(options).toMatchObject({ model: 'gpt-6-luna', modelReasoningEffort: 'low' });
+  await runner.run('side question', savedProjectPath, { model: 'gpt-6-luna', effort: 'low' }, undefined, () => {}, undefined, 'side');
+  expect(options).toMatchObject({ sandboxMode: 'read-only', approvalPolicy: 'never' });
+  expect(receivedPrompt).toBe('side question');
 });
 it('gives Codex an independent Vex MCP launch without exposing the key value', () => {
   expect(codexOptions('/installed/vex/dist/index.js')).toEqual({ config: { mcp_servers: { vex: { command: process.execPath, args: ['/installed/vex/dist/index.js', 'mcp', 'serve'], env_vars: ['OPENROUTER_API_KEY'] } } } });

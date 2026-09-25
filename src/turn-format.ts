@@ -18,7 +18,7 @@ function formatWindow(window: UsageWindow): string {
         : minutes % 60 === 0
           ? `${minutes / 60}h`
           : `${minutes}m`;
-  return `${label} ${100 - window.usedPercent}%`;
+  return `${label} ${window.usedPercent}%`;
 }
 
 export function formatUsageLimits(limits?: UsageLimits): string {
@@ -40,6 +40,7 @@ export function modelName(route?: Route): string {
 function routeSource(note?: string): string {
   if (!note) return "saved";
   if (note.startsWith("Selected by Vex")) return "auto";
+  if (note.startsWith("Policy route")) return "auto (policy)";
   if (note.startsWith("Selected from Vex model consensus"))
     return "auto (consensus)";
   if (note.startsWith("Policy fallback")) return "auto (policy)";

@@ -14,6 +14,7 @@ import type { UsageLimits } from "./integrations/usage.js";
 import { Composer } from "./components/Composer.js";
 import { Header, Transcript, type Line } from "./components/Transcript.js";
 import { UsageBar } from "./components/UsageBar.js";
+import { CommandMenu, ModelMenu, ResumeMenu } from "./components/Menus.js";
 import { spawn } from "node:child_process";
 const commands = [
   "/help",
@@ -32,7 +33,8 @@ const spinner = ["|", "/", "-", "\\"];
 const project = process.cwd();
 const store = new PaceStore();
 const vex = new VexRouter();
-const orchestrator = new Orchestrator(store, new SdkRunner(), vex);
+const runner = new SdkRunner();
+const orchestrator = new Orchestrator(store, runner, vex);
 
 export default function App({ onClear }: { onClear: () => void }) {
   const { exit } = useApp();
@@ -42,6 +44,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const [lines, setLines] = useState<Line[]>([]);
   const [status, setStatus] = useState("Loading…");
   const [busy, setBusy] = useState(false);
+  const [sideBusy, setSideBusy] = useState(false);
   const [draft, setDraft] = useState("");
   const [history, setHistory] = useState<string[]>([]);
   const [outputsExpanded, setOutputsExpanded] = useState(false);
@@ -49,6 +52,8 @@ export default function App({ onClear }: { onClear: () => void }) {
   const [usageLimits, setUsageLimits] = useState<UsageLimits>();
   const [usageError, setUsageError] = useState<string>();
   const [showUsage, setShowUsage] = useState(false);
+  const [showHeader, setShowHeader] = useState(true);
+  const [scrollBack, setScrollBack] = useState(0);
   const [selection, setSelection] = useState(0);
   const [tick, setTick] = useState(0);
   const [shellMode, setShellMode] = useState(false);
@@ -64,7 +69,10 @@ export default function App({ onClear }: { onClear: () => void }) {
   const [menuModel, setMenuModel] = useState("");
   const [menuIndex, setMenuIndex] = useState(0);
   const nextId = useRef(0);
+  const turnSequence = useRef(0);
   const abort = useRef<AbortController | undefined>(undefined);
+  const activePrompt = useRef<string | undefined>(undefined);
+  const sideAbort = useRef<AbortController | undefined>(undefined);
   const shells = useRef(new Set<{ kill: () => boolean }>());
   const add = (role: Line["role"], text: string) =>
     setLines((old) => [
@@ -99,10 +107,10 @@ export default function App({ onClear }: { onClear: () => void }) {
     ]),
   ];
   useEffect(() => {
-    if (!busy && shellJobs === 0) return;
+    if (!busy && !sideBusy && shellJobs === 0) return;
     const timer = setInterval(() => setTick((value) => value + 1), 250);
     return () => clearInterval(timer);
-  }, [busy, shellJobs]);
+  }, [busy, sideBusy, shellJobs]);
   useEffect(
     () => () => {
       for (const child of shells.current) child.kill();
@@ -259,13 +267,16 @@ export default function App({ onClear }: { onClear: () => void }) {
   };
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
-      if (busy) {
+      if (busy || sideBusy) {
         abort.current?.abort();
+        sideAbort.current?.abort();
         setStatus("Cancelling…");
       } else exit();
     }
     if (key.ctrl && input === "o") setOutputsExpanded(value => !value);
     if (key.ctrl && input === "e") setDetailsExpanded(value => !value);
+    if (key.pageUp) setScrollBack(value => Math.min(value + Math.max(8, (stdout.rows ?? 24) - 12), lines.length));
+    if (key.pageDown) setScrollBack(value => Math.max(0, value - Math.max(8, (stdout.rows ?? 24) - 12)));
     if (modelMenu) {
       const size = modelMenu === "models" ? menuModels.length : EFFORTS.length;
       if (key.escape) {
@@ -336,9 +347,33 @@ export default function App({ onClear }: { onClear: () => void }) {
     }
   };
 
+  const askBtw = async (question: string) => {
+    if (!session || !config) return;
+    if (!question.trim()) { add("error", "Type /btw <question> to ask a side question."); return; }
+    if (sideBusy) { add("info", "A side question is already running."); return; }
+    const context = [session.turns.slice(-4).map(turn => `User: ${turn.prompt}\nPace: ${turn.result}`).join("\n\n"), activePrompt.current ? `Current user request (still in progress): ${activePrompt.current}` : ""].filter(Boolean).join("\n\n");
+    const luna = config.models.find(model => model.enabled !== false && model.model === "gpt-6-luna");
+    const route = luna ? { model: luna.model, effort: luna.efforts.includes("low") ? "low" as const : luna.defaultEffort ?? luna.efforts[0] } : session.route.model ? session.route : config.defaultRoute;
+    const controller = new AbortController();
+    const sideId = ++turnSequence.current;
+    sideAbort.current = controller;
+    setSideBusy(true);
+    add("you", `/btw ${question}`);
+    try {
+      const prompt = `Answer this side question using the brief conversation context below. Do not edit files or take action. This is separate from the main conversation.\n\nContext:\n${context || "(No previous turns)"}\n\nSide question: ${question}`;
+      const result = await runner.run(prompt, session.projectPath, route, undefined, progress => {
+        if (progress.kind === "activity") activity({ ...progress, id: `side-${sideId}-${progress.id}` });
+        if (progress.kind === "error") add("error", progress.text);
+      }, controller.signal, "side");
+      add("side", result.result);
+    } catch (error) { add("error", `Side question failed: ${String(error)}`); }
+    finally { sideAbort.current = undefined; setSideBusy(false); }
+  };
+
   const submit = async (raw: string) => {
     const text = raw.trim();
     if (!text || !session || !config) return;
+    setHistory(old => [...old.slice(-99), raw]);
     if (text === "!") {
       add("info", shellMode ? "$ !" : "> !");
       setShellMode((value) => !value);
@@ -361,6 +396,11 @@ export default function App({ onClear }: { onClear: () => void }) {
       shell(text);
       return;
     }
+    if (text === "/btw" || text.startsWith("/btw ")) {
+      setDraft("");
+      void askBtw(text.slice(4).trim());
+      return;
+    }
     if (busy) {
       add(
         "info",
@@ -370,12 +410,13 @@ export default function App({ onClear }: { onClear: () => void }) {
     }
     setDraft("");
     setSelection(0);
-    setHistory(old => [...old.slice(-99), raw]);
     if (text.startsWith("/")) {
       const [command, ...parts] = text.split(/\s+/);
       if (command === "/clear" && !parts.length) {
         onClear();
         setLines([]);
+        setShowHeader(false);
+        setScrollBack(0);
         return;
       }
       if (command === "/exit") {
@@ -472,8 +513,10 @@ export default function App({ onClear }: { onClear: () => void }) {
     }
     add("you", text);
     setBusy(true);
+    activePrompt.current = text;
     setStatus("Starting…");
     const controller = new AbortController();
+    const turnId = ++turnSequence.current;
     abort.current = controller;
     try {
       const outcome = await orchestrator.turn(
@@ -488,7 +531,7 @@ export default function App({ onClear }: { onClear: () => void }) {
           if (progress.kind === "route")
             setStatus(`Using ${modelName(progress.route)}…`);
           if (progress.kind === "activity") {
-            activity(progress);
+            activity({ ...progress, id: `turn-${turnId}-${progress.id}` });
             setStatus(progress.title);
           }
           if (progress.kind === "error") add("error", progress.text);
@@ -519,69 +562,16 @@ export default function App({ onClear }: { onClear: () => void }) {
       setStatus("Failed");
     } finally {
       abort.current = undefined;
+      activePrompt.current = undefined;
       setBusy(false);
     }
   };
   return (
     <Box flexDirection="column" paddingX={1}>
-      <Header project={project} vexState={vexState} />
-      <Transcript lines={lines} outputsExpanded={outputsExpanded} detailsExpanded={detailsExpanded} rows={stdout.rows ?? 24} />
-      {modelMenu ? (
-        <Box flexDirection="column" borderStyle="round" paddingX={1}>
-          <Text bold>
-            {modelMenu === "models"
-              ? "Models"
-              : `${menuModel} reasoning levels`}
-          </Text>
-          {(modelMenu === "models" ? menuModels : EFFORTS).map(
-            (item, index) => {
-              const configured = config?.models.find(
-                (model) =>
-                  model.model === (modelMenu === "models" ? item : menuModel),
-              );
-              const enabled =
-                modelMenu === "models"
-                  ? !!configured && configured.enabled !== false
-                  : !!configured?.efforts.includes(
-                      item as (typeof EFFORTS)[number],
-                    );
-              return (
-                <Text
-                  key={item}
-                  color={index === menuIndex ? "cyan" : undefined}
-                >
-                  {index === menuIndex ? "› " : "  "}
-                  {enabled ? "[x]" : "[ ]"} {item}
-                  {modelMenu === "models" && configured
-                    ? ` · ${configured.efforts.join(", ")}`
-                    : ""}
-                </Text>
-              );
-            },
-          )}
-          <Text dimColor>
-            {modelMenu === "models"
-              ? "↑/↓ or Tab select · Space enable/disable · Enter edit reasoning · Esc close"
-              : "↑/↓ or Tab select · Space/Enter toggle · Esc models"}
-          </Text>
-        </Box>
-      ) : null}
-      {resumeMenu ? (
-        <Box flexDirection="column" borderStyle="round" paddingX={1}>
-          <Text bold>Conversations</Text>
-          {resumeChoices.map((choice, index) => (
-            <Text
-              key={choice.id}
-              color={index === menuIndex ? "cyan" : undefined}
-            >
-              {index === menuIndex ? "› " : "  "}
-              {choice.id.slice(0, 8)} · {choice.updatedAt.slice(0, 16)} ·{" "}
-              {choice.turns.at(-1)?.prompt ?? "(empty)"}
-            </Text>
-          ))}
-          <Text dimColor>↑/↓ or Tab select · Enter resume · Esc close</Text>
-        </Box>
-      ) : null}
+      {showHeader ? <Header project={project} vexState={vexState} /> : null}
+      <Transcript lines={lines} outputsExpanded={outputsExpanded} detailsExpanded={detailsExpanded} rows={stdout.rows ?? 24} scrollBack={scrollBack} />
+      {modelMenu ? <ModelMenu mode={modelMenu} models={menuModels} selectedModel={menuModel} selectedIndex={menuIndex} config={config} /> : null}
+      {resumeMenu ? <ResumeMenu choices={resumeChoices} selectedIndex={menuIndex} /> : null}
       {busy || shellJobs ? (
         <Text dimColor>
           {spinner[tick % spinner.length]} {status}
@@ -604,17 +594,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         />
       </Box>
       {showUsage ? <UsageBar limits={usageLimits} error={usageError} /> : null}
-      {!modelMenu && !resumeMenu && matches.length > 0 ? (
-        <Box flexDirection="column">
-          <Text dimColor>Commands · ↑/↓ select · Tab complete</Text>
-          {matches.map((match, index) => (
-            <Text key={match} color={index === selection ? "cyan" : undefined}>
-              {index === selection ? "› " : "  "}
-              {match}
-            </Text>
-          ))}
-        </Box>
-      ) : null}
+      {!modelMenu && !resumeMenu && matches.length > 0 ? <CommandMenu matches={matches} selectedIndex={selection} /> : null}
     </Box>
   );
 }

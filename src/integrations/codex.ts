@@ -82,12 +82,13 @@ export class SdkRunner implements CodexRunner {
     threadId: string | undefined,
     onProgress: (progress: Progress) => void | Promise<void>,
     signal?: AbortSignal,
+    mode: "main" | "side" = "main",
   ): Promise<Execution> {
     const options: ThreadOptions = {
       // Session keys are case-folded on Windows; the native sandbox needs the
       // filesystem's actual path casing when it builds its writable roots.
       workingDirectory: await realpath(project),
-      sandboxMode: "workspace-write",
+      sandboxMode: mode === "side" ? "read-only" : "workspace-write",
       approvalPolicy: "never",
       networkAccessEnabled: false,
       model: route.model,
@@ -96,7 +97,7 @@ export class SdkRunner implements CodexRunner {
     const thread = threadId
       ? this.codex.resumeThread(threadId, options)
       : this.codex.startThread(options);
-    const { events } = await thread.runStreamed(artifactPrompt(prompt), { signal });
+    const { events } = await thread.runStreamed(mode === "side" ? prompt : artifactPrompt(prompt), { signal });
     let result = "";
     let completed = false;
     let failure: string | undefined;

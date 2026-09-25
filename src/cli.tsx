@@ -14,7 +14,7 @@ const args = process.argv.slice(2);
 if (args.includes("--version")) console.log(`pace ${version}`);
 else if (args.includes("--help"))
   console.log(
-    `Pace ${version} · independent Codex SDK terminal client\n\nUsage: pace [doctor|--help|--version]\n\nInteractive commands: /help /models /auto /new /resume /usage /artifacts /clear /exit\nBash: ! <command> or ! to toggle Bash mode`,
+    `Pace ${version} · independent Codex SDK terminal client\n\nUsage: pace [doctor|--help|--version]\n\nInteractive commands: /help /models /auto /new /resume /usage /btw <question> /artifacts /clear /exit\nBash: ! <command> or ! to toggle Bash mode\nInput: Shift+Enter or Ctrl+Enter for newline, arrows for history, Ctrl+O outputs, Ctrl+E details`,
   );
 else if (args[0] === "doctor") {
   const notices: string[] = [];
