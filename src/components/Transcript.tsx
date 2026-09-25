@@ -12,18 +12,16 @@ export type Line = {
 };
 
 const colors = { thinking: "magentaBright", command: "cyan", files: "yellow", tool: "blueBright", search: "blue", plan: "magenta" } as const;
-const paceMark = [
-  "  ____  ",
-  " |  _ \\",
-  " | |_) |",
-  " |  __/ ",
-  " |_|    ",
-].join("\n");
+const paceMark = String.raw` ____    _    ____ _____
+|  _ \  / \  / ___| ____|
+| |_) |/ _ \| |   |  _|
+|  __// ___ \ |___| |___
+|_|  /_/   \_\____|_____|`;
 
 export function Header({ project, vexState }: { project: string; vexState: "connecting" | "connected" | "failed" }) {
-  return <Box gap={2}>
+  return <Box flexDirection="column">
     <Text color="greenBright" bold>{paceMark}</Text>
-    <Box flexDirection="column"><Text color="greenBright" bold>PACE</Text><Text color="gray">{basename(project)}</Text><Text color={vexState === "connected" ? "green" : vexState === "failed" ? "red" : "yellow"}>Vex MCP {vexState === "connected" ? "connected" : vexState === "failed" ? "unavailable" : "connecting"}</Text></Box>
+    <Box gap={2} marginLeft={1}><Text color="gray">{basename(project)}</Text><Text color={vexState === "connected" ? "green" : vexState === "failed" ? "red" : "yellow"}>Vex MCP {vexState === "connected" ? "connected" : vexState === "failed" ? "unavailable" : "connecting"}</Text></Box>
   </Box>;
 }
 
