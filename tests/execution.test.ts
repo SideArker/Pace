@@ -90,7 +90,7 @@ it('routes every auto turn while resuming the same Codex thread', async () => {
   expect(hello.note).toContain('Policy fallback');
   expect(session.turns.map(turn => turn.route)).toEqual(calls.map(call => call.route));
 });
-it('uses Sol high for sensitive architecture after Vex abstains but keeps Hello on Luna low', async () => {
+it('uses Sol high for sensitive architecture after Vex abstains but keeps greetings and factual questions on Luna low', async () => {
   dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
   const seen: Route[] = [];
   const runner: CodexRunner = { async run(_prompt, _project, route) { seen.push(route); return { result: 'done', completed: true }; } };
@@ -101,9 +101,11 @@ it('uses Sol high for sensitive architecture after Vex abstains but keeps Hello 
   const vex = { verify: async () => {}, choose: async () => ({ contractVersion: '1', abstained: true }) };
   const orchestrator = new Orchestrator(new PaceStore(dir), runner, vex);
   const hello = await orchestrator.turn('Hello', newSession('/example/project', 'auto'), config, () => {});
+  const factual = await orchestrator.turn('Hey, do you mind telling me what mitochondria is used for?', newSession('/example/project', 'auto'), config, () => {});
   const payment = await orchestrator.turn('Plan and build an advanced payment system', newSession('/example/project', 'auto'), config, () => {});
-  expect(seen).toEqual([{ model: 'gpt-6-luna', effort: 'low' }, { model: 'gpt-6-sol', effort: 'high' }]);
+  expect(seen).toEqual([{ model: 'gpt-6-luna', effort: 'low' }, { model: 'gpt-6-luna', effort: 'low' }, { model: 'gpt-6-sol', effort: 'high' }]);
   expect(hello.note).toContain('Policy fallback');
+  expect(factual.note).toContain('Policy fallback');
   expect(payment.note).toContain('Policy fallback');
 });
 it('reads usage from the SDK turn-completed event', async () => {

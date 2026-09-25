@@ -1,7 +1,7 @@
 import type { Config, Route, Session } from "../types.js";
 import type { CodexRunner, Progress } from "../integrations/codex.js";
 import { VexRouter } from "../integrations/vex.js";
-import { greetingFallback, selectRoute, sensitiveArchitectureFallback } from "./router.js";
+import { lightweightFallback, selectRoute, sensitiveArchitectureFallback } from "./router.js";
 import { routeRequest } from "../integrations/vex.js";
 import { PaceStore } from "./sessions.js";
 import { artifactSnapshot, changedArtifacts } from "./artifacts.js";
@@ -57,6 +57,7 @@ export class Orchestrator {
         try { suggestion = await this.vex.choose(prompt, enabled); }
         catch (error) { throw new VexUnavailableError(error); }
       }
+      const routeContext = routeRequest(prompt, enabled).context;
       const selected = selectRoute(
         { ...usableConfig, routingMode: session.routingMode },
         suggestion,
@@ -66,7 +67,7 @@ export class Orchestrator {
             : undefined
           : undefined,
         session.routingMode === "auto" && routeCount >= 2 && routeCount <= 12
-          ? greetingFallback(routeRequest(prompt, enabled).context, usableConfig) ?? sensitiveArchitectureFallback(routeRequest(prompt, enabled).context, usableConfig)
+          ? lightweightFallback(routeContext, usableConfig) ?? sensitiveArchitectureFallback(routeContext, usableConfig)
           : undefined,
       );
       route = selected.route;

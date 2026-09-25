@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { selectRoute, sensitiveArchitectureFallback } from '../src/core/router.js';
+import { lightweightFallback, selectRoute, sensitiveArchitectureFallback } from '../src/core/router.js';
 import { parseConfig, withModels } from '../src/config.js';
 import { routeRequest } from '../src/integrations/vex.js';
 const config = parseConfig({ routingMode: 'auto', models: [
@@ -44,6 +44,17 @@ describe('routing', () => {
     expect(selectRoute(routes, abstained, undefined, helloFallback).route).toEqual({ model: 'gpt-6-luna', effort: 'low' });
     expect(selectRoute(routes, abstained, undefined, paymentFallback)).toEqual({ route: { model: 'gpt-6-sol', effort: 'high' }, note: 'Policy fallback after Vex abstained or was uncertain' });
   });
+  it('classifies a conversational factual question without exposing its subject and falls back to Luna', () => {
+    const models = [{ model: 'gpt-6-luna', efforts: ['low' as const] }, { model: 'gpt-6-sol', efforts: ['medium' as const] }];
+    const routes = parseConfig({ routingMode: 'auto', models, defaultRoute: { model: 'gpt-6-sol', effort: 'medium' } });
+    const question = routeRequest('Hey, do you mind telling me what mitochondria is used for?', models);
+    expect(question.context).toMatchObject({ category: 'general_knowledge', intent: 'brief factual explanation' });
+    expect(JSON.stringify(question)).not.toContain('mitochondria');
+    const fallback = lightweightFallback(question.context, routes);
+    expect(selectRoute(routes, { contractVersion: '1', abstained: true, reason: 'Insufficient information' }, undefined, fallback))
+      .toEqual({ route: { model: 'gpt-6-luna', effort: 'low' }, note: 'Policy fallback after Vex abstained or was uncertain' });
+    expect(routeRequest('Plan and build a payment system', models).context.category).toBe('coding');
+  });
   it('recovers a clear model consensus when Vex abstains on individual effort confidence', () => {
     const routes = parseConfig({ routingMode: 'auto', models: [
       { model: 'gpt-6-luna', efforts: ['low'] },
@@ -51,6 +62,8 @@ describe('routing', () => {
     ], defaultRoute: { model: 'gpt-6-luna', effort: 'low' } });
     const abstained = { contractVersion: '1', choice: null, abstained: true, reason: 'Insufficient confidence or probability lead', confidence: .54, probabilities: { '0:low': 0, '1:high': .33, '1:xhigh': .66 } };
     expect(selectRoute(routes, abstained)).toEqual({ route: { model: 'gpt-6-sol', effort: 'xhigh' }, note: 'Selected from Vex model consensus after route abstention' });
+    expect(selectRoute(routes, { ...abstained, probabilities: { '0:low': .04, '1:high': .6, '1:xhigh': .17 } }).route).toEqual({ model: 'gpt-6-sol', effort: 'high' });
+    expect(selectRoute(routes, { ...abstained, probabilities: { '0:low': .01, '1:high': .2, '1:xhigh': .15 } }).route).toEqual(routes.defaultRoute);
     expect(selectRoute(routes, { ...abstained, probabilities: { '0:low': .51, '1:high': .25, '1:xhigh': .24 } }).route).toEqual(routes.defaultRoute);
     expect(selectRoute(routes, { ...abstained, reason: 'Insufficient information' }).route).toEqual(routes.defaultRoute);
     expect(selectRoute(routes, { ...abstained, probabilities: { '0:low': 0, '1:high': .33, '1:xhigh': 1.2 } }).route).toEqual(routes.defaultRoute);

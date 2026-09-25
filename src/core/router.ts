@@ -8,14 +8,14 @@ function modelConsensus(config: Config, suggestion: unknown): Route | undefined 
   const entries = Object.entries(probabilities);
   if (ids.length < 2 || entries.length !== ids.length || !entries.every(([id, value]) => ids.includes(id) && typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1)) return undefined;
   const total = entries.reduce((sum, [, value]) => sum + (value as number), 0);
-  if (total > 1.01) return undefined;
+  if (total < 0.75 || total > 1.01) return undefined;
   const ranked = config.models.map((model, index) => ({
     model,
     index,
     mass: model.efforts.reduce((sum, effort) => sum + (probabilities[`${index}:${effort}`] as number), 0),
   })).sort((a, b) => b.mass - a.mass);
   const first = ranked[0];
-  if (!first || first.mass < 0.85 || first.mass - (ranked[1]?.mass ?? 0) < 0.5) return undefined;
+  if (!first || first.mass / total < 0.85 || (first.mass - (ranked[1]?.mass ?? 0)) / total < 0.5) return undefined;
   const effort = first.model.efforts.reduce((best, candidate) =>
     probabilities[`${first.index}:${candidate}`] as number > (probabilities[`${first.index}:${best}`] as number) ? candidate : best);
   return { model: first.model.model, effort };
@@ -45,8 +45,8 @@ export function sensitiveArchitectureFallback(context: { complexDomain: boolean;
   const effort = sol?.efforts.includes('high') ? 'high' : sol?.efforts.includes('xhigh') ? 'xhigh' : undefined;
   return effort ? { model: sol!.model, effort } : undefined;
 }
-export function greetingFallback(context: { category: string }, config: Config): Route | undefined {
-  if (context.category !== 'conversation') return undefined;
+export function lightweightFallback(context: { category: string }, config: Config): Route | undefined {
+  if (context.category !== 'conversation' && context.category !== 'general_knowledge') return undefined;
   const luna = config.models.find(model => model.enabled !== false && model.model === 'gpt-6-luna');
   const effort = luna?.efforts.includes('low') ? 'low' : luna?.defaultEffort ?? luna?.efforts[0];
   return luna && effort ? { model: luna.model, effort } : undefined;

@@ -20,12 +20,14 @@ export function vexServerPath(): string | undefined {
 export function routeRequest(prompt: string, models: ModelOption[]) {
   // Keep user text, repository content and paths out of the remote decision.
   const greeting = /^(hi|hello|hey|thanks|thank you|good (morning|afternoon|evening))[!.?\s]*$/i.test(prompt.trim());
-  const category = greeting ? 'conversation' : /\b(test|bug|fix|error|fail|regression)\b/i.test(prompt) ? 'debugging' : /\b(refactor|migrate|rename|cleanup)\b/i.test(prompt) ? 'refactoring' : 'coding';
+  const factualQuestion = !greeting && /\b(what (?:is|are|does|do)|why (?:is|are|does|do)|how (?:does|do|is|are)|explain|define|tell(?:ing)? me (?:what|about|how))\b/i.test(prompt)
+    && !/\b(build|implement|create|design|plan|code|write|develop|fix|debug|refactor|migrate|test|deploy|integrate|architect)\b/i.test(prompt);
+  const category = greeting ? 'conversation' : factualQuestion ? 'general_knowledge' : /\b(test|bug|fix|error|fail|regression)\b/i.test(prompt) ? 'debugging' : /\b(refactor|migrate|rename|cleanup)\b/i.test(prompt) ? 'refactoring' : 'coding';
   const words = prompt.trim().split(/\s+/).length;
   const size = words < 12 ? 'short' : words < 40 ? 'medium' : 'long';
   const complexDomain = /\b(payment|payments|billing|financial|security|auth|authentication|distributed)\b/i.test(prompt);
   const architecture = /\b(system|architecture|architect|design|platform|end.to.end)\b/i.test(prompt);
-  const intent = greeting ? 'brief social greeting' : complexDomain && architecture ? 'complex architecture and implementation in a sensitive domain' : 'software development request';
+  const intent = greeting ? 'brief social greeting' : factualQuestion ? 'brief factual explanation' : complexDomain && architecture ? 'complex architecture and implementation in a sensitive domain' : 'software development request';
   const describe = (model: string, effort: string) => {
     const tier = /luna/i.test(model) ? 'fast low-cost tier' : /sol/i.test(model) ? 'strong coding tier' : 'configured coding tier';
     return `${model} at ${effort} reasoning, ${tier}`;
@@ -34,7 +36,7 @@ export function routeRequest(prompt: string, models: ModelOption[]) {
     question: 'Which configured Codex model and effort should handle this task?',
     context: { category, intent, requestLength: size, multipleFiles: /\b(all|multiple|several)\s+files?\b/i.test(prompt), testsMentioned: /\b(tests?|specs?)\b/i.test(prompt), complexDomain, architecture },
     options: models.flatMap((model, index) => model.efforts.map(effort => ({ id: `${index}:${effort}`, description: describe(model.model, effort) }))),
-    constraints: 'Choose only from supplied routes. Match effort to task: a brief social greeting needs the fast tier with low reasoning; complex architecture or implementation in a sensitive domain needs the strong coding tier with high or xhigh reasoning. Abstain only if no configured route fits the task.',
+    constraints: 'Choose only from supplied routes. Match effort to task: a brief social greeting or factual explanation needs the fast tier with low reasoning; complex architecture or implementation in a sensitive domain needs the strong coding tier with high or xhigh reasoning. Abstain only if no configured route fits the task.',
   };
 }
 
