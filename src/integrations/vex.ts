@@ -20,8 +20,12 @@ export function vexServerPath(): string | undefined {
 export function routeRequest(prompt: string, models: ModelOption[]) {
   // Keep user text, repository content and paths out of the remote decision.
   const greeting = /^(hi|hello|hey|thanks|thank you|good (morning|afternoon|evening))[!.?\s]*$/i.test(prompt.trim());
-  const factualQuestion = !greeting && /\b(what (?:is|are|does|do)|why (?:is|are|does|do)|how (?:does|do|is|are)|explain|define|tell(?:ing)? me (?:what|about|how))\b/i.test(prompt)
-    && !/\b(build|implement|create|design|plan|code|write|develop|fix|debug|refactor|migrate|test|deploy|integrate|architect)\b/i.test(prompt);
+  const codingAction = /\b(build|implement|create|design|plan|code|write|develop|fix|debug|refactor|migrate|test|deploy|integrate|architect|edit|change)\b/i.test(prompt);
+  const currentInfo = /\b(today|tomorrow|latest|current|recent|forecast|weather|news|price|prices)\b/i.test(prompt);
+  const factualQuestion = !greeting && !codingAction && (
+    /\b(?:what(?:['’]s|\s+(?:is|are|does|do))|who(?:['’]s|\s+(?:is|are))|where(?:['’]s|\s+(?:is|are))|when(?:['’]s|\s+(?:is|are))|why\s+(?:is|are|does|do)|how\s+(?:does|do|is|are)|which\s+(?:is|are)|explain|define|tell(?:ing)? me (?:what|about|how))\b/i.test(prompt)
+    || /^(?:the\s+)?(?:weather|forecast|temperature)\b/i.test(prompt.trim())
+  );
   const exploration = /\b(list|find|locate|show|search|inspect|explore|look (?:for|at)|where (?:is|are))\b/i.test(prompt)
     && /\b(file|files|folder|directory|repo|repository|codebase|function|class|symbol|implementation|usage|definition)\b/i.test(prompt)
     && !/\b(build|implement|create|design|write|develop|fix|refactor|migrate|edit|change)\b/i.test(prompt);
@@ -30,16 +34,16 @@ export function routeRequest(prompt: string, models: ModelOption[]) {
   const size = words < 12 ? 'short' : words < 40 ? 'medium' : 'long';
   const complexDomain = /\b(payment|payments|billing|financial|security|auth|authentication|distributed)\b/i.test(prompt);
   const architecture = /\b(system|architecture|architect|design|platform|end.to.end)\b/i.test(prompt);
-  const intent = greeting ? 'brief social greeting' : exploration ? 'read-only repository exploration' : factualQuestion ? 'brief factual explanation' : complexDomain && architecture ? 'complex architecture and implementation in a sensitive domain' : 'software development request';
+  const intent = greeting ? 'brief social greeting' : exploration ? 'read-only repository exploration' : factualQuestion ? currentInfo ? 'current-information lookup' : 'brief factual explanation' : complexDomain && architecture ? 'complex architecture and implementation in a sensitive domain' : 'software development request';
   const describe = (model: string, effort: string) => {
     const tier = /luna/i.test(model) ? 'fast low-cost tier' : /sol/i.test(model) ? 'strong coding tier' : 'configured coding tier';
     return `${model} at ${effort} reasoning, ${tier}`;
   };
   return {
     question: 'Which configured Codex model and effort should handle this task?',
-    context: { category, intent, requestLength: size, multipleFiles: /\b(all|multiple|several)\s+files?\b/i.test(prompt), testsMentioned: /\b(tests?|specs?)\b/i.test(prompt), complexDomain, architecture },
+    context: { category, intent, requestLength: size, currentInfo, multipleFiles: /\b(all|multiple|several)\s+files?\b/i.test(prompt), testsMentioned: /\b(tests?|specs?)\b/i.test(prompt), complexDomain, architecture },
     options: models.flatMap((model, index) => model.efforts.map(effort => ({ id: `${index}:${effort}`, description: describe(model.model, effort) }))),
-    constraints: 'Choose one supplied route whenever any fits. Greetings, simple questions and read-only file exploration use Luna low. Ordinary coding, debugging and refactoring use Sol medium; difficult multi-file work uses Sol high. Sensitive architecture and deeply complex work use Astra high if available, otherwise Sol high. Abstain only when no supplied route can reasonably handle the task; do not abstain merely because adjacent effort levels are close.',
+    constraints: 'Choose the cheapest supplied route likely to complete the task. Greetings, short factual questions, current-information lookups, and narrow read-only file exploration use Luna low when available; needing a web lookup does not by itself require deeper reasoning. Ordinary coding, debugging, refactoring, and longer explanations use Sol medium; difficult multi-file work uses Sol high. Sensitive architecture and deeply complex work use Astra high if available, otherwise Sol high. Abstain only when no supplied route can reasonably handle the task; do not abstain merely because adjacent effort levels are close.',
   };
 }
 

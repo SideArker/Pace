@@ -110,6 +110,18 @@ it('uses Sol high for sensitive architecture after Vex abstains but keeps greeti
   expect(factual.note).toContain('Policy route');
   expect(payment.note).toContain('Policy fallback');
 });
+it('keeps a short weather lookup on Luna even when Vex suggests Sol medium', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  const seen: Route[] = [];
+  const runner: CodexRunner = { async run(_prompt, _project, route) { seen.push(route); return { result: 'done', completed: true }; } };
+  const config: Config = { routingMode: 'auto', defaultRoute: { model: 'gpt-6-sol', effort: 'medium' }, models: [
+    { model: 'gpt-6-luna', efforts: ['low'] }, { model: 'gpt-6-sol', efforts: ['medium'] },
+  ] };
+  const vex = { verify: async () => {}, choose: async () => ({ contractVersion: '1', choice: '1:medium', abstained: false, confidence: .9, probabilities: { '0:low': .1, '1:medium': .9 } }) };
+  const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn("What's today's weather?", newSession('/example/project', 'auto'), config, () => {});
+  expect(seen).toEqual([{ model: 'gpt-6-luna', effort: 'low' }]);
+  expect(outcome.note).toContain('Policy route');
+});
 it('reads usage from the SDK turn-completed event', async () => {
   const usage = { input_tokens: 20, cached_input_tokens: 4, cache_write_input_tokens: 0, output_tokens: 8, reasoning_output_tokens: 2 };
   let receivedPrompt = '';

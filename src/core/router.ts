@@ -45,8 +45,9 @@ export function sensitiveArchitectureFallback(context: { complexDomain: boolean;
   const effort = sol?.efforts.includes('high') ? 'high' : sol?.efforts.includes('xhigh') ? 'xhigh' : undefined;
   return effort ? { model: sol!.model, effort } : undefined;
 }
-export function lightweightFallback(context: { category: string }, config: Config): Route | undefined {
+export function lightweightFallback(context: { category: string; requestLength: string; complexDomain: boolean; architecture: boolean; multipleFiles: boolean }, config: Config): Route | undefined {
   if (context.category !== 'conversation' && context.category !== 'general_knowledge' && context.category !== 'exploration') return undefined;
+  if (context.category !== 'conversation' && (context.requestLength === 'long' || context.multipleFiles || (context.complexDomain && context.architecture))) return undefined;
   const luna = config.models.find(model => model.enabled !== false && model.model === 'gpt-6-luna');
   const effort = luna?.efforts.includes('low') ? 'low' : luna?.defaultEffort ?? luna?.efforts[0];
   return luna && effort ? { model: luna.model, effort } : undefined;
@@ -61,6 +62,8 @@ export function policyRoute(context: { category: string; requestLength: string; 
   if (light) return light;
   if (context.complexDomain && context.architecture)
     return available('gpt-6-astra', ['high', 'xhigh', 'medium']) ?? available('gpt-6-sol', ['high', 'xhigh', 'medium']);
+  if ((context.category === 'general_knowledge' || context.category === 'exploration') && context.requestLength === 'long' && !context.multipleFiles)
+    return available('gpt-6-sol', ['medium', 'high']) ?? available('gpt-6-luna', ['low']);
   if (context.multipleFiles || context.testsMentioned || context.requestLength === 'long')
     return available('gpt-6-sol', ['high', 'medium']) ?? available('gpt-6-astra', ['high']);
   return available('gpt-6-sol', ['medium', 'high', 'low']) ?? available('gpt-6-luna', ['low']);

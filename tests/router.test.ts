@@ -56,6 +56,20 @@ describe('routing', () => {
       .toEqual({ route: { model: 'gpt-6-luna', effort: 'low' }, note: 'Policy fallback after Vex abstained or was uncertain' });
     expect(routeRequest('Plan and build a payment system', models).context.category).toBe('coding');
   });
+  it('treats current factual lookups as light work without weakening coding and complex-task routes', () => {
+    const weather = routeRequest("What's today's weather in Warsaw?", DEFAULT_CONFIG.models);
+    expect(weather.context).toMatchObject({ category: 'general_knowledge', intent: 'current-information lookup', currentInfo: true });
+    expect(lightweightFallback(weather.context, DEFAULT_CONFIG)).toEqual({ model: 'gpt-6-luna', effort: 'low' });
+    expect(JSON.stringify(weather)).not.toContain('Warsaw');
+    expect(routeRequest('Weather in Warsaw today', DEFAULT_CONFIG.models).context.category).toBe('general_knowledge');
+    expect(routeRequest("What's wrong with the test in src/app.tsx?", DEFAULT_CONFIG.models).context.category).toBe('debugging');
+    const architecture = routeRequest("What's the security architecture for payments?", DEFAULT_CONFIG.models).context;
+    expect(lightweightFallback(architecture, DEFAULT_CONFIG)).toBeUndefined();
+    expect(policyRoute(architecture, DEFAULT_CONFIG)).toEqual({ model: 'gpt-6-astra', effort: 'high' });
+    const longExplanation = routeRequest(`Explain ${'the implications '.repeat(45)}`, DEFAULT_CONFIG.models).context;
+    expect(lightweightFallback(longExplanation, DEFAULT_CONFIG)).toBeUndefined();
+    expect(policyRoute(longExplanation, DEFAULT_CONFIG)).toEqual({ model: 'gpt-6-sol', effort: 'medium' });
+  });
   it('uses clear policy routes for exploration, ordinary coding, and sensitive architecture', () => {
     expect(DEFAULT_CONFIG.models.map(model => model.model)).toEqual(['gpt-6-luna', 'gpt-6-sol', 'gpt-6-astra']);
     const explore = routeRequest('Find the router implementation in this repo', DEFAULT_CONFIG.models);
