@@ -1,10 +1,12 @@
 import {
   Codex,
+  type CodexOptions,
   type ThreadEvent,
   type ThreadOptions,
   type Usage,
 } from "@openai/codex-sdk";
 import type { Route } from "../types.js";
+import { vexServerPath } from './vex.js';
 export type Progress =
   | { kind: "status" | "message" | "error" | "thread"; text: string }
   | { kind: "route"; route: Route };
@@ -66,8 +68,11 @@ export function eventProgress(event: ThreadEvent): Progress | undefined {
   if (item.type === "error") return { kind: "error", text: item.message };
   return undefined;
 }
+export function codexOptions(serverPath: string | undefined): CodexOptions {
+  return serverPath ? { config: { mcp_servers: { vex: { command: process.execPath, args: [serverPath, 'mcp', 'serve'], env_vars: ['OPENROUTER_API_KEY'] } } } } : {};
+}
 export class SdkRunner implements CodexRunner {
-  private codex = new Codex();
+  private codex = new Codex(codexOptions(vexServerPath()));
   async run(
     prompt: string,
     project: string,

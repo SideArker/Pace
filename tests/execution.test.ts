@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Orchestrator } from '../src/core/orchestrator.js';
 import { PaceStore, newSession } from '../src/core/sessions.js';
-import { eventProgress, SdkRunner, type CodexRunner } from '../src/integrations/codex.js';
+import { codexOptions, eventProgress, SdkRunner, type CodexRunner } from '../src/integrations/codex.js';
 import type { Config, Route } from '../src/types.js';
 let dir: string;
 afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true }); });
@@ -44,16 +44,16 @@ it('never routes to a disabled model and saves turn usage', async () => {
     { model: 'blocked', efforts: ['medium'], enabled: false },
     { model: 'allowed', efforts: ['high'], enabled: true },
   ] };
-  const jev = async () => { throw new Error('Jev should not run for one enabled model'); };
+  const vex = { choose: async () => { throw new Error('Vex should not run for one enabled route'); } };
   const session = newSession('/example/project', 'auto');
-  const outcome = await new Orchestrator(store, runner, jev).turn('work', session, config, () => {});
+  const outcome = await new Orchestrator(store, runner, vex).turn('work', session, config, () => {});
   expect(seen).toEqual([{ model: 'allowed', effort: 'high' }]);
   expect(outcome.usage).toEqual(usage);
   expect((await store.latest('/example/project'))?.turns[0]?.usage).toEqual(usage);
-  await expect(new Orchestrator(store, runner, jev).turn('again', session, { ...config, models: config.models.map(model => ({ ...model, enabled: false })) }, () => {})).rejects.toThrow('No models enabled');
+  await expect(new Orchestrator(store, runner, vex).turn('again', session, { ...config, models: config.models.map(model => ({ ...model, enabled: false })) }, () => {})).rejects.toThrow('No models enabled');
   expect(seen).toHaveLength(1);
   session.route = { model: 'blocked', effort: 'medium' };
-  await expect(new Orchestrator(store, runner, jev).turn('again', session, config, () => {})).rejects.toThrow('disabled');
+  await expect(new Orchestrator(store, runner, vex).turn('again', session, config, () => {})).rejects.toThrow('disabled');
 });
 it('reads usage from the SDK turn-completed event', async () => {
   const usage = { input_tokens: 20, cached_input_tokens: 4, cache_write_input_tokens: 0, output_tokens: 8, reasoning_output_tokens: 2 };
@@ -63,7 +63,13 @@ it('reads usage from the SDK turn-completed event', async () => {
     yield { type: 'turn.completed', usage };
   })() }; } };
   const runner = new SdkRunner();
-  (runner as unknown as { codex: { startThread: () => typeof thread } }).codex = { startThread: () => thread };
+  let options: unknown;
+  (runner as unknown as { codex: { startThread: (value: unknown) => typeof thread } }).codex = { startThread: value => { options = value; return thread; } };
   const result = await runner.run('work', '/example/project', { model: 'configured', effort: 'medium' }, undefined, () => {});
   expect(result).toMatchObject({ threadId: 'thread-1', result: 'done', usage });
+  expect(options).toMatchObject({ workingDirectory: '/example/project', sandboxMode: 'workspace-write', approvalPolicy: 'never', networkAccessEnabled: false, model: 'configured', modelReasoningEffort: 'medium' });
+});
+it('gives Codex an independent Vex MCP launch without exposing the key value', () => {
+  expect(codexOptions('/installed/vex/dist/index.js')).toEqual({ config: { mcp_servers: { vex: { command: process.execPath, args: ['/installed/vex/dist/index.js', 'mcp', 'serve'], env_vars: ['OPENROUTER_API_KEY'] } } } });
+  expect(codexOptions(undefined)).toEqual({});
 });

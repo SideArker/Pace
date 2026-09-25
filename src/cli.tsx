@@ -6,7 +6,7 @@ import { access } from "node:fs/promises";
 import { constants } from "node:fs";
 import { join } from "node:path";
 import { PaceStore } from "./core/sessions.js";
-import { findJev } from "./integrations/jev.js";
+import { vexServerPath } from "./integrations/vex.js";
 import App from "./app.js";
 const require = createRequire(import.meta.url);
 const version = (require("../package.json") as { version: string }).version;
@@ -43,7 +43,7 @@ else if (args[0] === "doctor") {
     console.log(`Config: ${String(error)}`);
   }
   console.log(
-    `Jev: ${findJev() ? "found" : "unavailable; default route remains usable"}`,
+    `Vex MCP: ${vexServerPath() ? "server found" : "unavailable; default route remains usable"}`,
   );
   try {
     await access(join(process.cwd(), ".git"));

@@ -5,6 +5,7 @@ import type { Config, Session, Route } from "./types.js";
 import { PaceStore, newSession } from "./core/sessions.js";
 import { Orchestrator } from "./core/orchestrator.js";
 import { SdkRunner } from "./integrations/codex.js";
+import { VexRouter } from './integrations/vex.js';
 import { EFFORTS, parseConfig, validRoute } from "./config.js";
 import { spawn } from "node:child_process";
 
@@ -21,7 +22,8 @@ const usageLabel = (usage: NonNullable<Awaited<ReturnType<SdkRunner['run']>>['us
   `Turn tokens: input ${usage.input_tokens}, cached input ${usage.cached_input_tokens}, cache write ${usage.cache_write_input_tokens}, output ${usage.output_tokens}, reasoning output ${usage.reasoning_output_tokens}`;
 const project = process.cwd();
 const store = new PaceStore();
-const orchestrator = new Orchestrator(store, new SdkRunner());
+const vex = new VexRouter();
+const orchestrator = new Orchestrator(store, new SdkRunner(), vex);
 
 export default function App() {
   const { exit } = useApp();
@@ -48,6 +50,13 @@ export default function App() {
     return () => clearInterval(timer);
   }, [busy, shellJobs]);
   useEffect(() => () => { for (const child of shells.current) child.kill(); }, []);
+  useEffect(() => {
+    void vex.start().catch(error => {
+      add('error', `Vex MCP connection failed: ${String(error)}. Auto routing will use the configured default.`);
+      orchestrator.reportVexError();
+    });
+    return () => { void vex.close(); };
+  }, []);
   useEffect(() => {
     let active = true;
     const load = async () => {
