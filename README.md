@@ -37,6 +37,7 @@ For development, use `npm run dev` instead of linking. `pace --help` and `pace -
 | `/auto` | Enable Vex routing for the next turn, including in a resumed conversation |
 | `/new` | Start a fresh Pace and Codex conversation |
 | `/resume` | Open a saved conversation picker for this project |
+| `/usage` | Refresh Codex account usage percentages |
 | `/artifacts` | List Markdown artifacts in this project's `.pace/artifacts` directory |
 | `/clear` | Clear the visible terminal transcript; keep the Codex conversation |
 | `/exit` | Quit |
@@ -80,7 +81,7 @@ Pace writes config and short, user-visible turn summaries under `~/.pace`; each 
 
 Pace runs SDK turns in `workspace-write` mode with network access disabled and approval policy `never`. This is a restricted mode: actions requiring higher permissions are denied rather than approved. The TypeScript SDK used here does not expose an in-app approval response interface, so Pace has no interactive approval prompt. It does not enable unrestricted access or bypass Codex safeguards.
 
-The SDK streams documented status and agent-message events. Pace shows a compact footer with model, reasoning level, elapsed time, input and output tokens, cached input, and route source after each turn. When no override is set, it says `Codex default` because the SDK does not expose the effective model in these events. Pace does not display reasoning items. Some SDK messages arrive as completed items rather than token-by-token text. The SDK does not report token usage per command or message item. Pace records up to 20 short visible summaries per conversation, not the full transcript.
+The SDK streams documented status and agent-message events. Pace shows a compact footer with model, reasoning level, elapsed time, input and output tokens, cached input, and route source after each turn. Pace also reads Codex account rate limits on startup and after each turn, showing the reported usage percentage for each available time window. Use `/usage` to refresh it. If the account usage read fails, Pace says `Usage unavailable`; coding turns still work. When no override is set, it says `Codex default` because the SDK does not expose the effective model in these events. Pace does not display reasoning items. Some SDK messages arrive as completed items rather than token-by-token text. The SDK does not report token usage per command or message item. Pace records up to 20 short visible summaries per conversation, not the full transcript.
 
 When you ask Codex to create an artifact, Pace tells it to save a Markdown working note in the project-local `.pace/artifacts/` directory. These files persist across conversations and can be reused by asking Codex to read or update them. `/artifacts` lists them; newly created or updated files are shown after a turn. Artifact files are regular project files under Codex's workspace sandbox.
 
