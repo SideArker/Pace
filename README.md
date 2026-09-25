@@ -1,6 +1,6 @@
 # Pace 0.1
 
-Pace is an independent, terminal-only coding client. The official [Codex TypeScript SDK](https://github.com/openai/codex/tree/main/sdk/typescript) runs coding turns; the local `jev` command can recommend a configured model for new conversations. Pace is not an OpenAI product.
+Pace is an independent, terminal-only coding client. The official [Codex TypeScript SDK](https://github.com/openai/codex/tree/main/sdk/typescript) runs coding turns; the [Vex MCP server](https://github.com/SideArker/Vex) can recommend a configured model and effort for new conversations. Pace is not an OpenAI product.
 
 ## Install and run
 
@@ -26,7 +26,7 @@ pace doctor
 pace
 ```
 
-For development, use `npm run dev` instead of linking. `pace --help` and `pace --version` work without authentication. `pace doctor` checks Node, local storage, Git presence, SDK installation, Jev presence, and configuration; only a live coding turn verifies authentication and runtime access.
+For development, use `npm run dev` instead of linking. `pace --help` and `pace --version` work without authentication. `pace doctor` checks Node, local storage, Git presence, SDK installation, Vex server installation, and configuration; only a live coding turn verifies authentication and runtime access.
 
 ## Chat commands
 
@@ -38,7 +38,7 @@ For development, use `npm run dev` instead of linking. `pace --help` and `pace -
 | `/models` | List configured models and whether Pace may use each one |
 | `/models add <model> <effort>` | Add a model and effort, or add another effort to an existing model |
 | `/models <model> on\|off` | Enable or disable a configured model for new turns |
-| `/auto` | Enable Jev for a new conversation; an existing thread keeps its saved route |
+| `/auto` | Enable Vex for a new conversation; an existing thread keeps its saved route |
 | `/new` | Start a fresh Pace and Codex conversation |
 | `/resume` | List saved conversations in this project |
 | `/resume <id-prefix>` | Resume a listed conversation |
@@ -50,7 +50,7 @@ Type `/` to see matching commands. Use Tab to complete and ↑/↓ to choose a m
 
 ## Models and routing
 
-By default, Pace passes no model or effort override, leaving model choice to Codex. Use `/models add gpt-6-sol medium` to start an explicit allowlist. Add more routes with `/models add`, then turn any configured model off with `/models <model> off`. With an explicit list, Pace does not send disabled models to Jev or Codex. If every model is off, Pace stops the turn and asks you to enable one. An existing Codex thread cannot continue while its saved model is off; use `/new` or enable that model again.
+By default, Pace passes no model or effort override, leaving model choice to Codex. Use `/models add gpt-6-sol medium` to start an explicit allowlist. Add more routes with `/models add`, then turn any configured model off with `/models <model> off`. With an explicit list, Pace does not send disabled models to Vex or Codex. If every model is off, Pace stops the turn and asks you to enable one. An existing Codex thread cannot continue while its saved model is off; use `/new` or enable that model again.
 
 Pace cannot query which models your account can use. `/model` lists configured choices, not a live provider catalog. Current documented examples include `gpt-6-sol`, `gpt-6-luna`, and `gpt-6-astra`; access depends on account and workspace. You can also edit `~/.pace/config.json` (`%USERPROFILE%\.pace\config.json` on Windows) directly:
 
@@ -65,9 +65,17 @@ Pace cannot query which models your account can use. `/model` lists configured c
 }
 ```
 
-Configure only models and effort values you can use. Pace validates effort names against its supported list and each model's configured list. `max` is not a Pace effort. An invalid config stops coding turns until fixed; Pace does not silently discard an explicit allowlist. Availability still needs a live Codex turn; provider errors remain visible. `defaultRoute` may be `{}`; once models are configured, Pace uses the first enabled model as its fallback. With fewer than two enabled models, auto mode uses the fallback without calling Jev. If the SDK chose an unknown default model for an older thread, start a new thread after configuring an allowlist.
+Configure only models and effort values you can use. Pace validates effort names against its supported list and each model's configured list. `max` is not a Pace effort. An invalid config stops coding turns until fixed; Pace does not silently discard an explicit allowlist. Availability still needs a live Codex turn; provider errors remain visible. `defaultRoute` may be `{}`; once models are configured, Pace uses the first enabled model as its fallback. With fewer than two enabled model and effort pairs, auto mode uses the fallback without calling Vex. Vex accepts at most 12 pairs; larger lists also use the fallback. If the SDK chose an unknown default model for an older thread, start a new thread after configuring an allowlist.
 
-Pace inspected the local Jev launcher and source: `jev run --raw` reads a JSON decision request from stdin and prints a JSON response with `answers`. On Windows, Pace launches the installed `.ps1` through PowerShell with fixed subprocess arguments; on other systems it launches the executable directly. `JEV_COMMAND` can point to a different executable or `.ps1` path. Pace sends only a coarse task category, request-length band, a few boolean task signals, and the configured model/effort options. It does **not** send the prompt, repository files, paths, or credentials. The installed Jev command forwards that routing request to OpenRouter's decisions endpoint. Jev is optional: missing, timed-out, invalid, or uncertain decisions visibly fall back to `defaultRoute`. This coarse request limits how well Jev can judge task difficulty.
+At startup, Pace opens one persistent local MCP connection to Vex. Before a new auto-routed Codex thread, it calls `vex_choose` with the enabled model and effort pairs. Pace validates Vex's versioned choice, confidence, probability lead, and allowlist membership before applying it. Vex abstention, errors, invalid results, or an unavailable server use `defaultRoute`. Manual choices and saved thread routes still take precedence. Pace sends only a coarse task category, request-length band, a few boolean task signals, and configured route options. It does **not** send the prompt, repository files, paths, or credentials in the decision request. Vex forwards the request to OpenRouter; it reads `OPENROUTER_API_KEY` from the environment or `~/.openrouter_key`. The coarse request limits routing judgment. Errors appear once per Pace run rather than filling terminal history.
+
+The Codex SDK also receives Vex as a separate Codex-owned MCP stdio server, so Codex can call Vex tools during coding turns. Pace does not proxy those calls or make extra routing decisions for Codex. The SDK configuration forwards the `OPENROUTER_API_KEY` environment variable by name, keeping its value out of command arguments. Pace keeps its existing workspace-write sandbox, disabled network access, and approval policy.
+
+Pace pins the Vex GitHub dependency to commit `a2e83f0cf53411746de9ae9d59869b7b312d25c8`, which builds Vex during Git installs. That commit must be pushed to GitHub before a fresh `npm ci` can resolve it. For local development while the commit is only in a Vex checkout, run `npm run build` there, then run `npm link C:\Github\Vex` in the Pace checkout. Pace resolves the installed package's bundled `dist/index.js` for both MCP connections. Run `npm ci` after the commit is available on GitHub to restore the locked dependency. Do not set a key in Pace configuration or in command arguments.
+
+To update Vex, commit and push the Vex change first. In Pace, run `npm install 'vex-mcp@git+https://github.com/SideArker/Vex.git#<commit>'`, then run `npm run build` and `npm test`. Commit both `package.json` and `package-lock.json` so installs use the same Vex revision.
+
+On Windows, a project-local link also works without a global Vex command: build Vex, then run `New-Item -ItemType Junction -Path .\node_modules\vex-mcp -Target C:\Github\Vex` from Pace. Remove an existing `node_modules/vex-mcp` directory before creating the link.
 
 ## Sessions and safety
 

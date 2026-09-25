@@ -1,12 +1,12 @@
 # Pace roadmap (after v0.1)
 
-**Product direction:** a lightweight, terminal-native coding assistant that uses Jev to make better routing decisions while Codex remains the execution engine. Keep Pace thin: don't rebuild Codex.
+**Product direction:** a lightweight, terminal-native coding assistant that uses Vex MCP to make better routing decisions while Codex remains the execution engine. Keep Pace thin: don't rebuild Codex.
 
 This is a directional roadmap, not a commitment to exact release dates. Advance a phase only after collecting evidence that its added complexity is worthwhile.
 
 ## v0.1 — foundation (current build; not part of this future roadmap)
 
-Interactive Ink terminal; official Codex SDK execution and streaming; integration with the existing `jev` command when its actual interface permits; manual/fallback routing; JSON sessions in `~/.pace`; native Codex thread continuation; `/model`, `/auto`, `/new`, `/resume`, `/help`, `/exit`; basic diagnostics and tests.
+Interactive Ink terminal; official Codex SDK execution and streaming; Vex MCP routing; manual/fallback routing; JSON sessions in `~/.pace`; native Codex thread continuation; `/model`, `/auto`, `/new`, `/resume`, `/help`, `/exit`; basic diagnostics and tests.
 
 **Success signal:** complete a real multi-turn coding task, restart Pace, resume it, and show accurate routing/execution status.
 
@@ -21,16 +21,16 @@ Interactive Ink terminal; official Codex SDK execution and streaming; integratio
 - Better project/session picker and reliable handling of moved or deleted projects.
 - `pace exec "..."` for non-interactive usage and script-friendly exit codes.
 - Cross-platform install/build checks, especially PowerShell and Windows Terminal.
-- Improved Jev adapter diagnostics and compatibility tests against the *real* local command.
+- Improved Vex MCP diagnostics and compatibility tests against the real server.
 
 **Exit criteria:** the CLI handles interrupted runs, missing providers, restarts and multiple projects without losing Pace metadata or misleading the user.
 
 ## v0.3 — measurable routing
 
-**Goal:** establish whether Jev actually improves model choice rather than assuming it does.
+**Goal:** establish whether Vex actually improves model choice rather than assuming it does.
 
 - Local routing log: task category, selected model/effort, manual overrides, reported SDK usage and elapsed time.
-- `/route` to explain the most recent selection, separating Jev's reported assessment from Pace's policy decision.
+- `/route` to explain the most recent selection, separating Vex's reported assessment from Pace's policy decision.
 - `/stats` with observed usage and task outcomes, without invented cost or savings figures.
 - Compare auto routing against a fixed-model baseline on a repeatable small evaluation suite.
 - Support configurable policy preferences such as lower cost vs higher quality, always within allowed model choices.
@@ -54,7 +54,7 @@ Interactive Ink terminal; official Codex SDK execution and streaming; integratio
 **Goal:** make failures recoverable without creating opaque autonomy.
 
 - Distinguish Codex execution failures, failed validations and transient provider errors.
-- Optional Jev reassessment after a meaningful failure; never escalate just because the first attempt took time.
+- Optional Vex reassessment after a meaningful failure; never escalate just because the first attempt took time.
 - One configurable, visible retry or model escalation with preserved relevant context.
 - Explicit user approval for any retry that changes risk or permissions; never bypass Codex sandbox/approval controls.
 - Clear run comparison: previous failure, new route, and observed result.
@@ -65,7 +65,7 @@ Interactive Ink terminal; official Codex SDK execution and streaming; integratio
 
 **Goal:** make useful extensions possible without turning Pace into a general agent platform.
 
-- Stabilize the small Codex and Jev adapter interfaces and configuration schema.
+- Stabilize the small Codex and Vex adapter interfaces and configuration schema.
 - Optional additional *officially supported* coding execution provider if there is real user demand.
 - Versioned local session export/import and schema migrations.
 - Project-specific configuration with clear precedence over global defaults, excluding secrets.
@@ -88,7 +88,7 @@ These features add substantial product, security and maintenance costs. Do not a
 ## Operating principles for every release
 
 1. **Codex remains the coding agent.** Prefer documented SDK capabilities over reproducing agent logic or embedding an interactive CLI.
-2. **Jev recommends; Pace enforces.** Model availability, explicit user choices, provider constraints and permissions remain deterministic.
+2. **Vex recommends; Pace enforces.** Model availability, explicit user choices, provider constraints and permissions remain deterministic.
 3. **Measure before optimizing.** Track observed outcome, latency and usage; don't advertise unmeasured token or cost savings.
 4. **Keep the terminal calm.** Present current work clearly, with expandable detail rather than permanent dashboards.
 5. **Local-first and safe.** User-owned sessions, minimal routing data, no stored tokens, respected sandbox/approval controls and supported service integrations.
