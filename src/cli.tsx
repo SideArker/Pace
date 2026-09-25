@@ -14,7 +14,7 @@ const args = process.argv.slice(2);
 if (args.includes("--version")) console.log(`pace ${version}`);
 else if (args.includes("--help"))
   console.log(
-    `Pace ${version} · independent Codex SDK terminal client\n\nUsage: pace [doctor|--help|--version]\n\nInteractive commands: /help /model /models /auto /new /resume /exit\nBash: ! <command> or ! to toggle Bash mode`,
+    `Pace ${version} · independent Codex SDK terminal client\n\nUsage: pace [doctor|--help|--version]\n\nInteractive commands: /help /models /auto /new /resume /artifacts /clear /exit\nBash: ! <command> or ! to toggle Bash mode`,
   );
 else if (args[0] === "doctor") {
   const notices: string[] = [];
@@ -43,7 +43,7 @@ else if (args[0] === "doctor") {
     console.log(`Config: ${String(error)}`);
   }
   console.log(
-    `Vex MCP: ${vexServerPath() ? "server found" : "unavailable; default route remains usable"}`,
+    `Vex MCP: ${vexServerPath() ? "server found (connection checked at startup)" : "unavailable; coding is blocked"}`,
   );
   try {
     await access(join(process.cwd(), ".git"));
