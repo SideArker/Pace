@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PaceStore, newSession, projectKey } from '../src/core/sessions.js';
@@ -22,4 +22,11 @@ it('skips corrupted session files', async () => {
   await writeFile(join(store.sessionDir('/example/project'), 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.json'), '{bad');
   expect((await store.list('/example/project')).map(item => item.id)).toEqual([session.id]);
   expect(notices.length).toBe(1);
+});
+it('does not use the SDK default when an explicit model config is corrupt', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  const store = new PaceStore(dir);
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, 'config.json'), '{bad');
+  await expect(store.loadConfig()).rejects.toThrow();
 });
