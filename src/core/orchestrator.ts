@@ -5,6 +5,7 @@ import { selectRoute, sensitiveArchitectureFallback } from "./router.js";
 import { routeRequest } from "../integrations/vex.js";
 import { PaceStore } from "./sessions.js";
 import { artifactSnapshot, changedArtifacts } from "./artifacts.js";
+import { validRoute } from "../config.js";
 export type TurnOutcome = { session: Session; result: string; note: string; route: Route; artifacts: string[]; usage?: Awaited<ReturnType<CodexRunner['run']>>['usage'] };
 export class VexUnavailableError extends Error {
   constructor(cause: unknown) { super(`Vex MCP unavailable: ${String(cause)}`); }
@@ -26,9 +27,10 @@ export class Orchestrator {
     try { await this.vex.verify?.(); }
     catch (error) { throw new VexUnavailableError(error); }
     const enabled = config.models.filter(model => model.enabled !== false);
-    if (config.models.length && !enabled.length) throw new Error('No models enabled. Use /models <name> on before running a turn.');
+    if (config.models.length && !enabled.length) throw new Error('No models enabled. Open /models and enable one before running a turn.');
     if (session.threadId && !session.route.model && config.models.length) throw new Error('Saved thread used the Codex default model, which Pace cannot identify. Use /new to apply your enabled model list.');
-    if (session.threadId && session.route.model && !enabled.some(model => model.model === session.route.model)) throw new Error(`Model ${session.route.model} is disabled. Use /models ${session.route.model} on or /new.`);
+    if (session.threadId && session.route.model && !enabled.some(model => model.model === session.route.model)) throw new Error(`Model ${session.route.model} is disabled. Enable it in /models or use /new.`);
+    if (session.threadId && !validRoute(session.route, enabled)) throw new Error(`Saved route ${session.route.model ?? "Codex default"}/${session.route.effort ?? "default"} is no longer enabled. Use /models to restore it or /new.`);
     const usableConfig = { ...config, models: enabled, defaultRoute: config.models.length && (!config.defaultRoute.model || !enabled.some(model => model.model === config.defaultRoute.model))
       ? { model: enabled[0]?.model, effort: enabled[0]?.defaultEffort ?? enabled[0]?.efforts[0] } : config.defaultRoute };
     const save = async () => {

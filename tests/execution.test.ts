@@ -54,6 +54,8 @@ it('never routes to a disabled model and saves turn usage', async () => {
   expect(seen).toHaveLength(1);
   session.route = { model: 'blocked', effort: 'medium' };
   await expect(new Orchestrator(store, runner, vex).turn('again', session, config, () => {})).rejects.toThrow('disabled');
+  session.route = { model: 'allowed', effort: 'high' };
+  await expect(new Orchestrator(store, runner, vex).turn('again', session, { ...config, models: [{ model: 'allowed', efforts: ['low'] }] }, () => {})).rejects.toThrow('no longer enabled');
 });
 it('uses Sol high for sensitive architecture after Vex abstains but keeps Hello on Luna low', async () => {
   dir = await mkdtemp(join(tmpdir(), 'pace-test-'));

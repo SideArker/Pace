@@ -21,6 +21,13 @@ export function validRoute(route: Route, models: ModelOption[]): boolean {
   const option = models.find((item) => item.model === route.model);
   return !!option && (!route.effort || option.efforts.includes(route.effort));
 }
+export function withModels(config: Config, models: ModelOption[]): Config {
+  const defaultModel = models.find(model => model.model === config.defaultRoute.model);
+  const defaultRoute = defaultModel && config.defaultRoute.effort && !defaultModel.efforts.includes(config.defaultRoute.effort)
+    ? { model: defaultModel.model, effort: defaultModel.defaultEffort ?? defaultModel.efforts[0] }
+    : config.defaultRoute;
+  return parseConfig({ ...config, models, defaultRoute });
+}
 export function parseConfig(value: unknown): Config {
   if (!isRecord(value) || !Array.isArray(value.models))
     throw new Error("config.json must contain a models array");

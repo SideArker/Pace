@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { selectRoute, sensitiveArchitectureFallback } from '../src/core/router.js';
-import { parseConfig } from '../src/config.js';
+import { parseConfig, withModels } from '../src/config.js';
 import { routeRequest } from '../src/integrations/vex.js';
 const config = parseConfig({ routingMode: 'auto', models: [
   { model: 'route-one', efforts: ['medium'] }, { model: 'route-two', efforts: ['high'] },
@@ -47,5 +47,10 @@ describe('routing', () => {
   it('rejects unsupported effort in config', () => {
     expect(() => parseConfig({ ...config, models: [{ model: 'route-one', efforts: ['unknown'] }] })).toThrow();
     expect(() => parseConfig({ ...config, models: [{ model: 'route-one', efforts: ['max'] }] })).toThrow();
+  });
+  it('moves the configured fallback when its reasoning level is removed in the menu', () => {
+    const current = parseConfig({ routingMode: 'auto', defaultRoute: { model: 'gpt-6-sol', effort: 'medium' }, models: [{ model: 'gpt-6-sol', efforts: ['medium', 'high'], defaultEffort: 'medium' }] });
+    const updated = withModels(current, [{ model: 'gpt-6-sol', efforts: ['high'], defaultEffort: 'high' }]);
+    expect(updated.defaultRoute).toEqual({ model: 'gpt-6-sol', effort: 'high' });
   });
 });
