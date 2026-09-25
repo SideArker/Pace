@@ -8,20 +8,19 @@ import { SdkRunner } from "./integrations/codex.js";
 import { VexRouter } from './integrations/vex.js';
 import { EFFORTS, withModels } from "./config.js";
 import { artifactSnapshot } from "./core/artifacts.js";
+import { formatTurnFooter, modelName } from "./turn-format.js";
 import { spawn } from "node:child_process";
+import { basename } from "node:path";
 
 type Line = {
   id: number;
-  role: "you" | "codex" | "info" | "meta" | "error" | "artifact";
+  role: "you" | "codex" | "info" | "meta" | "error" | "artifact" | "divider";
   text: string;
   spaceBefore: boolean;
 };
 const commands = ["/help", "/models", "/auto", "/new", "/resume", "/artifacts", "/clear", "/exit"];
 const modelCatalog = ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra"];
 const spinner = ["|", "/", "-", "\\"];
-const routeLabel = (route?: Route) => `${route?.model ?? "Codex default"} · reasoning ${route?.effort ?? "SDK default"}`;
-const usageLabel = (usage: NonNullable<Awaited<ReturnType<SdkRunner['run']>>['usage']>) =>
-  `Turn tokens: input ${usage.input_tokens}, cached input ${usage.cached_input_tokens}, cache write ${usage.cache_write_input_tokens}, output ${usage.output_tokens}, reasoning output ${usage.reasoning_output_tokens}`;
 const project = process.cwd();
 const store = new PaceStore();
 const vex = new VexRouter();
@@ -83,9 +82,9 @@ export default function App() {
       for (const turn of (saved?.turns ?? []).slice(-6)) {
         add("you", turn.prompt);
         add(turn.failed ? "error" : "codex", turn.result);
-        add("meta", `Route: ${routeLabel(turn.route)}`);
+        if (!turn.failed) add("meta", formatTurnFooter(turn.route, turn.routeNote, turn.usage, turn.durationMs));
         for (const artifact of turn.artifacts ?? []) add("artifact", artifact);
-        if (turn.usage) add("meta", usageLabel(turn.usage));
+        add("divider", "");
       }
       setStatus(
         saved?.threadId
@@ -218,9 +217,7 @@ export default function App() {
           setSession(updated);
           add(
             "info",
-            session.threadId
-              ? "Auto enabled for a new thread; this thread keeps its saved route."
-              : "Auto routing enabled.",
+            "Auto routing enabled for the next turn.",
           );
         } catch (error) {
           add("error", `Could not save routing mode: ${String(error)}`);
@@ -290,7 +287,7 @@ export default function App() {
             setStatus(progress.text);
             setSession({ ...session });
           }
-          if (progress.kind === 'route') add('meta', `Matched: ${routeLabel(progress.route)}`);
+          if (progress.kind === 'route') setStatus(`Using ${modelName(progress.route)}…`);
           if (progress.kind === "error") add("error", progress.text);
           if (progress.kind === "message") {
             setStatus("Finishing response…");
@@ -300,9 +297,9 @@ export default function App() {
       );
       setSession({ ...outcome.session });
       add("codex", outcome.result);
-      add("meta", `Completed: ${routeLabel(outcome.route)} · ${outcome.note}`);
+      add("meta", formatTurnFooter(outcome.route, outcome.note, outcome.usage, outcome.durationMs));
       for (const artifact of outcome.artifacts) add("artifact", artifact);
-      if (outcome.usage) add('meta', usageLabel(outcome.usage));
+      add("divider", "");
       setStatus("Done");
     } catch (error) {
       add("error", String(error));
@@ -315,29 +312,21 @@ export default function App() {
   };
   return (
     <Box flexDirection="column" paddingX={1}>
-      <Text color="cyan" bold>
-        pace
-      </Text>
-      <Text dimColor>
-        {project} · {session?.routingMode ?? "auto"} ·{" "}
-        {session?.route.model ?? "Codex default"}
-      </Text>
-      <Text color={vexState === "connected" ? "green" : vexState === "failed" ? "red" : "yellow"}>Vex MCP: {vexState === "connected" ? "connected" : vexState === "failed" ? "unavailable — coding blocked" : "connecting"}</Text>
+      <Box gap={1}>
+        <Text color="green" bold>pace</Text>
+        <Text dimColor>{basename(project)}</Text>
+        <Text color={vexState === "connected" ? "green" : vexState === "failed" ? "red" : "yellow"}>Vex MCP {vexState === "connected" ? "connected" : vexState === "failed" ? "unavailable — coding blocked" : "connecting"}</Text>
+      </Box>
       <Static key={clearEpoch} items={lines}>
         {(line) => (
-          <Box key={line.id} flexDirection="column" marginTop={line.spaceBefore ? 1 : 0}>
-            <Text
-              dimColor={line.role === "info" || line.role === "meta"}
-              color={
-                line.role === "error"
-                  ? "red"
-                  : line.role === "you"
-                    ? "cyan"
-                    : line.role === "artifact" ? "magenta" : line.role === "codex" ? "white" : undefined
-              }
-            >
-              {line.role === "you" ? "You: " : line.role === "codex" ? "  " : line.role === "artifact" ? "Artifact: " : line.role === "error" ? "Error: " : line.role === "meta" ? "" : "Pace: "}{line.text}
-            </Text>
+          <Box key={line.id} flexDirection="column" marginTop={line.role === "divider" || line.role === "codex" || line.spaceBefore ? 1 : 0}>
+            {line.role === "you" ? <><Text bold>You</Text><Text>{line.text}</Text></>
+              : line.role === "codex" ? <><Text color="green" bold>Pace</Text><Text>{line.text}</Text></>
+              : line.role === "divider" ? <Text dimColor>{"─".repeat(Math.max(12, (process.stdout.columns ?? 80) - 2))}</Text>
+              : line.role === "meta" ? <Text dimColor>{line.text}</Text>
+              : line.role === "artifact" ? <Text color="magenta">Artifact: {line.text}</Text>
+              : line.role === "error" ? <Text color="red">Pace: {line.text}</Text>
+              : <Text dimColor>Pace: {line.text}</Text>}
           </Box>
         )}
       </Static>
@@ -355,16 +344,16 @@ export default function App() {
         {resumeChoices.map((choice, index) => <Text key={choice.id} color={index === menuIndex ? "cyan" : undefined}>{index === menuIndex ? "› " : "  "}{choice.id.slice(0, 8)} · {choice.updatedAt.slice(0, 16)} · {choice.turns.at(-1)?.prompt ?? "(empty)"}</Text>)}
         <Text dimColor>↑/↓ or Tab select · Enter resume · Esc close</Text>
       </Box> : null}
-      <Text dimColor>{busy || shellJobs ? `${spinner[tick % spinner.length]} ` : ''}{status}{shellJobs ? ` · ${shellJobs} Bash command${shellJobs === 1 ? '' : 's'} running` : ''}</Text>
-      <Box>
-        <Text color="cyan">{shellMode ? '! ' : '> '}</Text>
+      {busy || shellJobs ? <Text dimColor>{spinner[tick % spinner.length]} {status}{shellJobs ? ` · ${shellJobs} Bash command${shellJobs === 1 ? '' : 's'} running` : ''}</Text> : null}
+      <Box marginTop={1}>
+        <Text color="green">{shellMode ? '! ' : '❯ '}</Text>
         <TextInput
           key={inputKey}
           isDisabled={!session || !config || !!modelMenu || resumeMenu}
           defaultValue={draft}
           suggestions={matches.length ? [matches[selection] ?? matches[0]!, ...matches.filter((_, index) => index !== selection)] : undefined}
           onChange={value => { setDraft(value); setSelection(0); }}
-          placeholder={modelMenu || resumeMenu ? "Close menu to type" : shellMode ? "Bash command; ! returns to Pace" : vexState !== "connected" ? "Vex unavailable; commands still work" : busy ? "Codex working; use ! for Bash" : "Ask Codex or type /help"}
+          placeholder={modelMenu || resumeMenu ? "Close menu to type" : shellMode ? "Bash command; ! returns to Pace" : vexState !== "connected" ? "Vex unavailable; commands still work" : busy ? "Pace is working; use ! for Bash" : "Ask Pace or type /"}
           onSubmit={(value) => {
             void submit(value);
           }}
