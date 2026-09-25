@@ -1,13 +1,15 @@
 {
   "dependencies": {
     "@inkjs/ui": "^2.0.0",
+    "@modelcontextprotocol/sdk": "^1.30.1",
     "@openai/codex-sdk": "^0.156.1",
     "ink": "^7.1.1",
-    "react": "^19.3.0"
+    "react": "^19.3.0",
+    "vex-mcp": "git+https://github.com/SideArker/Vex.git#a2e83f0cf53411746de9ae9d59869b7b312d25c8"
   },
   "name": "pace",
   "version": "0.1.0",
-  "description": "Terminal coding client using the Codex SDK and optional Jev routing",
+  "description": "Terminal coding client using the Codex SDK and Vex MCP routing",
   "bin": { "pace": "dist/cli.js" },
   "main": "index.js",
   "scripts": {
