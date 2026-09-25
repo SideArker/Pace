@@ -12,10 +12,17 @@ export type Line = {
 };
 
 const colors = { thinking: "magentaBright", command: "cyan", files: "yellow", tool: "blueBright", search: "blue", plan: "magenta" } as const;
+const paceMark = [
+  "  ____  ",
+  " |  _ \\",
+  " | |_) |",
+  " |  __/ ",
+  " |_|    ",
+].join("\n");
 
 export function Header({ project, vexState }: { project: string; vexState: "connecting" | "connected" | "failed" }) {
   return <Box gap={2}>
-    <Text color="greenBright" bold>{"  ╭─╮\n  │P│\n  ╰─╯"}</Text>
+    <Text color="greenBright" bold>{paceMark}</Text>
     <Box flexDirection="column"><Text color="greenBright" bold>PACE</Text><Text color="gray">{basename(project)}</Text><Text color={vexState === "connected" ? "green" : vexState === "failed" ? "red" : "yellow"}>Vex MCP {vexState === "connected" ? "connected" : vexState === "failed" ? "unavailable" : "connecting"}</Text></Box>
   </Box>;
 }
