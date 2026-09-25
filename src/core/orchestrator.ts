@@ -1,14 +1,16 @@
 import type { Config, Route, Session } from "../types.js";
 import type { CodexRunner, Progress } from "../integrations/codex.js";
-import { askJev } from "../integrations/jev.js";
+import { VexRouter } from "../integrations/vex.js";
 import { selectRoute } from "./router.js";
 import { PaceStore } from "./sessions.js";
 export type TurnOutcome = { session: Session; result: string; note: string; route: Route; usage?: Awaited<ReturnType<CodexRunner['run']>>['usage'] };
 export class Orchestrator {
+  private vexErrorReported = false;
+  reportVexError(): void { this.vexErrorReported = true; }
   constructor(
     readonly store: PaceStore,
     readonly runner: CodexRunner,
-    readonly jev: typeof askJev = askJev,
+    readonly vex: Pick<VexRouter, 'choose'> = new VexRouter(),
   ) {}
   async turn(
     prompt: string,
@@ -40,15 +42,16 @@ export class Orchestrator {
       note = "Continuing Codex thread with its saved route";
     } else {
       let suggestion: unknown;
-      if (session.routingMode === "auto" && enabled.length >= 2) {
+      const routeCount = enabled.reduce((count, model) => count + model.efforts.length, 0);
+      if (session.routingMode === "auto" && routeCount >= 2 && routeCount <= 12) {
         onProgress({ kind: "status", text: "Routing…" });
         try {
-          suggestion = await this.jev(prompt, enabled);
+          suggestion = await this.vex.choose(prompt, enabled);
         } catch (error) {
-          onProgress({
-            kind: "error",
-            text: `Jev unavailable: ${String(error)}`,
-          });
+          if (!this.vexErrorReported) {
+            onProgress({ kind: 'error', text: `Vex unavailable: ${String(error)}` });
+            this.vexErrorReported = true;
+          }
         }
       }
       const selected = selectRoute(
@@ -62,8 +65,10 @@ export class Orchestrator {
       );
       route = selected.route;
       note = selected.note;
-      if (session.routingMode === "auto" && enabled.length < 2)
-        note = "Auto needs two configured models; using configured default";
+      if (session.routingMode === "auto" && routeCount < 2)
+        note = "Auto needs two configured routes; using configured default";
+      if (session.routingMode === "auto" && routeCount > 12)
+        note = "Vex supports at most 12 routes; using configured default";
       session.route = route;
       await save();
     }
