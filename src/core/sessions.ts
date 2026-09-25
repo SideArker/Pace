@@ -98,9 +98,13 @@ export class PaceStore {
   }
   async loadConfig(): Promise<Config> {
     try {
-      return parseConfig(
+      const config = parseConfig(
         JSON.parse(await readFile(join(this.baseDir, "config.json"), "utf8")),
       );
+      // An untouched config from older Pace versions meant "use the SDK default".
+      if (config.routingMode === "auto" && !config.models.length && !config.defaultRoute.model)
+        return structuredClone(DEFAULT_CONFIG);
+      return config;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT")
         return structuredClone(DEFAULT_CONFIG);

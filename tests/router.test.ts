@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { lightweightFallback, selectRoute, sensitiveArchitectureFallback } from '../src/core/router.js';
+import { lightweightFallback, policyRoute, selectRoute, sensitiveArchitectureFallback } from '../src/core/router.js';
+import { DEFAULT_CONFIG } from '../src/config.js';
 import { parseConfig, withModels } from '../src/config.js';
 import { routeRequest } from '../src/integrations/vex.js';
 const config = parseConfig({ routingMode: 'auto', models: [
@@ -54,6 +55,14 @@ describe('routing', () => {
     expect(selectRoute(routes, { contractVersion: '1', abstained: true, reason: 'Insufficient information' }, undefined, fallback))
       .toEqual({ route: { model: 'gpt-6-luna', effort: 'low' }, note: 'Policy fallback after Vex abstained or was uncertain' });
     expect(routeRequest('Plan and build a payment system', models).context.category).toBe('coding');
+  });
+  it('uses clear policy routes for exploration, ordinary coding, and sensitive architecture', () => {
+    expect(DEFAULT_CONFIG.models.map(model => model.model)).toEqual(['gpt-6-luna', 'gpt-6-sol', 'gpt-6-astra']);
+    const explore = routeRequest('Find the router implementation in this repo', DEFAULT_CONFIG.models);
+    expect(explore.context.category).toBe('exploration');
+    expect(policyRoute(explore.context, DEFAULT_CONFIG)).toEqual({ model: 'gpt-6-luna', effort: 'low' });
+    expect(policyRoute(routeRequest('Fix a small bug', DEFAULT_CONFIG.models).context, DEFAULT_CONFIG)).toEqual({ model: 'gpt-6-sol', effort: 'medium' });
+    expect(policyRoute(routeRequest('Plan the security architecture for payments', DEFAULT_CONFIG.models).context, DEFAULT_CONFIG)).toEqual({ model: 'gpt-6-astra', effort: 'high' });
   });
   it('recovers a clear model consensus when Vex abstains on individual effort confidence', () => {
     const routes = parseConfig({ routingMode: 'auto', models: [

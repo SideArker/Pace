@@ -1,7 +1,7 @@
 import type { Config, Route, Session } from "../types.js";
 import type { CodexRunner, Progress } from "../integrations/codex.js";
 import { VexRouter } from "../integrations/vex.js";
-import { lightweightFallback, selectRoute, sensitiveArchitectureFallback } from "./router.js";
+import { policyRoute, selectRoute } from "./router.js";
 import { routeRequest } from "../integrations/vex.js";
 import { PaceStore } from "./sessions.js";
 import { artifactSnapshot, changedArtifacts } from "./artifacts.js";
@@ -67,7 +67,7 @@ export class Orchestrator {
             : undefined
           : undefined,
         session.routingMode === "auto" && routeCount >= 2 && routeCount <= 12
-          ? lightweightFallback(routeContext, usableConfig) ?? sensitiveArchitectureFallback(routeContext, usableConfig)
+          ? policyRoute(routeContext, usableConfig)
           : undefined,
       );
       route = selected.route;
