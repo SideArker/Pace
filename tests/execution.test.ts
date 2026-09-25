@@ -31,3 +31,25 @@ it('renders real event statuses but never reasoning', () => {
   expect(eventProgress({ type: 'item.completed', item: { id: 'x', type: 'reasoning', text: 'hidden' } })).toBeUndefined();
   expect(eventProgress({ type: 'turn.failed', error: { message: 'bad' } })).toEqual({ kind: 'error', text: 'bad' });
 });
+it('never routes to a disabled model and saves turn usage', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  const store = new PaceStore(dir);
+  const seen: Route[] = [];
+  const usage = { input_tokens: 12, cached_input_tokens: 2, cache_write_input_tokens: 0, output_tokens: 5, reasoning_output_tokens: 1 };
+  const runner: CodexRunner = { async run(_prompt, _project, route) {
+    seen.push(route);
+    return { threadId: 'thread-1', result: 'done', completed: true, usage };
+  } };
+  const config: Config = { routingMode: 'auto', defaultRoute: { model: 'blocked', effort: 'medium' }, models: [
+    { model: 'blocked', efforts: ['medium'], enabled: false },
+    { model: 'allowed', efforts: ['high'], enabled: true },
+  ] };
+  const jev = async () => { throw new Error('Jev should not run for one enabled model'); };
+  const session = newSession('/example/project', 'auto');
+  const outcome = await new Orchestrator(store, runner, jev).turn('work', session, config, () => {});
+  expect(seen).toEqual([{ model: 'allowed', effort: 'high' }]);
+  expect(outcome.usage).toEqual(usage);
+  expect((await store.latest('/example/project'))?.turns[0]?.usage).toEqual(usage);
+  await expect(new Orchestrator(store, runner, jev).turn('again', session, { ...config, models: config.models.map(model => ({ ...model, enabled: false })) }, () => {})).rejects.toThrow('No models enabled');
+  expect(seen).toHaveLength(1);
+});

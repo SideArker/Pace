@@ -22,6 +22,7 @@ describe('routing', () => {
   });
   it('rejects unsupported effort in config', () => {
     expect(() => parseConfig({ ...config, models: [{ model: 'route-one', efforts: ['unknown'] }] })).toThrow();
+    expect(() => parseConfig({ ...config, models: [{ model: 'route-one', efforts: ['max'] }] })).toThrow();
   });
   it('rejects malformed Jev stdout', () => {
     expect(() => parseJevOutput('not json')).toThrow('invalid JSON');
