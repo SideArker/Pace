@@ -60,5 +60,9 @@ else if (args[0] === "doctor") {
   console.error(`Unknown command: ${args.join(" ")}. Run pace --help.`);
   process.exitCode = 2;
 } else {
-  render(<App />);
+  let instance: ReturnType<typeof render>;
+  instance = render(<App onClear={() => {
+    instance.clear();
+    process.stdout.write("\x1b[2J\x1b[H");
+  }} />);
 }

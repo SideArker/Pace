@@ -14,7 +14,7 @@ import { basename } from "node:path";
 
 type Line = {
   id: number;
-  role: "you" | "codex" | "info" | "meta" | "error" | "artifact" | "divider";
+  role: "header" | "you" | "codex" | "info" | "meta" | "error" | "artifact" | "divider";
   text: string;
   spaceBefore: boolean;
 };
@@ -26,7 +26,7 @@ const store = new PaceStore();
 const vex = new VexRouter();
 const orchestrator = new Orchestrator(store, new SdkRunner(), vex);
 
-export default function App() {
+export default function App({ onClear }: { onClear: () => void }) {
   const { exit } = useApp();
   const [config, setConfig] = useState<Config>();
   const [session, setSession] = useState<Session>();
@@ -196,8 +196,13 @@ export default function App() {
     if (busy) { add('info', 'Codex is working. Use ! for Bash or wait; input remains available.'); return; }
     setDraft(''); setSelection(0); setInputKey((key) => key + 1);
     if (text.startsWith("/")) {
-      add('info', `> ${text}`);
       const [command, ...parts] = text.split(/\s+/);
+      if (command === "/clear" && !parts.length) {
+        onClear();
+        setLines([]);
+        setClearEpoch(value => value + 1);
+        return;
+      }
       if (command === "/exit") {
         exit();
         return;
@@ -241,12 +246,6 @@ export default function App() {
         } catch (error) {
           add("error", `Could not create conversation: ${String(error)}`);
         }
-        return;
-      }
-      if (command === "/clear") {
-        setLines([]);
-        setClearEpoch(value => value + 1);
-        process.stdout.write("\x1b[2J\x1b[H");
         return;
       }
       if (command === "/artifacts") {
@@ -312,24 +311,25 @@ export default function App() {
   };
   return (
     <Box flexDirection="column" paddingX={1}>
-      <Box gap={1}>
+      {vexState === "connecting" || !session || !config ? <Box gap={1}>
         <Text color="green" bold>pace</Text>
         <Text dimColor>{basename(project)}</Text>
-        <Text color={vexState === "connected" ? "green" : vexState === "failed" ? "red" : "yellow"}>Vex MCP {vexState === "connected" ? "connected" : vexState === "failed" ? "unavailable — coding blocked" : "connecting"}</Text>
-      </Box>
-      <Static key={clearEpoch} items={lines}>
+        <Text color="yellow">Vex MCP connecting</Text>
+      </Box> : null}
+      {vexState !== "connecting" && session && config ? <Static key={clearEpoch} items={[{ id: -1, role: "header" as const, text: "", spaceBefore: false }, ...lines]}>
         {(line) => (
           <Box key={line.id} flexDirection="column" marginTop={line.role === "divider" || line.role === "codex" || line.spaceBefore ? 1 : 0}>
-            {line.role === "you" ? <><Text bold>You</Text><Text>{line.text}</Text></>
+            {line.role === "header" ? <Box gap={1}><Text color="green" bold>pace</Text><Text dimColor>{basename(project)}</Text><Text color={vexState === "connected" ? "green" : "red"}>Vex MCP {vexState === "connected" ? "connected" : "unavailable — coding blocked"}</Text></Box>
+              : line.role === "you" ? <><Text bold>You</Text><Text>{line.text}</Text></>
               : line.role === "codex" ? <><Text color="green" bold>Pace</Text><Text>{line.text}</Text></>
               : line.role === "divider" ? <Text dimColor>{"─".repeat(Math.max(12, (process.stdout.columns ?? 80) - 2))}</Text>
               : line.role === "meta" ? <Text dimColor>{line.text}</Text>
               : line.role === "artifact" ? <Text color="magenta">Artifact: {line.text}</Text>
               : line.role === "error" ? <Text color="red">Pace: {line.text}</Text>
-              : <Text dimColor>Pace: {line.text}</Text>}
+              : <Text dimColor>{line.text}</Text>}
           </Box>
         )}
-      </Static>
+      </Static> : null}
       {modelMenu ? <Box flexDirection="column" borderStyle="round" paddingX={1}>
         <Text bold>{modelMenu === "models" ? "Models" : `${menuModel} reasoning levels`}</Text>
         {(modelMenu === "models" ? menuModels : EFFORTS).map((item, index) => {
