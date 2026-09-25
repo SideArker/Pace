@@ -6,6 +6,7 @@ import {
   type Usage,
 } from "@openai/codex-sdk";
 import type { Route } from "../types.js";
+import { realpath } from "node:fs/promises";
 import { artifactPrompt } from "../core/artifacts.js";
 import { vexServerPath } from './vex.js';
 export type Progress =
@@ -83,7 +84,9 @@ export class SdkRunner implements CodexRunner {
     signal?: AbortSignal,
   ): Promise<Execution> {
     const options: ThreadOptions = {
-      workingDirectory: project,
+      // Session keys are case-folded on Windows; the native sandbox needs the
+      // filesystem's actual path casing when it builds its writable roots.
+      workingDirectory: await realpath(project),
       sandboxMode: "workspace-write",
       approvalPolicy: "never",
       networkAccessEnabled: false,

@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Orchestrator } from '../src/core/orchestrator.js';
@@ -122,11 +122,13 @@ it('reads usage from the SDK turn-completed event', async () => {
     startThread: value => { options = value; return thread; },
     resumeThread: (id, value) => { expect(id).toBe('thread-1'); options = value; return thread; },
   };
-  const result = await runner.run('Create a planning artifact', '/example/project', { model: 'configured', effort: 'medium' }, undefined, () => {});
+  const savedProjectPath = newSession(process.cwd(), 'auto').projectPath;
+  const actualProjectPath = await realpath(savedProjectPath);
+  const result = await runner.run('Create a planning artifact', savedProjectPath, { model: 'configured', effort: 'medium' }, undefined, () => {});
   expect(result).toMatchObject({ threadId: 'thread-1', result: 'done', usage });
   expect(receivedPrompt).toContain('.pace/artifacts/');
-  expect(options).toMatchObject({ workingDirectory: '/example/project', sandboxMode: 'workspace-write', approvalPolicy: 'never', networkAccessEnabled: false, model: 'configured', modelReasoningEffort: 'medium' });
-  await runner.run('follow-up', '/example/project', { model: 'gpt-6-luna', effort: 'low' }, 'thread-1', () => {});
+  expect(options).toMatchObject({ workingDirectory: actualProjectPath, sandboxMode: 'workspace-write', approvalPolicy: 'never', networkAccessEnabled: false, model: 'configured', modelReasoningEffort: 'medium' });
+  await runner.run('follow-up', savedProjectPath, { model: 'gpt-6-luna', effort: 'low' }, 'thread-1', () => {});
   expect(options).toMatchObject({ model: 'gpt-6-luna', modelReasoningEffort: 'low' });
 });
 it('gives Codex an independent Vex MCP launch without exposing the key value', () => {
