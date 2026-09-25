@@ -1,6 +1,25 @@
 import type { Config, Route } from '../types.js';
 import { isRecord, validRoute } from '../config.js';
 export type RouteResult = { route: Route; note: string };
+function modelConsensus(config: Config, suggestion: unknown): Route | undefined {
+  if (!isRecord(suggestion) || suggestion.contractVersion !== '1' || suggestion.abstained !== true || suggestion.reason !== 'Insufficient confidence or probability lead' || !isRecord(suggestion.probabilities)) return undefined;
+  const ids = config.models.flatMap((model, index) => model.efforts.map(effort => `${index}:${effort}`));
+  const probabilities = suggestion.probabilities;
+  const entries = Object.entries(probabilities);
+  if (ids.length < 2 || entries.length !== ids.length || !entries.every(([id, value]) => ids.includes(id) && typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1)) return undefined;
+  const total = entries.reduce((sum, [, value]) => sum + (value as number), 0);
+  if (total > 1.01) return undefined;
+  const ranked = config.models.map((model, index) => ({
+    model,
+    index,
+    mass: model.efforts.reduce((sum, effort) => sum + (probabilities[`${index}:${effort}`] as number), 0),
+  })).sort((a, b) => b.mass - a.mass);
+  const first = ranked[0];
+  if (!first || first.mass < 0.85 || first.mass - (ranked[1]?.mass ?? 0) < 0.5) return undefined;
+  const effort = first.model.efforts.reduce((best, candidate) =>
+    probabilities[`${first.index}:${candidate}`] as number > (probabilities[`${first.index}:${best}`] as number) ? candidate : best);
+  return { model: first.model.model, effort };
+}
 export function selectRoute(config: Config, suggestion: unknown, manual?: Route, policyFallback?: Route): RouteResult {
   if (manual && validRoute(manual, config.models)) return { route: manual, note: 'Manual route' };
   if (config.routingMode === 'manual') return { route: config.defaultRoute, note: 'Configured default' };
@@ -14,6 +33,8 @@ export function selectRoute(config: Config, suggestion: unknown, manual?: Route,
       return { route: { model: option.model, effort: effort as typeof option.efforts[number] }, note: 'Selected by Vex' };
     }
   }
+  const consensus = modelConsensus(config, suggestion);
+  if (consensus) return { route: consensus, note: 'Selected from Vex model consensus after route abstention' };
   if (policyFallback && validRoute(policyFallback, config.models))
     return { route: policyFallback, note: 'Policy fallback after Vex abstained or was uncertain' };
   return { route: config.defaultRoute, note: 'Vex abstained or was uncertain; configured default' };

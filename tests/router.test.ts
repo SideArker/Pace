@@ -44,6 +44,17 @@ describe('routing', () => {
     expect(selectRoute(routes, abstained, undefined, helloFallback).route).toEqual({ model: 'gpt-6-luna', effort: 'low' });
     expect(selectRoute(routes, abstained, undefined, paymentFallback)).toEqual({ route: { model: 'gpt-6-sol', effort: 'high' }, note: 'Policy fallback after Vex abstained or was uncertain' });
   });
+  it('recovers a clear model consensus when Vex abstains on individual effort confidence', () => {
+    const routes = parseConfig({ routingMode: 'auto', models: [
+      { model: 'gpt-6-luna', efforts: ['low'] },
+      { model: 'gpt-6-sol', efforts: ['high', 'xhigh'] },
+    ], defaultRoute: { model: 'gpt-6-luna', effort: 'low' } });
+    const abstained = { contractVersion: '1', choice: null, abstained: true, reason: 'Insufficient confidence or probability lead', confidence: .54, probabilities: { '0:low': 0, '1:high': .33, '1:xhigh': .66 } };
+    expect(selectRoute(routes, abstained)).toEqual({ route: { model: 'gpt-6-sol', effort: 'xhigh' }, note: 'Selected from Vex model consensus after route abstention' });
+    expect(selectRoute(routes, { ...abstained, probabilities: { '0:low': .51, '1:high': .25, '1:xhigh': .24 } }).route).toEqual(routes.defaultRoute);
+    expect(selectRoute(routes, { ...abstained, reason: 'Insufficient information' }).route).toEqual(routes.defaultRoute);
+    expect(selectRoute(routes, { ...abstained, probabilities: { '0:low': 0, '1:high': .33, '1:xhigh': 1.2 } }).route).toEqual(routes.defaultRoute);
+  });
   it('rejects unsupported effort in config', () => {
     expect(() => parseConfig({ ...config, models: [{ model: 'route-one', efforts: ['unknown'] }] })).toThrow();
     expect(() => parseConfig({ ...config, models: [{ model: 'route-one', efforts: ['max'] }] })).toThrow();

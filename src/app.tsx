@@ -12,8 +12,9 @@ import { spawn } from "node:child_process";
 
 type Line = {
   id: number;
-  role: "you" | "codex" | "info" | "error" | "artifact";
+  role: "you" | "codex" | "info" | "meta" | "error" | "artifact";
   text: string;
+  spaceBefore: boolean;
 };
 const commands = ["/help", "/models", "/auto", "/new", "/resume", "/artifacts", "/clear", "/exit"];
 const modelCatalog = ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra"];
@@ -50,7 +51,7 @@ export default function App() {
   const abort = useRef<AbortController | undefined>(undefined);
   const shells = useRef(new Set<{ kill: () => boolean }>());
   const add = (role: Line["role"], text: string) =>
-    setLines((old) => [...old, { id: nextId.current++, role, text }]);
+    setLines((old) => [...old, { id: nextId.current++, role, text, spaceBefore: role === "you" && old.length > 0 }]);
   const matches = !shellMode && draft.startsWith('/') && !draft.includes(' ') ? commands.filter(command => command.startsWith(draft)) : [];
   const menuModels = [...new Set([...modelCatalog, ...(config?.models.map(model => model.model) ?? [])])];
   useEffect(() => {
@@ -82,9 +83,9 @@ export default function App() {
       for (const turn of (saved?.turns ?? []).slice(-6)) {
         add("you", turn.prompt);
         add(turn.failed ? "error" : "codex", turn.result);
-        add("info", `Route: ${routeLabel(turn.route)}`);
+        add("meta", `Route: ${routeLabel(turn.route)}`);
         for (const artifact of turn.artifacts ?? []) add("artifact", artifact);
-        if (turn.usage) add("info", usageLabel(turn.usage));
+        if (turn.usage) add("meta", usageLabel(turn.usage));
       }
       setStatus(
         saved?.threadId
@@ -289,7 +290,7 @@ export default function App() {
             setStatus(progress.text);
             setSession({ ...session });
           }
-          if (progress.kind === 'route') add('info', `Matched: ${routeLabel(progress.route)}`);
+          if (progress.kind === 'route') add('meta', `Matched: ${routeLabel(progress.route)}`);
           if (progress.kind === "error") add("error", progress.text);
           if (progress.kind === "message") {
             setStatus("Finishing response…");
@@ -299,9 +300,9 @@ export default function App() {
       );
       setSession({ ...outcome.session });
       add("codex", outcome.result);
-      add("info", `Completed: ${routeLabel(outcome.route)} · ${outcome.note}`);
+      add("meta", `Completed: ${routeLabel(outcome.route)} · ${outcome.note}`);
       for (const artifact of outcome.artifacts) add("artifact", artifact);
-      if (outcome.usage) add('info', usageLabel(outcome.usage));
+      if (outcome.usage) add('meta', usageLabel(outcome.usage));
       setStatus("Done");
     } catch (error) {
       add("error", String(error));
@@ -324,9 +325,9 @@ export default function App() {
       <Text color={vexState === "connected" ? "green" : vexState === "failed" ? "red" : "yellow"}>Vex MCP: {vexState === "connected" ? "connected" : vexState === "failed" ? "unavailable — coding blocked" : "connecting"}</Text>
       <Static key={clearEpoch} items={lines}>
         {(line) => (
-          <Box key={line.id} flexDirection="column">
+          <Box key={line.id} flexDirection="column" marginTop={line.spaceBefore ? 1 : 0}>
             <Text
-              dimColor={line.role === "info"}
+              dimColor={line.role === "info" || line.role === "meta"}
               color={
                 line.role === "error"
                   ? "red"
@@ -335,7 +336,7 @@ export default function App() {
                     : line.role === "artifact" ? "magenta" : line.role === "codex" ? "white" : undefined
               }
             >
-              {line.role === "you" ? "You: " : line.role === "codex" ? "  " : line.role === "artifact" ? "Artifact: " : line.role === "error" ? "Error: " : "Pace: "}{line.text}
+              {line.role === "you" ? "You: " : line.role === "codex" ? "  " : line.role === "artifact" ? "Artifact: " : line.role === "error" ? "Error: " : line.role === "meta" ? "" : "Pace: "}{line.text}
             </Text>
           </Box>
         )}
