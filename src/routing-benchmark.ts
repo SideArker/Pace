@@ -7,7 +7,7 @@ import { PaceStore } from './core/sessions.js';
 import { loadRoutingPrompts } from './core/routing-prompts.js';
 import { pricedModels, PRICE_SNAPSHOT } from './core/pricing.js';
 import { chosenRoute, validateDecision, type RoutingDecision } from './core/router.js';
-import { shapeRequest, stageRequest, VexRouter, type VexRequest } from './integrations/vex.js';
+import { shapeRequest, stageRequest, VexRouter, type VexRequest } from './core/vex.js';
 import type { ModelOption, TurnSummary } from './types.js';
 
 export type RoutingCase = {
@@ -115,7 +115,7 @@ async function main() {
   const runs: RoutingRun[] = [];
   try {
     await vex.verify();
-    const routerSources = await Promise.all(['src/integrations/vex.ts', 'src/core/router.ts'].map(path => readFile(resolve(path))));
+    const routerSources = await Promise.all(['src/core/vex.ts', 'src/core/router.ts'].map(path => readFile(resolve(path))));
     await writeFile(join(options.out, 'manifest.json'), JSON.stringify({ suiteSha256: createHash('sha256').update(suiteText).digest('hex'),
       routerSourceSha256: createHash('sha256').update(Buffer.concat(routerSources)).digest('hex'),
       routingPromptsSha256: createHash('sha256').update(JSON.stringify(prompts)).digest('hex'),

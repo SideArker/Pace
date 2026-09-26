@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_ROUTING_PROMPTS, loadRoutingPrompts, routingPromptFile } from "../src/core/routing-prompts.js";
-import { shapeRequest, stageRequest, type VexRequest } from "../src/integrations/vex.js";
+import { shapeRequest, stageRequest, type VexRequest } from "../src/core/vex.js";
 import { Orchestrator } from "../src/core/orchestrator.js";
 import { PaceStore, newSession } from "../src/core/sessions.js";
 import { decision } from "./routing-fixture.js";

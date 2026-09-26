@@ -1,4 +1,4 @@
-import type { VexRequest } from '../src/integrations/vex.js';
+import type { VexRequest } from '../src/core/vex.js';
 
 export function decision(request: VexRequest, choice: string) {
   const probabilities = Object.fromEntries(request.options.map(option => [option.id, option.id === choice ? 0.9 : 0.1 / (request.options.length - 1)]));
