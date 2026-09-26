@@ -5,6 +5,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { ModelOption } from '../types.js';
+import type { RouteContext } from '../core/router.js';
 
 const require = createRequire(import.meta.url);
 
@@ -19,32 +20,43 @@ export function vexServerPath(): string | undefined {
 
 export function routeRequest(prompt: string, models: ModelOption[]) {
   // Keep user text, repository content and paths out of the remote decision.
-  const greeting = /^(hi|hello|hey|thanks|thank you|good (morning|afternoon|evening))[!.?\s]*$/i.test(prompt.trim());
-  const codingAction = /\b(build|implement|create|design|plan|code|write|develop|fix|debug|refactor|migrate|test|deploy|integrate|architect|edit|change)\b/i.test(prompt);
+  const trimmed = prompt.trim();
+  const greeting = /^(hi|hello|hey|thanks|thank you|good (morning|afternoon|evening))[!.?\s]*$/i.test(trimmed);
+  const planning = /\b(plan|planning|roadmap|proposal|approach|strategy)\b/i.test(prompt)
+    && !/\bplan\s*(?:,?\s*(?:and|then)\s+)(?:build|implement|create|develop|write)\b|\b(?:build|implement|create|develop|write)\s+and\s+plan\b/i.test(prompt)
+    && !/\b(create|write|edit|save|update)\b.*\b(file|artifact|document|markdown)\b|\b(create|write|edit|save|update)\b.*\.md\b/i.test(prompt);
+  const implementation = (/\b(build|implement|create|code|write|develop|fix|debug|refactor|migrate|deploy|integrate|edit|change|add)\b/i.test(prompt)
+    || /\b(?:run|execute)\s+tests?\b|^test\s+(?:the|this|my|our|a)\b/i.test(trimmed)) && !planning;
+  const codingAction = implementation || planning || /\b(design|architect)\b/i.test(prompt);
   const currentInfo = /\b(today|tomorrow|latest|current|recent|forecast|weather|news|price|prices)\b/i.test(prompt);
   const factualQuestion = !greeting && !codingAction && (
     /\b(?:what(?:['’]s|\s+(?:is|are|does|do))|who(?:['’]s|\s+(?:is|are))|where(?:['’]s|\s+(?:is|are))|when(?:['’]s|\s+(?:is|are))|why\s+(?:is|are|does|do)|how\s+(?:does|do|is|are)|which\s+(?:is|are)|explain|define|tell(?:ing)? me (?:what|about|how))\b/i.test(prompt)
     || /^(?:the\s+)?(?:weather|forecast|temperature)\b/i.test(prompt.trim())
   );
-  const exploration = /\b(list|find|locate|show|search|inspect|explore|look (?:for|at)|where (?:is|are))\b/i.test(prompt)
+  const exploration = /\b(list|find|locate|show|search|inspect|explore|analy[sz]e|look (?:for|at)|where (?:is|are))\b/i.test(prompt)
     && /\b(file|files|folder|directory|repo|repository|codebase|function|class|symbol|implementation|usage|definition)\b/i.test(prompt)
-    && !/\b(build|implement|create|design|write|develop|fix|refactor|migrate|edit|change)\b/i.test(prompt);
-  const category = greeting ? 'conversation' : exploration ? 'exploration' : factualQuestion ? 'general_knowledge' : /\b(test|bug|fix|error|fail|regression)\b/i.test(prompt) ? 'debugging' : /\b(refactor|migrate|rename|cleanup)\b/i.test(prompt) ? 'refactoring' : 'coding';
+    && !implementation && !planning;
+  const diagnostic = /\b(fix|debug|bug|error|fail|regression)\b|what(?:['’]s| is) wrong/i.test(prompt);
+  const category = greeting ? 'conversation' : planning ? 'planning' : exploration ? 'exploration' : diagnostic ? 'debugging' : factualQuestion ? 'general_knowledge' : /\b(refactor|migrate|rename|cleanup)\b/i.test(prompt) ? 'refactoring' : implementation ? 'coding' : 'unclear';
   const words = prompt.trim().split(/\s+/).length;
   const size = words < 12 ? 'short' : words < 40 ? 'medium' : 'long';
   const complexDomain = /\b(payment|payments|billing|financial|security|auth|authentication|distributed)\b/i.test(prompt);
   const architecture = /\b(system|architecture|architect|design|platform|end.to.end)\b/i.test(prompt);
-  const intent = greeting ? 'brief social greeting' : exploration ? 'read-only repository exploration' : factualQuestion ? currentInfo ? 'current-information lookup' : 'brief factual explanation' : complexDomain && architecture ? 'complex architecture and implementation in a sensitive domain' : 'software development request';
+  const critical = /\b(outage|production|critical|irreversible|data loss|zero.downtime)\b/i.test(prompt) && /\b(migrat|deploy|security|auth|payment|billing|distributed|system|service|database)/i.test(prompt);
+  const simpleChange = /\b(small|simple|minor|tiny|button color|colour|typo)\b/i.test(prompt);
+  const needsRepository = /\b(existing|current|repo|repository|codebase|project|add|implement|fix|debug|refactor|migrate)\b/i.test(prompt);
+  const intent = greeting ? 'brief social greeting' : planning ? 'read-only planning' : exploration ? 'read-only repository exploration' : factualQuestion ? currentInfo ? 'current-information lookup' : 'brief factual explanation' : implementation ? 'software implementation' : 'unclear task';
   const describe = (model: string, effort: string) => {
     const tier = /luna/i.test(model) ? 'fast low-cost tier' : /sol/i.test(model) ? 'strong coding tier' : 'configured coding tier';
     return `${model} at ${effort} reasoning, ${tier}`;
   };
   const modelOnly = models.length >= 2 && models.every(model => model.efforts.length === 1);
+  const context: RouteContext = { category, requestLength: size, currentInfo, multipleFiles: /\b(all|multiple|several)\s+files?\b/i.test(prompt), testsMentioned: /\b(tests?|specs?)\b/i.test(prompt), complexDomain, architecture, critical, simpleChange, needsRepository };
   return {
     question: modelOnly ? 'Which supplied Codex model should handle this task?' : 'Which configured Codex model and effort should handle this task?',
-    context: { category, intent, requestLength: size, currentInfo, multipleFiles: /\b(all|multiple|several)\s+files?\b/i.test(prompt), testsMentioned: /\b(tests?|specs?)\b/i.test(prompt), complexDomain, architecture },
+    context: { ...context, intent },
     options: models.flatMap((model, index) => model.efforts.map(effort => ({ id: `${index}:${effort}`, description: describe(model.model, effort) }))),
-    constraints: `${modelOnly ? 'Pace has selected one reasoning effort per model. Choose the least costly model likely to complete the task. ' : 'Choose the cheapest supplied route likely to complete the task. '}Greetings, short factual questions, current-information lookups, and narrow read-only file exploration use Luna low when available; needing a web lookup does not by itself require deeper reasoning. Ordinary coding, debugging, refactoring, and longer explanations use Sol medium; difficult multi-file work uses Sol high. Sensitive architecture and deeply complex work use Astra high if available, otherwise Sol high. Abstain only when supplied context is insufficient to choose a capable model; do not abstain merely because multiple capable models exist.`,
+    constraints: `${modelOnly ? 'Pace has selected one reasoning effort per model. Choose the least costly capable model. ' : 'Choose the least costly capable model and effort. '}Use task intent and reasoning demand, not request length alone. Luna handles conversation, lookup, repository reading and planning, including architectural planning. Sol handles implementation, debugging and refactoring. Low suits routine lookup or scanning; medium suits small changes or modest synthesis; high suits substantial implementation or multi-step planning; xhigh suits difficult design or sensitive implementation; ultra is reserved for unusually complex, critical changes with serious failure impact. A sensitive topic alone does not make a read-only plan an implementation task. Abstain only when supplied context is insufficient to choose a capable model.`,
   };
 }
 

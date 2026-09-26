@@ -1,15 +1,27 @@
 import type { Config, ModelOption, Route } from '../types.js';
 import { isRecord, validRoute } from '../config.js';
 export type RouteResult = { route: Route; note: string };
-export type RouteContext = { category: string; requestLength: string; complexDomain: boolean; architecture: boolean; multipleFiles: boolean; testsMentioned: boolean };
+export type RouteContext = { category: string; requestLength: string; currentInfo: boolean; complexDomain: boolean; architecture: boolean; multipleFiles: boolean; testsMentioned: boolean; critical: boolean; simpleChange: boolean; needsRepository: boolean };
+
+function effortOrder(context: RouteContext, modelName?: string): Route['effort'][] {
+  if (modelName === 'gpt-6-luna' && ['coding', 'debugging', 'refactoring'].includes(context.category))
+    return ['low', 'medium', 'high'];
+  if (context.critical) return ['ultra', 'xhigh', 'high', 'medium', 'low'];
+  if (context.category === 'conversation' || context.category === 'general_knowledge')
+    return context.complexDomain && context.architecture ? ['high', 'medium', 'low'] : context.requestLength === 'long' ? ['medium', 'high', 'low'] : ['low', 'medium', 'high'];
+  if (context.category === 'exploration')
+    return context.multipleFiles || context.requestLength === 'long' ? ['medium', 'high', 'low'] : ['low', 'medium', 'high'];
+  if (context.category === 'planning')
+    return context.architecture || context.multipleFiles || context.complexDomain ? ['high', 'medium', 'xhigh', 'low'] : ['medium', 'low', 'high'];
+  if (context.simpleChange && !context.multipleFiles && !context.testsMentioned) return ['medium', 'low', 'high'];
+  if (context.complexDomain && context.architecture) return ['xhigh', 'high', 'ultra', 'medium', 'low'];
+  return context.multipleFiles || context.testsMentioned || context.requestLength === 'long' || context.category === 'coding'
+    ? ['high', 'medium', 'xhigh', 'low'] : ['medium', 'high', 'low'];
+}
 
 export function routingCandidates(models: ModelOption[], context: RouteContext): ModelOption[] {
-  const simple = ['conversation', 'general_knowledge', 'exploration'].includes(context.category) && context.requestLength !== 'long' && !context.multipleFiles && !(context.complexDomain && context.architecture);
-  const demanding = !simple && ((context.complexDomain && context.architecture) || context.multipleFiles || context.testsMentioned || (context.requestLength === 'long' && !['general_knowledge', 'exploration'].includes(context.category)));
   return models.map(model => {
-    const effort = demanding
-      ? model.efforts.find(value => value === 'high') ?? model.efforts.find(value => value === 'xhigh')
-      : simple ? model.efforts.find(value => value === 'low') : undefined;
+    const effort = effortOrder(context, model.model).find(value => value && model.efforts.includes(value));
     const selected = effort ?? model.defaultEffort ?? model.efforts[0]!;
     return { ...model, efforts: [selected], defaultEffort: selected };
   });
@@ -52,33 +64,23 @@ export function selectRoute(config: Config, suggestion: unknown, manual?: Route,
     return { route: policyFallback, note: 'Policy fallback after Vex abstained or was uncertain' };
   return { route: config.defaultRoute, note: 'Vex abstained or was uncertain; configured default' };
 }
-export function sensitiveArchitectureFallback(context: { complexDomain: boolean; architecture: boolean }, config: Config): Route | undefined {
-  if (!context.complexDomain || !context.architecture) return undefined;
-  const sol = config.models.find(model => model.enabled !== false && model.model === 'gpt-6-sol');
-  const effort = sol?.efforts.includes('high') ? 'high' : sol?.efforts.includes('xhigh') ? 'xhigh' : undefined;
-  return effort ? { model: sol!.model, effort } : undefined;
+/** A clear task intent can be routed locally; Vex handles unclear requests. */
+export function directRoute(context: RouteContext, config: Config): Route | undefined {
+  const name = ['conversation', 'general_knowledge', 'exploration', 'planning'].includes(context.category)
+    ? 'gpt-6-luna' : ['coding', 'debugging', 'refactoring'].includes(context.category) ? 'gpt-6-sol' : undefined;
+  const model = config.models.find(option => option.enabled !== false && option.model === name);
+  if (!model) return undefined;
+  const effort = effortOrder(context, model.model).find(value => value && model.efforts.includes(value)) ?? model.defaultEffort ?? model.efforts[0];
+  return { model: model.model, effort };
 }
-export function lightweightFallback(context: { category: string; requestLength: string; complexDomain: boolean; architecture: boolean; multipleFiles: boolean }, config: Config): Route | undefined {
-  if (context.category !== 'conversation' && context.category !== 'general_knowledge' && context.category !== 'exploration') return undefined;
-  if (context.category !== 'conversation' && (context.requestLength === 'long' || context.multipleFiles || (context.complexDomain && context.architecture))) return undefined;
-  const luna = config.models.find(model => model.enabled !== false && model.model === 'gpt-6-luna');
-  const effort = luna?.efforts.includes('low') ? 'low' : luna?.defaultEffort ?? luna?.efforts[0];
-  return luna && effort ? { model: luna.model, effort } : undefined;
-}
-export function policyRoute(context: { category: string; requestLength: string; complexDomain: boolean; architecture: boolean; multipleFiles: boolean; testsMentioned: boolean }, config: Config): Route | undefined {
-  const available = (name: string, efforts: Route['effort'][]) => {
-    const model = config.models.find(option => option.enabled !== false && option.model === name);
-    const effort = efforts.find(candidate => candidate && model?.efforts.includes(candidate));
-    return model && effort ? { model: model.model, effort } : undefined;
-  };
-  const light = lightweightFallback(context, config);
-  if (light) return light;
-  if (context.complexDomain && context.architecture)
-    return available('gpt-6-astra', ['high', 'xhigh', 'medium']) ?? available('gpt-6-sol', ['high', 'xhigh', 'medium']);
-  if ((context.category === 'general_knowledge' || context.category === 'exploration') && context.requestLength === 'long' && !context.multipleFiles)
-    return available('gpt-6-sol', ['medium', 'high']) ?? available('gpt-6-luna', ['low']);
-  if (context.multipleFiles || context.testsMentioned || context.requestLength === 'long')
-    return available('gpt-6-sol', ['high', 'medium']) ?? available('gpt-6-astra', ['high']);
-  return available('gpt-6-sol', ['medium', 'high', 'low']) ?? available('gpt-6-luna', ['low']);
+export function policyRoute(context: RouteContext, config: Config): Route | undefined {
+  const direct = directRoute(context, config);
+  if (direct) return direct;
+  if (context.category === 'unclear') return undefined;
+  const preference = ['conversation', 'general_knowledge', 'exploration', 'planning'].includes(context.category)
+    ? ['gpt-6-sol', 'gpt-6-astra'] : ['gpt-6-astra', 'gpt-6-luna'];
+  const model = preference.map(name => config.models.find(option => option.enabled !== false && option.model === name)).find(Boolean);
+  const effort = model && (effortOrder(context, model.model).find(value => value && model.efforts.includes(value)) ?? model.defaultEffort ?? model.efforts[0]);
+  return model && effort ? { model: model.model, effort } : undefined;
 }
 export function sameRoute(a: Route, b: Route): boolean { return a.model === b.model && a.effort === b.effort; }

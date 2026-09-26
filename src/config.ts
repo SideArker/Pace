@@ -10,11 +10,11 @@ export const EFFORTS: readonly Effort[] = [
 ];
 export const DEFAULT_CONFIG: Config = {
   models: [
-    { model: "gpt-6-luna", efforts: ["low"], defaultEffort: "low" },
-    { model: "gpt-6-sol", efforts: ["medium", "high"], defaultEffort: "medium" },
-    { model: "gpt-6-astra", efforts: ["high"], defaultEffort: "high" },
+    { model: "gpt-6-luna", efforts: ["low", "medium", "high"], defaultEffort: "low" },
+    { model: "gpt-6-sol", efforts: ["medium", "high", "xhigh", "ultra"], defaultEffort: "high" },
+    { model: "gpt-6-astra", efforts: ["high", "xhigh", "ultra"], defaultEffort: "high" },
   ],
-  defaultRoute: { model: "gpt-6-sol", effort: "medium" },
+  defaultRoute: { model: "gpt-6-sol", effort: "high" },
   routingMode: "auto",
 };
 export function isRecord(value: unknown): value is Record<string, unknown> {
