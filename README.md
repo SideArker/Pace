@@ -1,4 +1,4 @@
-# Pace 0.1
+# Pace
 
 Pace is an independent, terminal-only coding client. The official [Codex TypeScript SDK](https://github.com/openai/codex/tree/main/sdk/typescript) runs coding turns; the [Vex MCP server](https://github.com/SideArker/Vex) can recommend a configured model and effort for each automatic turn. Pace is not an OpenAI product.
 
@@ -39,12 +39,27 @@ For development, use `npm run dev` instead of linking. `pace --help` and `pace -
 | `/resume` | Open a saved conversation picker for this project |
 | `/usage` | Refresh Codex account usage percentages |
 | `/artifacts` | List Markdown artifacts in this project's `.pace/artifacts` directory |
+| `/trust add <folder>` | Allow Codex to edit an additional existing folder |
+| `/trust remove <folder>` | Remove an additional folder; `/trust list` shows current entries |
+| `/skills <folder>` | Discover skills in a selected folder; `/skills` refreshes and `/skills off` clears it |
+| `/route` | Show the last recorded model, effort, and route explanation |
+| `/stats` | Show observed time, tokens, and failures for the current conversation's last 20 turns |
 | `/clear` | Clear the visible terminal transcript; keep the Codex conversation |
 | `/exit` | Quit |
 | `! <command>` | Run one Bash command in the project directory |
 | `!` | Toggle Bash input mode; type `!` again to return to Pace |
 
 Type `/` to see a command menu. Use Tab to complete and ↑/↓ to choose a match. In `/models`, use ↑/↓ or Tab to select, Space to enable or disable, Enter to open reasoning levels, and Esc to go back. Each turn has separate **You** and **Pace** sections, followed by a compact, gray model, timing, usage, and route footer. A divider separates turns. A spinner marks active work; status text comes from Codex SDK events. Ctrl+C cancels the current Codex turn; when idle, it exits. Input stays available during a Codex turn so Bash commands can run concurrently.
+
+## Non-interactive runs
+
+Run `pace exec "your request"` from a project directory to continue its active conversation without Ink. Pace writes the final response to stdout. It returns 0 on success, 1 on provider, configuration, or execution failure, 2 for a missing prompt, and 130 after Ctrl+C. Errors go to stderr. This command uses the same routing, trusted folders, skill folder, and session storage as interactive turns.
+
+## Trusted folders and skills
+
+Use `/trust add C:\path\to\folder` to give Codex workspace-write access to an existing folder outside the project. Pace resolves and checks each folder before every coding turn. Remove access with `/trust remove <folder>`. Trusted folders are stored in `~/.pace/config.json` as `trustedFolders`. Side questions stay read-only and do not receive trusted folders.
+
+Use `/skills C:\path\to\skills` to select a folder containing `<skill-name>/SKILL.md` directories. Pace lists discovered names and descriptions, then passes their metadata and file paths to Codex on coding turns. Codex reads a relevant `SKILL.md` when it chooses to use the skill. Pace scans the selected folder and its immediate children, up to 32 skills. The folder is not granted write access unless you separately trust it. Use `/skills off` to stop including it. The setting is `skillFolder` in `~/.pace/config.json`.
 
 ## Models and routing
 

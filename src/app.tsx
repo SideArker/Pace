@@ -8,6 +8,8 @@ import { SdkRunner } from "./integrations/codex.js";
 import { VexRouter } from "./integrations/vex.js";
 import { EFFORTS, withModels } from "./config.js";
 import { artifactSnapshot } from "./core/artifacts.js";
+import { existingFolder, sameFolder } from "./core/folders.js";
+import { discoverSkills } from "./core/skills.js";
 import { formatTurnFooter, modelName } from "./turn-format.js";
 import { readUsageLimits } from "./integrations/usage.js";
 import type { UsageLimits } from "./integrations/usage.js";
@@ -16,6 +18,7 @@ import { Header, Transcript, type Line } from "./components/Transcript.js";
 import { UsageBar } from "./components/UsageBar.js";
 import { CommandMenu, ModelMenu, ResumeMenu } from "./components/Menus.js";
 import { spawn } from "node:child_process";
+import { resolve } from "node:path";
 const commands = [
   "/help",
   "/models",
@@ -25,11 +28,16 @@ const commands = [
   "/usage",
   "/btw",
   "/artifacts",
+  "/trust",
+  "/skills",
+  "/route",
+  "/stats",
   "/clear",
   "/exit",
 ];
 const modelCatalog = ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra"];
 const spinner = ["|", "/", "-", "\\"];
+const folderArgument = (value: string) => value.trim().replace(/^(?:"(.*)"|'(.*)')$/, (_match, double: string | undefined, single: string | undefined) => double ?? single ?? value);
 const project = process.cwd();
 const store = new PaceStore();
 const vex = new VexRouter();
@@ -426,7 +434,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       if (command === "/help") {
         add(
           "info",
-          "/models · /auto · /new · /resume · /usage · /btw <question> · /artifacts · /clear · /exit · ! Bash · Ctrl+O outputs · Ctrl+E details · Shift+Enter newline · ↑/↓ history",
+          "/models · /auto · /new · /resume · /usage · /btw <question> · /artifacts · /trust add|remove <folder> · /skills <folder>|off · /route · /stats · /clear · /exit · ! Bash · Ctrl+O outputs · Ctrl+E details · Shift+Enter newline · ↑/↓ history",
         );
         return;
       }
@@ -484,6 +492,68 @@ export default function App({ onClear }: { onClear: () => void }) {
         } catch (error) {
           add("error", `Could not list artifacts: ${String(error)}`);
         }
+        return;
+      }
+      if (command === "/route") {
+        const last = session.turns.at(-1);
+        add("info", last?.route ? `${modelName(last.route)} · ${last.routeNote ?? "Route detail unavailable"}${last.failed ? " · failed" : ""}` : "No completed route yet.");
+        return;
+      }
+      if (command === "/stats") {
+        const turns = session.turns;
+        if (!turns.length) { add("info", "No recorded turns yet."); return; }
+        const total = (key: "input_tokens" | "output_tokens") => turns.reduce((sum, turn) => sum + (turn.usage?.[key] ?? 0), 0);
+        const elapsed = turns.reduce((sum, turn) => sum + (turn.durationMs ?? 0), 0);
+        const reported = turns.filter(turn => turn.usage).length;
+        add("info", `Current conversation, last ${turns.length} turns · ${turns.filter(turn => turn.failed).length} failed · ${(elapsed / 1000).toFixed(1)}s elapsed · ${total("input_tokens")} input / ${total("output_tokens")} output tokens (${reported} turns reported usage)`);
+        return;
+      }
+      if (command === "/trust") {
+        const action = parts[0];
+        const input = folderArgument(parts.slice(1).join(" "));
+        if (!action || action === "list") {
+          add("info", config.trustedFolders?.length ? config.trustedFolders.join("\n") : "No trusted folders.");
+          return;
+        }
+        if ((action !== "add" && action !== "remove") || !input) {
+          add("error", "Use /trust add <folder>, /trust remove <folder>, or /trust list.");
+          return;
+        }
+        try {
+          const folder = action === "add" ? await existingFolder(input) : await existingFolder(input).catch(() => resolve(input));
+          const folders = action === "add"
+            ? [...(config.trustedFolders ?? []).filter(path => !sameFolder(path, folder)), folder]
+            : (config.trustedFolders ?? []).filter(path => !sameFolder(path, folder));
+          if (action === "remove" && folders.length === (config.trustedFolders ?? []).length) {
+            add("error", `Folder is not trusted: ${input}`);
+            return;
+          }
+          const updated = { ...config, trustedFolders: folders };
+          await store.saveConfig(updated);
+          setConfig(updated);
+          add("info", `${action === "add" ? "Trusted" : "Removed"}: ${folder}`);
+        } catch (error) { add("error", `Could not update trusted folders: ${String(error)}`); }
+        return;
+      }
+      if (command === "/skills") {
+        try {
+          if (parts.join(" ") === "off") {
+            const updated = { ...config, skillFolder: undefined };
+            await store.saveConfig(updated);
+            setConfig(updated);
+            add("info", "Skill folder disabled.");
+            return;
+          }
+          const folder = parts.length ? await existingFolder(folderArgument(parts.join(" "))) : config.skillFolder;
+          if (!folder) { add("error", "Use /skills <folder> to select a skills folder."); return; }
+          const skills = await discoverSkills(folder);
+          if (parts.length) {
+            const updated = { ...config, skillFolder: folder };
+            await store.saveConfig(updated);
+            setConfig(updated);
+          }
+          add("info", skills.length ? skills.map(skill => `${skill.name} · ${skill.description}`).join("\n") : `No skills found in ${folder}.`);
+        } catch (error) { add("error", `Could not discover skills: ${String(error)}`); }
         return;
       }
       if (command === "/resume") {

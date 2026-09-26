@@ -16,6 +16,8 @@ Interactive Ink terminal; official Codex SDK execution and streaming; Vex MCP ro
 
 **Goal:** smooth out actual daily use before expanding routing complexity.
 
+**In progress:** multiline input and history; SDK tool/file activity; `pace exec`; selected skill folder and trusted folders. Remaining items below still need evidence and work.
+
 - Stronger input UX: multiline editing, history, better cancellation and narrow-terminal handling.
 - Clear visibility into file changes, tool activity, failures and final summaries, using only supported SDK events.
 - Better project/session picker and reliable handling of moved or deleted projects.
