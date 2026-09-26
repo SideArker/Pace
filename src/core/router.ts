@@ -14,7 +14,7 @@ export function validateDecision(value: unknown, options: RoutingChoice[]): Rout
     (probabilities[option.id] as number) < 0 || (probabilities[option.id] as number) > 1))
     throw new Error('Invalid Vex routing probabilities');
   const total = options.reduce((sum, option) => sum + (probabilities[option.id] as number), 0);
-  if (Math.abs(total - 1) > 0.02) throw new Error('Invalid Vex routing probability total');
+  if (total <= 0 || total > 1.02) throw new Error('Invalid Vex routing probability total');
   const highest = options.reduce((best, option) =>
     (probabilities[option.id] as number) > (probabilities[best.id] as number) ? option : best);
   if (value.choice !== highest.id) throw new Error('Vex routing choice does not match highest ranked option');

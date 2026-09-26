@@ -6,6 +6,7 @@ import { artifactDirectory, artifactPrompt, artifactSnapshot, changedArtifacts }
 import { PaceStore, newSession } from "../src/core/sessions.js";
 import { Orchestrator } from "../src/core/orchestrator.js";
 import type { Config } from "../src/types.js";
+import { singleVex } from './routing-fixture.js';
 
 let root: string | undefined;
 afterEach(async () => { if (root) await rm(root, { recursive: true, force: true }); root = undefined; });
@@ -26,7 +27,7 @@ it("records a Markdown artifact created during a coding turn and finds it later"
     await writeFile(join(artifactDirectory(project), "plan.md"), "# Plan\n");
     return { result: "Saved the plan", completed: true };
   } };
-  const orchestrator = new Orchestrator(store, runner, { verify: async () => {}, choose: async () => undefined });
+  const orchestrator = new Orchestrator(store, runner, singleVex('0:medium'));
   const outcome = await orchestrator.turn("Create an artifact", newSession(project, "auto"), config, () => {});
   expect(outcome.artifacts).toEqual([".pace/artifacts/plan.md"]);
   expect((await store.latest(project))?.turns[0]?.artifacts).toEqual(outcome.artifacts);

@@ -8,6 +8,7 @@ import { parseConfig, DEFAULT_CONFIG } from '../src/config.js';
 import { Orchestrator } from '../src/core/orchestrator.js';
 import { PaceStore, newSession } from '../src/core/sessions.js';
 import type { CodexRunner } from '../src/integrations/codex.js';
+import { singleVex } from './routing-fixture.js';
 
 let dir: string;
 afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true }); });
@@ -30,14 +31,14 @@ it('validates trusted folders before execution and passes skill names to the run
   const skillFolder = join(dir, 'skills');
   await mkdir(join(skillFolder, 'review'), { recursive: true });
   await writeFile(join(skillFolder, 'review', 'SKILL.md'), '---\nname: review\ndescription: Review code changes.\n---\nInstructions');
-  const config = parseConfig({ ...DEFAULT_CONFIG, models: [{ model: 'test', efforts: ['medium'] }], defaultRoute: { model: 'test', effort: 'medium' }, trustedFolders: [trusted], skillFolder });
+  const config = parseConfig({ ...DEFAULT_CONFIG, models: [{ model: 'gpt-6-sol', efforts: ['medium'] }], defaultRoute: { model: 'gpt-6-sol', effort: 'medium' }, trustedFolders: [trusted], skillFolder });
   let received = '';
   let folders: string[] = [];
   const runner: CodexRunner = { async run(prompt, _project, _route, _thread, _progress, _signal, _mode, trustedFolders) {
     received = prompt; folders = trustedFolders ?? [];
     return { result: 'done', completed: true };
   } };
-  const orchestrator = new Orchestrator(new PaceStore(join(dir, 'store')), runner, { choose: async () => undefined });
+  const orchestrator = new Orchestrator(new PaceStore(join(dir, 'store')), runner, singleVex('0:medium'));
   await orchestrator.turn('Check this', newSession(dir, 'auto'), config, () => {});
   expect(folders).toEqual([trusted]);
   expect(received).toContain('review: Review code changes.');
