@@ -6,6 +6,8 @@ import { routeRequest } from "../integrations/vex.js";
 import { PaceStore } from "./sessions.js";
 import { artifactSnapshot, changedArtifacts } from "./artifacts.js";
 import { validRoute } from "../config.js";
+import { existingFolder } from "./folders.js";
+import { discoverSkills, skillPrompt } from "./skills.js";
 export type TurnOutcome = { session: Session; result: string; note: string; route: Route; durationMs: number; artifacts: string[]; usage?: Awaited<ReturnType<CodexRunner['run']>>['usage'] };
 export class VexUnavailableError extends Error {
   constructor(cause: unknown) { super(`Vex MCP unavailable: ${String(cause)}`); }
@@ -87,8 +89,10 @@ export class Orchestrator {
     });
     try {
       const artifactsBefore = await artifactSnapshot(session.projectPath).catch(() => new Map<string, number>());
+      const trustedFolders = await Promise.all((config.trustedFolders ?? []).map(existingFolder));
+      const skills = config.skillFolder ? await discoverSkills(config.skillFolder) : [];
       const execution = await this.runner.run(
-        prompt,
+        skillPrompt(prompt, skills),
         session.projectPath,
         route,
         session.threadId,
@@ -99,6 +103,8 @@ export class Orchestrator {
           } else onProgress(progress);
         },
         signal,
+        "main",
+        trustedFolders,
       );
       const artifactsAfter = await artifactSnapshot(session.projectPath).catch(() => new Map<string, number>());
       const artifacts = changedArtifacts(artifactsBefore, artifactsAfter);
