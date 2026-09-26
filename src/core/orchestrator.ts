@@ -33,7 +33,7 @@ function handoffPrompt(kind: 'scout' | 'plan_execute', request: string, turns: T
     ? prompts.handoff.scoutObjective
     : prompts.handoff.planObjective;
   const conversation = turns.slice(-6).map(turn => ({ user: turn.prompt, assistant: turn.result }));
-  return `${objective} ${prompts.handoff.instructions}\n\nRecent conversation (use it to resolve follow-up references):\n${JSON.stringify(conversation)}\n\nOriginal user request:\n${request}`;
+  return `${objective} ${prompts.handoff.instructions}\n\n${prompts.handoff.recentConversationLabel}\n${JSON.stringify(conversation)}\n\n${prompts.handoff.originalRequestLabel}\n${request}`;
 }
 function structuredHandoff(result: string): string {
   const cleaned = result.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
@@ -110,7 +110,7 @@ export class Orchestrator {
       const trustedFolders = await Promise.all((config.trustedFolders ?? []).map(existingFolder));
       const skills = config.skillFolder ? await discoverSkills(config.skillFolder) : [];
       if (auto && (shape === 'scout' || shape === 'plan_execute')) {
-        const objective = shape === 'scout' ? 'Read-only repository scout' : 'Read-only implementation plan';
+        const objective = shape === 'scout' ? prompts.objectives.scout : prompts.objectives.plan;
         const stageModels = shape === 'scout' ? enabled.filter(model => model.model === 'gpt-6-luna') : enabled;
         if (!stageModels.length) throw new Error('Vex chose a Luna scout, but Luna is not enabled');
         const sideRoute = chosenRoute((await choose(stageRequest(prompt, session.turns, stageModels, objective, undefined, enabled, prompts), objective)).choice, stageModels);
@@ -125,7 +125,7 @@ export class Orchestrator {
         sideStage.handoff = handoff;
       }
       if (auto) {
-        const objective = shape === 'single' ? 'Complete the original user request' : 'Complete the original user request using the prior structured handoff';
+        const objective = shape === 'single' ? prompts.objectives.single : prompts.objectives.afterHandoff;
         route = chosenRoute((await choose(stageRequest(prompt, session.turns, enabled, objective, handoff, enabled, prompts), objective)).choice, enabled);
         note = `Vex chose ${shape} workflow`;
       }

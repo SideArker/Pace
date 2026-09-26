@@ -155,7 +155,7 @@ async function main() {
             let handoff: string | undefined;
             if (shape !== 'single') {
               const sideModels: ModelOption[] = shape === 'scout' ? models.filter(model => model.model === 'gpt-6-luna') : models;
-              const objective = shape === 'scout' ? 'Read-only repository scout' : 'Read-only implementation plan';
+              const objective = shape === 'scout' ? prompts.objectives.scout : prompts.objectives.plan;
               const sideRequest = stageRequest(item.prompt, turns, sideModels, objective, undefined, models, prompts);
               const side = run.decisions.length;
               const sideDecision = await decide(sideRequest, objective, run);
@@ -163,7 +163,7 @@ async function main() {
               handoff = JSON.stringify(item.handoff ?? { summary: 'Fixture report: relevant files and checks identified; no files changed.',
                 findings: [], nextSteps: [], checks: [], risks: [] });
             }
-            const objective = shape === 'single' ? 'Complete the original user request' : 'Complete the original user request using the prior structured handoff';
+            const objective = shape === 'single' ? prompts.objectives.single : prompts.objectives.afterHandoff;
             const completionRequest = stageRequest(item.prompt, turns, models, objective, handoff, models, prompts);
             const completion = run.decisions.length;
             const completionDecision = await decide(completionRequest, objective, run);

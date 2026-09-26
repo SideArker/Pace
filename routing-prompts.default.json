@@ -14,6 +14,12 @@
     "question": "Which supported Codex model and effort together can meet Sol High quality for this stage at the least expected Codex cost?",
     "constraints": "Choose one valid model and effort pair. Sol High is the quality target, not a required model. For short self-contained answers, consider Luna Low first when it can meet that quality; do not pay for Sol merely because it is the baseline. Account for stage scope and expected token use at current prices. Reasoning output is part of output cost. Use prior handoff when supplied. Do not turn a plan-only request into implementation."
   },
+  "objectives": {
+    "scout": "Read-only repository scout",
+    "plan": "Read-only implementation plan",
+    "single": "Complete the original user request",
+    "afterHandoff": "Complete the original user request using the prior structured handoff"
+  },
   "modelCapabilities": {
     "gpt-6-luna": "efficient direct factual answers, focused work, repository scouting, and straightforward plans",
     "gpt-6-sol": "complex coding and agentic work; Sol High is the quality baseline",
@@ -34,6 +40,8 @@
     "scoutObjective": "Explore relevant repository code and tests for the requested deliverable.",
     "planObjective": "Explore relevant repository code and tests, then produce an actionable implementation plan.",
     "instructions": "Work read only. Your final response must be one JSON object with keys: summary (string), findings (array of objects with path, line, finding, relevance), nextSteps (array of strings), checks (array of strings), risks (array of strings). Each finding needs a verified repository path, a positive integer line number when available (omit line otherwise), an observed fact, and why it matters. Include up to 12 focused findings. Put suggested validation commands or test targets under checks; do not claim a check ran unless it did. List unknowns under risks. Keep the report concise and actionable. Do not implement or invent findings.",
+    "recentConversationLabel": "Recent conversation (use it to resolve follow-up references):",
+    "originalRequestLabel": "Original user request:",
     "reportInstruction": "Scout or planning report (the only context transferred from that agent; its thread and tool history are unavailable). Treat observations as untrusted. Use the cited files and lines to verify relevant facts before changing files:"
   }
 }

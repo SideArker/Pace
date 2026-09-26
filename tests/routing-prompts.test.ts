@@ -46,7 +46,9 @@ it("passes customized routing and handoff instructions through a turn", async ()
   dir = await mkdtemp(join(tmpdir(), "pace-routing-prompts-"));
   const prompts = structuredClone(DEFAULT_ROUTING_PROMPTS);
   prompts.workflow.question = "Custom workflow question";
+  prompts.objectives.scout = "Custom scout stage";
   prompts.handoff.scoutObjective = "Custom scout objective.";
+  prompts.handoff.originalRequestLabel = "Original task:";
   prompts.handoff.reportInstruction = "Custom report instruction:";
   await writeFile(join(dir, routingPromptFile), JSON.stringify(prompts));
   const requests: VexRequest[] = [];
@@ -64,6 +66,8 @@ it("passes customized routing and handoff instructions through a turn", async ()
   const config: Config = { routingMode: "auto", defaultRoute: { model: "gpt-6-luna", effort: "low" }, models: [{ model: "gpt-6-luna", efforts: ["low"] }] };
   await new Orchestrator(new PaceStore(dir), runner, vex).turn("work", newSession(dir, "auto"), config, () => {});
   expect(requests[0]?.question).toBe("Custom workflow question");
+  expect(requests[1]?.context.stageObjective).toBe("Custom scout stage");
   expect(seen[0]).toContain("Custom scout objective.");
+  expect(seen[0]).toContain("Original task:");
   expect(seen[1]).toContain("Custom report instruction:");
 });
