@@ -51,8 +51,8 @@ function taskContext(prompt: string, turns: TurnSummary[], models: ModelOption[]
   };
 }
 export const shapeChoices: RoutingChoice[] = [
-  { id: 'single', description: 'One Codex agent completes requested deliverable. Best for direct lookups and work where a scout cannot reduce the completion agent\'s repository exploration.' },
-  { id: 'scout', description: 'Luna read-only scout identifies relevant files, behavior, and tests; second agent completes the request from a structured handoff. A small scout can cut expensive coding agent exploration even for a focused feature. Include both stages in total Codex cost.' },
+  { id: 'single', description: 'One Codex agent completes requested deliverable. Best when no repository reading is needed or a scout cannot reduce the completion agent\'s work.' },
+  { id: 'scout', description: 'Luna read-only scout identifies relevant files, behavior, and tests; second agent completes the request from a structured handoff. A small Luna scout can reduce expensive completion-agent exploration even for a focused repository lookup or feature. Include both stages in total Codex cost.' },
   { id: 'plan_execute', description: 'Planning agent produces actionable plan; execution agent completes requested implementation. Use only when user requests implementation and planning improves quality and total cost.' },
   { id: 'clarify', description: 'Ask user to clarify requested outcome when deliverable cannot be determined from original request and conversation.' },
 ];
