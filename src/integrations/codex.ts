@@ -8,7 +8,7 @@ import {
 import type { Route } from "../types.js";
 import { realpath } from "node:fs/promises";
 import { artifactPrompt } from "../core/artifacts.js";
-import { vexServerPath } from './vex.js';
+import { vexServerPath } from '../core/vex.js';
 export type Progress =
   | { kind: "status" | "message" | "error" | "thread"; text: string }
   | { kind: "route"; route: Route }

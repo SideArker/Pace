@@ -6,7 +6,7 @@ import { access } from "node:fs/promises";
 import { constants } from "node:fs";
 import { join } from "node:path";
 import { PaceStore } from "./core/sessions.js";
-import { vexServerPath } from "./integrations/vex.js";
+import { vexServerPath } from "./core/vex.js";
 import App from "./app.js";
 import { execTurn } from "./core/exec.js";
 const require = createRequire(import.meta.url);
