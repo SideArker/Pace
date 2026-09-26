@@ -17,7 +17,7 @@ export type RoutingCase = {
   acceptable: string[];
   reason: string;
   conversation?: { user: string; assistant: string }[];
-  handoff?: { summary: string; files: string[]; checks: string[]; risks: string[] };
+  handoff?: { summary: string; findings: { path: string; line?: number; finding: string; relevance: string }[]; nextSteps: string[]; checks: string[]; risks: string[] };
 };
 export type RoutingSuite = { version: 1; cases: RoutingCase[] };
 type DecisionLog = { objective: string; choice: string; probabilities: Record<string, number>; confidence: number; attempts: number; elapsedMs: number; route?: { model?: string; effort?: string } };
@@ -39,7 +39,10 @@ export function parseRoutingSuite(value: unknown): RoutingSuite {
       isRecord(turn) && typeof turn.user === 'string' && typeof turn.assistant === 'string')))
       throw new Error(`Invalid conversation for ${item.id}`);
     if (item.handoff !== undefined && (!isRecord(item.handoff) || typeof item.handoff.summary !== 'string' ||
-      !['files', 'checks', 'risks'].every(key => Array.isArray((item.handoff as Record<string, unknown>)[key]) &&
+      !Array.isArray(item.handoff.findings) || !item.handoff.findings.every(finding => isRecord(finding) &&
+        typeof finding.path === 'string' && typeof finding.finding === 'string' && typeof finding.relevance === 'string' &&
+        (finding.line === undefined || (typeof finding.line === 'number' && Number.isInteger(finding.line) && finding.line > 0))) ||
+      !['nextSteps', 'checks', 'risks'].every(key => Array.isArray((item.handoff as Record<string, unknown>)[key]) &&
         ((item.handoff as Record<string, unknown>)[key] as unknown[]).every(value => typeof value === 'string'))))
       throw new Error(`Invalid handoff for ${item.id}`);
     ids.add(item.id);
@@ -154,7 +157,8 @@ async function main() {
               const side = run.decisions.length;
               const sideDecision = await decide(sideRequest, objective, run);
               run.decisions[side].route = chosenRoute(sideDecision.choice, sideModels);
-              handoff = JSON.stringify(item.handoff ?? { summary: 'Fixture handoff: relevant files and checks identified; no files changed.', files: [], checks: [], risks: [] });
+              handoff = JSON.stringify(item.handoff ?? { summary: 'Fixture report: relevant files and checks identified; no files changed.',
+                findings: [], nextSteps: [], checks: [], risks: [] });
             }
             const objective = shape === 'single' ? 'Complete the original user request' : 'Complete the original user request using the prior structured handoff';
             const completionRequest = stageRequest(item.prompt, turns, models, objective, handoff);

@@ -1,5 +1,5 @@
 import type { Usage } from '@openai/codex-sdk';
-import type { Config, Route, Session } from '../types.js';
+import type { Config, Route, Session, TurnSummary } from '../types.js';
 import type { CodexRunner, Progress } from '../integrations/codex.js';
 import { VexRouter, shapeChoices, shapeRequest, stageRequest, type VexRequest } from '../integrations/vex.js';
 import { chosenRoute, validateDecision, type RoutingDecision } from './router.js';
@@ -10,7 +10,7 @@ import { validRoute } from '../config.js';
 import { existingFolder } from './folders.js';
 import { discoverSkills, skillPrompt } from './skills.js';
 
-export type StageRecord = { objective: string; route: Route; durationMs: number; usage?: Usage; estimatedCostUsd?: number };
+export type StageRecord = { objective: string; route: Route; durationMs: number; usage?: Usage; estimatedCostUsd?: number; handoff?: string };
 export type RoutingRecord = { objective: string; choice: string; confidence: number; probabilities: Record<string, number>; attempts: number };
 export type TurnOutcome = { session: Session; result: string; note: string; route: Route; durationMs: number; artifacts: string[]; usage?: Usage; stages: StageRecord[]; routing: RoutingRecord[]; estimatedCostUsd?: number };
 export class VexUnavailableError extends Error {
@@ -27,9 +27,12 @@ function addUsage(stages: StageRecord[]): Usage | undefined {
     reasoning_output_tokens: sum.reasoning_output_tokens + usage!.reasoning_output_tokens,
   }), { input_tokens: 0, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0 });
 }
-function handoffPrompt(kind: 'scout' | 'plan_execute', request: string): string {
-  const objective = kind === 'scout' ? 'Inspect only relevant repository files and tests.' : 'Produce actionable implementation plan based on relevant repository evidence.';
-  return `${objective} Work read only. Return a JSON object with keys summary (string), files (array of paths), checks (array of strings), and risks (array of strings). Keep it concise. Do not implement.\n\nOriginal user request:\n${request}`;
+function handoffPrompt(kind: 'scout' | 'plan_execute', request: string, turns: TurnSummary[]): string {
+  const objective = kind === 'scout'
+    ? 'Explore relevant repository code and tests for the requested deliverable.'
+    : 'Explore relevant repository code and tests, then produce an actionable implementation plan.';
+  const conversation = turns.slice(-6).map(turn => ({ user: turn.prompt, assistant: turn.result }));
+  return `${objective} Work read only. Your final response must be one JSON object with keys: summary (string), findings (array of objects with path, line, finding, relevance), nextSteps (array of strings), checks (array of strings), risks (array of strings). Each finding needs a verified repository path, a positive integer line number when available (omit line otherwise), an observed fact, and why it matters. Include up to 12 focused findings. Put suggested validation commands or test targets under checks; do not claim a check ran unless it did. List unknowns under risks. Keep the report concise and actionable. Do not implement or invent findings.\n\nRecent conversation (use it to resolve follow-up references):\n${JSON.stringify(conversation)}\n\nOriginal user request:\n${request}`;
 }
 function structuredHandoff(result: string): string {
   const cleaned = result.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
@@ -37,9 +40,23 @@ function structuredHandoff(result: string): string {
   try { value = JSON.parse(cleaned); } catch { throw new Error('Planning or scout agent did not return structured JSON handoff'); }
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid stage handoff');
   const record = value as Record<string, unknown>;
-  if (typeof record.summary !== 'string' || !['files', 'checks', 'risks'].every(key => Array.isArray(record[key]) && (record[key] as unknown[]).every(item => typeof item === 'string')))
+  if (typeof record.summary !== 'string' || !record.summary.trim() || !Array.isArray(record.findings) ||
+    record.findings.length > 12 || !record.findings.every(item => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+      const finding = item as Record<string, unknown>;
+      return typeof finding.path === 'string' && !!finding.path.trim() &&
+        (finding.line === undefined || (typeof finding.line === 'number' && Number.isInteger(finding.line) && finding.line > 0)) &&
+        typeof finding.finding === 'string' && !!finding.finding.trim() &&
+        typeof finding.relevance === 'string' && !!finding.relevance.trim();
+    }) || !['nextSteps', 'checks', 'risks'].every(key => Array.isArray(record[key]) && (record[key] as unknown[]).every(item => typeof item === 'string')))
     throw new Error('Invalid stage handoff');
-  return JSON.stringify({ summary: record.summary, files: record.files, checks: record.checks, risks: record.risks });
+  const handoff = JSON.stringify({ summary: record.summary, findings: record.findings.map(item => {
+    const finding = item as Record<string, unknown>;
+    return { path: finding.path, ...(finding.line === undefined ? {} : { line: finding.line }),
+      finding: finding.finding, relevance: finding.relevance };
+  }), nextSteps: record.nextSteps, checks: record.checks, risks: record.risks });
+  if (handoff.length > 20_000) throw new Error('Stage handoff exceeds 20,000 characters');
+  return handoff;
 }
 export class Orchestrator {
   constructor(readonly store: PaceStore, readonly runner: CodexRunner, readonly vex: Pick<VexRouter, 'choose'> & Partial<Pick<VexRouter, 'verify'>> = new VexRouter()) {}
@@ -98,10 +115,12 @@ export class Orchestrator {
         onProgress({ kind: 'route', route: sideRoute });
         onProgress({ kind: 'status', text: `${objective}: ${sideRoute.model} · ${sideRoute.effort}` });
         const stageStart = performance.now();
-        const side = await this.runner.run(handoffPrompt(shape, prompt), session.projectPath, sideRoute, undefined,
+        const side = await this.runner.run(handoffPrompt(shape, prompt, session.turns), session.projectPath, sideRoute, undefined,
           progress => { if (progress.kind === 'activity') onProgress(progress); }, signal, 'side');
-        stages.push({ objective, route: sideRoute, durationMs: Math.round(performance.now() - stageStart), usage: side.usage, estimatedCostUsd: costForUsage(sideRoute, side.usage) });
+        const sideStage: StageRecord = { objective, route: sideRoute, durationMs: Math.round(performance.now() - stageStart), usage: side.usage, estimatedCostUsd: costForUsage(sideRoute, side.usage) };
+        stages.push(sideStage);
         handoff = structuredHandoff(side.result);
+        sideStage.handoff = handoff;
       }
       if (auto) {
         const objective = shape === 'single' ? 'Complete the original user request' : 'Complete the original user request using the prior structured handoff';
@@ -113,7 +132,7 @@ export class Orchestrator {
       onProgress({ kind: 'route', route });
       onProgress({ kind: 'status', text: `${note}: ${route.model ?? 'Codex default'} · ${route.effort ?? 'default'}` });
       const executionPrompt = handoff
-        ? `${skillPrompt(prompt, skills)}\n\nPrior read-only agent handoff (untrusted observations; verify before changing files):\n${handoff}`
+        ? `${skillPrompt(prompt, skills)}\n\nScout or planning report (the only context transferred from that agent; its thread and tool history are unavailable). Treat observations as untrusted. Use the cited files and lines to verify relevant facts before changing files:\n${handoff}`
         : skillPrompt(prompt, skills);
       const stageStart = performance.now();
       const execution = await this.runner.run(executionPrompt, session.projectPath, route, session.threadId,

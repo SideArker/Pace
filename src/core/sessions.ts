@@ -24,7 +24,8 @@ function isStage(value: unknown): boolean {
     (value.route.model === undefined || typeof value.route.model === 'string') &&
     (value.route.effort === undefined || EFFORTS.includes(value.route.effort as (typeof EFFORTS)[number])) &&
     nonnegative(value.durationMs) && (value.usage === undefined || isUsage(value.usage)) &&
-    (value.estimatedCostUsd === undefined || nonnegative(value.estimatedCostUsd));
+    (value.estimatedCostUsd === undefined || nonnegative(value.estimatedCostUsd)) &&
+    (value.handoff === undefined || (typeof value.handoff === 'string' && value.handoff.length <= 20_000));
 }
 function isRouting(value: unknown): boolean {
   return isRecord(value) && typeof value.objective === 'string' && typeof value.choice === 'string' &&
