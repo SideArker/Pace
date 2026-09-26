@@ -1,7 +1,7 @@
 import { PaceStore, newSession } from "./sessions.js";
 import { Orchestrator } from "./orchestrator.js";
 import { SdkRunner } from "../integrations/codex.js";
-import { VexRouter } from "../integrations/vex.js";
+import { VexRouter } from "./vex.js";
 
 export async function execTurn(prompt: string, project = process.cwd()): Promise<number> {
   if (!prompt.trim()) {

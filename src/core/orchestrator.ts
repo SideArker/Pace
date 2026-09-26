@@ -1,7 +1,7 @@
 import type { Usage } from '@openai/codex-sdk';
 import type { Config, Route, Session, TurnSummary } from '../types.js';
 import type { CodexRunner, Progress } from '../integrations/codex.js';
-import { VexRouter, shapeChoices, shapeRequest, stageRequest, type VexRequest } from '../integrations/vex.js';
+import { VexRouter, shapeChoices, shapeRequest, stageRequest, type VexRequest } from './vex.js';
 import { chosenRoute, validateDecision, type RoutingDecision } from './router.js';
 import { costForUsage, pricedModels } from './pricing.js';
 import { PaceStore } from './sessions.js';
