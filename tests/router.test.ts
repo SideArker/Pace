@@ -3,6 +3,7 @@ import { DEFAULT_CONFIG, parseConfig } from '../src/config.js';
 import { chosenRoute, routeChoices, validateDecision } from '../src/core/router.js';
 import { costForUsage, PRICE_SNAPSHOT } from '../src/core/pricing.js';
 import { shapeRequest, stageRequest } from '../src/integrations/vex.js';
+import { parseRoutingSuite, summarizeRouting } from '../src/routing-benchmark.js';
 
 it('sends original request, recent conversation, all valid pairs, capabilities, and prices', () => {
   const prompt = 'Plan a payment system. Do not implement it.';
@@ -16,6 +17,7 @@ it('sends original request, recent conversation, all valid pairs, capabilities, 
   expect(stage.options).toHaveLength(10);
   expect(shape.decisionType).toBe('routing');
   expect(shape.constraints).toContain('plan must choose single, scout, or clarify');
+  expect(shapeRequest(prompt, turns, DEFAULT_CONFIG.models.filter(model => model.model !== 'gpt-6-luna')).options.map(option => option.id)).not.toContain('scout');
 });
 
 it('accepts narrow leads and exact ties, rejects invalid or inconsistent choices', () => {
@@ -39,4 +41,19 @@ it('prices ordinary, cached, cache writes, and output once at the stage model ra
 
 it('rejects configured model efforts unsupported by Codex', () => {
   expect(() => parseConfig({ ...DEFAULT_CONFIG, models: [{ model: 'gpt-6-luna', efforts: ['ultra'] }] })).toThrow('Unsupported effort');
+});
+
+it('validates routing benchmark labels and counts failed calls separately', () => {
+  const item = { id: 'one', category: 'plan_only', prompt: 'Plan it.', preferred: 'single', acceptable: ['single', 'scout'], reason: 'Plan only' };
+  expect(parseRoutingSuite({ version: 1, cases: [item] }).cases).toHaveLength(1);
+  expect(() => parseRoutingSuite({ version: 1, cases: [item, item] })).toThrow('Invalid routing case');
+  expect(() => parseRoutingSuite({ version: 1, cases: [{ ...item, preferred: 'plan_execute' }] })).toThrow('Invalid routing case');
+  const summary = summarizeRouting([
+    { id: 'one', category: 'plan_only', repetition: 1, promptSha256: 'a', preferred: 'single', acceptable: ['single', 'scout'],
+      shape: 'scout', acceptableHit: true, preferredHit: false, decisions: [], vexCalls: 3, retries: 1, elapsedMs: 10 },
+    { id: 'one', category: 'plan_only', repetition: 2, promptSha256: 'a', preferred: 'single', acceptable: ['single', 'scout'],
+      decisions: [], vexCalls: 2, retries: 1, elapsedMs: 20, error: 'Vex failed' },
+  ]);
+  expect(summary).toMatchObject({ total: 2, completed: 1, errors: 1, acceptable: 1, preferred: 0,
+    selectedShapes: { scout: 1 }, vexCalls: 5, retries: 2 });
 });
