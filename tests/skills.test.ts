@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { discoverSkills, skillPrompt } from '../src/core/system/skills.js';
 import { existingFolder } from '../src/core/system/folders.js';
-import { parseConfig, DEFAULT_CONFIG } from '../src/config.js';
+import { parseConfig, DEFAULT_CONFIG } from '../src/shared/config.js';
 import { Orchestrator } from '../src/core/orchestrator.js';
 import { PaceStore, newSession } from '../src/core/sessions.js';
 import type { CodexRunner } from '../src/integrations/codex.js';

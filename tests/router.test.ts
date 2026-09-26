@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { DEFAULT_CONFIG, parseConfig } from '../src/config.js';
+import { DEFAULT_CONFIG, parseConfig } from '../src/shared/config.js';
 import { chosenRoute, routeChoices, validateDecision } from '../src/core/routing/router.js';
 import { costForUsage, PRICE_SNAPSHOT } from '../src/core/routing/pricing.js';
 import { shapeRequest, stageRequest } from '../src/core/vex/client.js';

@@ -1,5 +1,5 @@
 import type { Usage } from "@openai/codex-sdk";
-import type { Route } from "../src/types.js";
+import type { Route } from "../src/shared/types.js";
 import type { RoutingRecord, StageRecord } from "../src/core/orchestrator.js";
 
 export type Arm = "baseline" | "luna_low" | "routed_single" | "routed_split" | "routed_auto";

@@ -1,12 +1,12 @@
 import type { Usage } from '@openai/codex-sdk';
-import type { Config, Route, Session, TurnSummary } from '../types.js';
+import type { Config, Route, Session, TurnSummary } from '../shared/types.js';
 import type { CodexRunner, Progress } from '../integrations/codex.js';
 import { VexRouter, shapeChoices, shapeRequest, stageRequest, type VexRequest } from './vex/client.js';
 import { chosenRoute, validateDecision, type RoutingDecision } from './routing/router.js';
 import { costForUsage, pricedModels } from './routing/pricing.js';
 import { PaceStore } from './sessions.js';
 import { artifactSnapshot, changedArtifacts } from './system/artifacts.js';
-import { validRoute } from '../config.js';
+import { validRoute } from '../shared/config.js';
 import { existingFolder } from './system/folders.js';
 import { discoverSkills, skillPrompt } from './system/skills.js';
 import { DEFAULT_ROUTING_PROMPTS, loadRoutingPrompts, type RoutingPrompts } from './routing/routing-prompts.js';

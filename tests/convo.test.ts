@@ -5,7 +5,7 @@ import { newSession, PaceStore } from "../src/core/sessions.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { TurnSummary } from "../src/types.js";
+import type { TurnSummary } from "../src/shared/types.js";
 
 describe("Conversation editing and undo logic", () => {
   it("renders ConvoMenu with turn summaries without error", () => {

@@ -5,7 +5,7 @@ import {
   type ThreadOptions,
   type Usage,
 } from "@openai/codex-sdk";
-import type { Route } from "../types.js";
+import type { Route } from "../shared/types.js";
 import { realpath } from "node:fs/promises";
 import { artifactPrompt } from "../core/system/artifacts.js";
 import { vexServerPath } from '../core/vex/client.js';

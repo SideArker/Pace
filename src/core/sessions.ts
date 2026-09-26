@@ -9,8 +9,8 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { DEFAULT_CONFIG, EFFORTS, isRecord, parseConfig } from "../config.js";
-import type { Config, Notice, Session } from "../types.js";
+import { DEFAULT_CONFIG, EFFORTS, isRecord, parseConfig } from "../shared/config.js";
+import type { Config, Notice, Session } from "../shared/types.js";
 import type { Usage } from "@openai/codex-sdk";
 
 function isUsage(value: unknown): value is Usage {

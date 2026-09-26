@@ -1,7 +1,7 @@
 import React from "react";
 import { Box, Text } from "ink";
-import { EFFORTS } from "../config.js";
-import type { Config, Session, TurnSummary } from "../types.js";
+import { EFFORTS } from "../shared/config.js";
+import type { Config, Session, TurnSummary } from "../shared/types.js";
 
 export function ModelMenu({
   mode,

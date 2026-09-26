@@ -7,7 +7,7 @@ import { shapeRequest, stageRequest, type VexRequest } from "../src/core/vex/cli
 import { Orchestrator } from "../src/core/orchestrator.js";
 import { PaceStore, newSession } from "../src/core/sessions.js";
 import { decision } from "./routing-fixture.js";
-import type { Config } from "../src/types.js";
+import type { Config } from "../src/shared/types.js";
 
 let dir: string | undefined;
 afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true }); dir = undefined; });

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { artifactDirectory, artifactPrompt, artifactSnapshot, changedArtifacts } from "../src/core/system/artifacts.js";
 import { PaceStore, newSession } from "../src/core/sessions.js";
 import { Orchestrator } from "../src/core/orchestrator.js";
-import type { Config } from "../src/types.js";
+import type { Config } from "../src/shared/types.js";
 import { singleVex } from './routing-fixture.js';
 
 let root: string | undefined;

@@ -12,7 +12,7 @@ import { PaceStore, newSession } from "../../src/core/sessions.js";
 import { costForUsage } from "../../src/core/routing/pricing.js";
 import { routingPromptFile, type RoutingPrompts } from "../../src/core/routing/routing-prompts.js";
 import type { VexRequest } from "../../src/core/vex/client.js";
-import type { Config } from "../../src/types.js";
+import type { Config } from "../../src/shared/types.js";
 import type { Arm, BenchmarkCase as Case, CommandResult, Run } from "../types.js";
 
 const exec = promisify(execCallback);

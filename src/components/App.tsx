@@ -1,12 +1,12 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 import type { Progress } from "../integrations/codex.js";
-import type { Config, Session, Route } from "../types.js";
+import type { Config, Session, Route } from "../shared/types.js";
 import { PaceStore, newSession } from "../core/sessions.js";
 import { Orchestrator, VexUnavailableError } from "../core/orchestrator.js";
 import { SdkRunner } from "../integrations/codex.js";
 import { VexRouter } from "../core/vex/client.js";
-import { EFFORTS, withModels } from "../config.js";
+import { EFFORTS, withModels } from "../shared/config.js";
 import { artifactSnapshot } from "../core/system/artifacts.js";
 import { existingFolder, sameFolder } from "../core/system/folders.js";
 import { discoverSkills } from "../core/system/skills.js";

@@ -1,5 +1,5 @@
 import type { Usage } from "@openai/codex-sdk";
-import type { Route } from "../types.js";
+import type { Route } from "../shared/types.js";
 import type { UsageLimits, UsageWindow } from "../integrations/usage.js";
 
 const compact = (count: number) =>
