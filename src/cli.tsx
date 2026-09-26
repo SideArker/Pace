@@ -7,7 +7,7 @@ import { constants } from "node:fs";
 import { join } from "node:path";
 import { PaceStore } from "./core/sessions.js";
 import { vexServerPath } from "./core/vex/client.js";
-import App from "./app.js";
+import App from "./components/App.js";
 import { execTurn } from "./core/exec.js";
 const require = createRequire(import.meta.url);
 const version = (require("../package.json") as { version: string }).version;

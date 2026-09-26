@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { formatTurnFooter, formatUsageLimits } from "../src/turn-format.js";
+import { formatTurnFooter, formatUsageLimits } from "../src/components/turn-format.js";
 import { parseUsageLimits } from "../src/integrations/usage.js";
 
 it("shows a compact two-line turn footer with the routing source", () => {
