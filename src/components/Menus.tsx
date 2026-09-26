@@ -1,7 +1,7 @@
 import React from "react";
 import { Box, Text } from "ink";
 import { EFFORTS } from "../config.js";
-import type { Config, Session } from "../types.js";
+import type { Config, Session, TurnSummary } from "../types.js";
 
 export function ModelMenu({
   mode,
@@ -118,6 +118,46 @@ export function CommandMenu({
       })}
       <Box marginTop={0}>
         <Text color="#64748B">↑/↓ select · Tab complete</Text>
+      </Box>
+    </Box>
+  );
+}
+
+export function ConvoMenu({
+  turns,
+  selectedIndex,
+}: {
+  turns: TurnSummary[];
+  selectedIndex: number;
+}) {
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor="#38BDF8" paddingX={1} marginBottom={1}>
+      <Text color="#38BDF8" bold>
+        ◈ Conversation Turns ({turns.length} message{turns.length === 1 ? "" : "s"})
+      </Text>
+      {turns.map((turn, index) => {
+        const selected = index === selectedIndex;
+        const cleanPrompt = turn.prompt.replace(/\s+/g, " ").trim();
+        const shortPrompt = cleanPrompt.length > 40 ? `${cleanPrompt.slice(0, 37)}…` : cleanPrompt;
+        const model = turn.route?.model ?? "auto";
+        return (
+          <Box key={index} gap={1}>
+            <Text color={selected ? "#59E6A7" : "gray"} bold={selected}>
+              {selected ? "▶" : " "}
+            </Text>
+            <Text color={selected ? "#38BDF8" : "#94A3B8"} bold={selected}>
+              #{index + 1}
+            </Text>
+            <Text color="#64748B">{turn.at.slice(11, 16)}</Text>
+            <Text color={selected ? "white" : "#CBD5E1"} bold={selected}>
+              {shortPrompt}
+            </Text>
+            <Text color="#64748B">({model})</Text>
+          </Box>
+        );
+      })}
+      <Box marginTop={1}>
+        <Text color="#64748B">↑/↓ select · Enter edit from here · Backspace/d delete · Esc close</Text>
       </Box>
     </Box>
   );

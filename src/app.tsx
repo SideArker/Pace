@@ -16,7 +16,7 @@ import type { UsageLimits } from "./integrations/usage.js";
 import { Composer } from "./components/Composer.js";
 import { Header, Transcript, type Line } from "./components/Transcript.js";
 import { UsageBar } from "./components/UsageBar.js";
-import { CommandMenu, ModelMenu, ResumeMenu } from "./components/Menus.js";
+import { CommandMenu, ConvoMenu, ModelMenu, ResumeMenu } from "./components/Menus.js";
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 const commands = [
@@ -25,6 +25,8 @@ const commands = [
   "/auto",
   "/new",
   "/resume",
+  "/convo",
+  "/undo",
   "/usage",
   "/btw",
   "/artifacts",
@@ -73,6 +75,7 @@ export default function App({ onClear }: { onClear: () => void }) {
     "models" | "efforts" | undefined
   >();
   const [resumeMenu, setResumeMenu] = useState(false);
+  const [convoMenu, setConvoMenu] = useState(false);
   const [resumeChoices, setResumeChoices] = useState<Session[]>([]);
   const [menuModel, setMenuModel] = useState("");
   const [menuIndex, setMenuIndex] = useState(0);
@@ -122,7 +125,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   ];
   useEffect(() => {
     if (!busy && !sideBusy && shellJobs === 0) return;
-    const timer = setInterval(() => setTick((value) => value + 1), 250);
+    const timer = setInterval(() => setTick((value) => value + 1), 80);
     return () => clearInterval(timer);
   }, [busy, sideBusy, shellJobs]);
   useEffect(
@@ -244,6 +247,48 @@ export default function App({ onClear }: { onClear: () => void }) {
       `${menuModel}: ${effort} ${present ? "disabled" : "enabled"}.`,
     );
   };
+  const renderSessionTurns = (targetSession: Session) => {
+    const newLines: Line[] = [];
+    let id = 0;
+    for (const turn of targetSession.turns.slice(-8)) {
+      newLines.push({
+        id: id++,
+        role: "you",
+        text: turn.prompt,
+        spaceBefore: newLines.length > 0,
+      });
+      newLines.push({
+        id: id++,
+        role: turn.failed ? "error" : "codex",
+        text: turn.result,
+        spaceBefore: false,
+      });
+      if (!turn.failed) {
+        newLines.push({
+          id: id++,
+          role: "meta",
+          text: formatTurnFooter(turn.route, turn.routeNote, turn.usage, turn.durationMs),
+          spaceBefore: false,
+        });
+      }
+      for (const artifact of turn.artifacts ?? []) {
+        newLines.push({
+          id: id++,
+          role: "artifact",
+          text: artifact,
+          spaceBefore: false,
+        });
+      }
+      newLines.push({
+        id: id++,
+        role: "divider",
+        text: "",
+        spaceBefore: false,
+      });
+    }
+    nextId.current = id;
+    setLines(newLines);
+  };
   const activateSession = async (chosen: Session) => {
     try {
       await store.activate(chosen);
@@ -251,17 +296,11 @@ export default function App({ onClear }: { onClear: () => void }) {
       onClear();
       setSession(chosen);
       setResumeMenu(false);
-      setLines([]);
+      setConvoMenu(false);
       setShowHeader(true);
       setScrollBack(0);
-      for (const turn of chosen.turns.slice(-6)) {
-        add("you", turn.prompt);
-        add(turn.failed ? "error" : "codex", turn.result);
-        if (!turn.failed)
-          add("meta", formatTurnFooter(turn.route, turn.routeNote, turn.usage, turn.durationMs));
-        for (const artifact of turn.artifacts ?? []) add("artifact", artifact);
-        add("divider", "");
-      }
+      renderSessionTurns(chosen);
+      setHistory(chosen.turns.map(t => t.prompt));
       add(
         "info",
         `Resumed ${chosen.id.slice(0, 8)} · ${chosen.route.model ?? "Codex default"}`,
@@ -272,12 +311,12 @@ export default function App({ onClear }: { onClear: () => void }) {
     }
   };
   useInput((input, key) => {
-    if (key.ctrl && input === "c") {
+    if (key.escape || (key.ctrl && input === "c")) {
       if (busy || sideBusy) {
         abort.current?.abort();
         sideAbort.current?.abort();
         setStatus("Cancelling…");
-      } else exit();
+      } else if (key.ctrl && input === "c") exit();
     }
     if (key.ctrl && input === "o") setOutputsExpanded(value => !value);
     if (key.ctrl && input === "e") setDetailsExpanded(value => !value);
@@ -309,6 +348,58 @@ export default function App({ onClear }: { onClear: () => void }) {
             resumeChoices.length,
         );
       else if (key.return) void activateSession(resumeChoices[menuIndex]!);
+      return;
+    }
+    if (convoMenu) {
+      const turns = session?.turns ?? [];
+      if (key.escape) setConvoMenu(false);
+      else if (key.upArrow || key.downArrow || key.tab)
+        setMenuIndex(
+          (value) =>
+            (value + (key.upArrow ? -1 : 1) + Math.max(1, turns.length)) %
+            Math.max(1, turns.length),
+        );
+      else if (key.return) {
+        if (!session) return;
+        const targetTurn = turns[menuIndex];
+        if (!targetTurn) return;
+        session.turns = session.turns.slice(0, menuIndex);
+        if (session.turns.length === 0) session.threadId = undefined;
+        session.updatedAt = new Date().toISOString();
+        void store.save(session);
+        setSession({ ...session });
+        renderSessionTurns(session);
+        setDraft(targetTurn.prompt);
+        setHistory(session.turns.map((t) => t.prompt));
+        setConvoMenu(false);
+        add("info", `Rewound to turn ${menuIndex + 1}. Prompt loaded into composer.`);
+      } else if (key.delete || key.backspace || input === "d") {
+        if (!session) return;
+        session.turns.splice(menuIndex, 1);
+        if (session.turns.length === 0) session.threadId = undefined;
+        session.updatedAt = new Date().toISOString();
+        void store.save(session);
+        setSession({ ...session });
+        renderSessionTurns(session);
+        setHistory(session.turns.map((t) => t.prompt));
+        if (session.turns.length === 0) setConvoMenu(false);
+        else setMenuIndex(Math.min(menuIndex, session.turns.length - 1));
+        add("info", `Deleted turn ${menuIndex + 1}.`);
+      }
+      return;
+    }
+    if (key.ctrl && input === "z") {
+      if (!busy && session?.turns.length) {
+        const popped = session.turns.pop()!;
+        if (session.turns.length === 0) session.threadId = undefined;
+        session.updatedAt = new Date().toISOString();
+        void store.save(session);
+        setSession({ ...session });
+        renderSessionTurns(session);
+        setDraft(popped.prompt);
+        setHistory(session.turns.map((t) => t.prompt));
+        add("info", "Undid last turn. Prompt restored to composer.");
+      }
       return;
     }
   });
@@ -374,7 +465,11 @@ export default function App({ onClear }: { onClear: () => void }) {
       }, controller.signal, "side");
       if (sideAbort.current === controller) add("side", result.result);
     } catch (error) {
-      if (sideAbort.current === controller) add("error", `Side question failed: ${String(error)}`);
+      if (controller.signal.aborted) {
+        add("meta", "Side question cancelled");
+      } else if (sideAbort.current === controller) {
+        add("error", `Side question failed: ${String(error)}`);
+      }
     } finally {
       if (sideAbort.current === controller) { sideAbort.current = undefined; setSideBusy(false); }
     }
@@ -451,7 +546,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       if (command === "/help") {
         add(
           "info",
-          "/models · /auto · /new · /resume · /usage · /btw <question> · /artifacts · /trust add|remove <folder> · /skills <folder>|off · /route · /stats · /clear · /exit · ! Bash · Ctrl+O outputs · Ctrl+E details · Shift+Enter newline · ↑/↓ history",
+          "/models · /auto · /new · /resume · /convo · /undo · /usage · /btw <q> · /artifacts · /trust · /skills · /route · /stats · /clear · /exit · Esc/Ctrl+C cancel · Ctrl+Z undo · ! Bash · Shift+Enter newline · ↑/↓ history",
         );
         return;
       }
@@ -575,6 +670,35 @@ export default function App({ onClear }: { onClear: () => void }) {
         setMenuIndex(0);
         return;
       }
+      if (command === "/undo") {
+        if (!session.turns.length) {
+          add("info", "No messages in conversation to undo.");
+          return;
+        }
+        const popped = session.turns.pop()!;
+        if (session.turns.length === 0) session.threadId = undefined;
+        session.updatedAt = new Date().toISOString();
+        try {
+          await store.save(session);
+        } catch (error) {
+          add("error", `Could not save session: ${String(error)}`);
+        }
+        setSession({ ...session });
+        renderSessionTurns(session);
+        setDraft(popped.prompt);
+        setHistory(session.turns.map((t) => t.prompt));
+        add("info", "Undid last turn. Prompt restored to composer.");
+        return;
+      }
+      if (command === "/convo" || command === "/turns") {
+        if (!session.turns.length) {
+          add("info", "No messages in conversation yet.");
+          return;
+        }
+        setConvoMenu(true);
+        setMenuIndex(session.turns.length - 1);
+        return;
+      }
       add("error", `Unknown command ${command}. Use /help.`);
       return;
     }
@@ -631,9 +755,9 @@ export default function App({ onClear }: { onClear: () => void }) {
       setStatus("Done");
       refreshUsage();
     } catch (error) {
-      add("error", String(error));
+      if (controller.signal.aborted) { add("meta", "Turn cancelled by user"); setStatus("Cancelled"); } else { add("error", String(error));
       if (error instanceof VexUnavailableError) setVexState("failed");
-      setStatus("Failed");
+      setStatus("Failed"); }
     } finally {
       abort.current = undefined;
       activePrompt.current = undefined;
@@ -646,12 +770,13 @@ export default function App({ onClear }: { onClear: () => void }) {
       <Transcript lines={lines} outputsExpanded={outputsExpanded} detailsExpanded={detailsExpanded} rows={stdout.rows ?? 24} scrollBack={scrollBack} width={stdout.columns ?? 80} />
       {modelMenu ? <ModelMenu mode={modelMenu} models={menuModels} selectedModel={menuModel} selectedIndex={menuIndex} config={config} /> : null}
       {resumeMenu ? <ResumeMenu choices={resumeChoices} selectedIndex={menuIndex} /> : null}
+      {convoMenu && session ? <ConvoMenu turns={session.turns} selectedIndex={menuIndex} /> : null}
       {busy || shellJobs ? (
         <Box gap={1}><Text color="#59E6A7" bold>{spinner[tick % spinner.length]}</Text><Text color="#38BDF8">{status}</Text>{shellJobs ? <Text color="#FBBF24">· ⚡ {shellJobs} Bash command{shellJobs === 1 ? "" : "s"} running</Text> : null}</Box>
       ) : null}
       <Box marginTop={1}>
         <Composer value={draft} onChange={value => { setDraft(value); setSelection(0); }} onSubmit={value => { void submit(value); }} history={history}
-          disabled={!session || !config || !!modelMenu || resumeMenu} shellMode={shellMode}
+          disabled={!session || !config || !!modelMenu || resumeMenu || convoMenu} shellMode={shellMode}
           completion={matches[selection] ?? matches[0]}
           onComplete={() => setDraft(matches[selection] ?? matches[0] ?? draft)}
           onHistory={direction => {
@@ -659,11 +784,11 @@ export default function App({ onClear }: { onClear: () => void }) {
             setSelection(value => (value + (direction === "up" ? -1 : 1) + matches.length) % matches.length);
             return true;
           }}
-          placeholder={modelMenu || resumeMenu ? "Close menu to type" : shellMode ? "Bash command; ! returns to Pace" : vexState !== "connected" ? "Vex unavailable; commands still work" : busy ? "Pace is working; use ! for Bash" : "Ask Pace or type /"}
+          placeholder={modelMenu || resumeMenu || convoMenu ? "Close menu to type" : shellMode ? "Bash command; ! returns to Pace" : vexState !== "connected" ? "Vex unavailable; commands still work" : busy ? "Pace is working · Esc or Ctrl+C to cancel" : "Ask Pace or type /"}
         />
       </Box>
       {showUsage ? <UsageBar limits={usageLimits} error={usageError} /> : null}
-      {!modelMenu && !resumeMenu && matches.length > 0 ? <CommandMenu matches={matches} selectedIndex={selection} /> : null}
+      {!modelMenu && !resumeMenu && !convoMenu && matches.length > 0 ? <CommandMenu matches={matches} selectedIndex={selection} /> : null}
     </Box>
   );
 }

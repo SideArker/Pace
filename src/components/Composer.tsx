@@ -41,6 +41,12 @@ export function Composer({ value, onChange, onSubmit, history, disabled, shellMo
     if (key.tab) { if (completion) { onComplete(); setCursor(completion.length); } return; }
     if (key.return) {
       if (key.shift || key.ctrl) { insert("\n"); return; }
+      if (completion && value.trim() !== completion && value.startsWith("/")) {
+        onChange(completion);
+        setCursor(completion.length);
+        onComplete();
+        return;
+      }
       if (value.trim()) onSubmit(value);
       setCursor(0);
       setHistoryIndex(undefined);
