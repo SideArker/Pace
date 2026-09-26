@@ -3,7 +3,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { VexRouter } from '../src/core/vex/client.js';
+import { VexRouter, vexServerPath } from '../src/core/vex/client.js';
 import { Orchestrator } from '../src/core/orchestrator.js';
 import { PaceStore, newSession } from '../src/core/sessions.js';
 import type { Config, Route } from '../src/shared/types.js';
@@ -60,4 +60,10 @@ it('blocks a coding turn when the Vex tool fails', async () => {
     await expect(orchestrator.turn('first', newSession('/project', 'auto'), config, () => {})).rejects.toThrow('HTTP 401');
     expect(seen).toEqual([]);
   } finally { await vex.close(); await server.close(); }
+});
+
+it('resolves the installed @sidearker/vex-mcp server path', () => {
+  const path = vexServerPath();
+  expect(path).toBeDefined();
+  expect(path).toMatch(/@sidearker[\\/]vex-mcp[\\/]dist[\\/]index\.js$/);
 });

@@ -92,11 +92,11 @@ To check routing choices across repeated labeled requests and compare actual wor
 
 The Codex SDK also receives Vex as a separate Codex-owned MCP stdio server, so Codex can call Vex tools during coding turns. Pace does not proxy those calls or make extra routing decisions for Codex. The SDK configuration forwards the `OPENROUTER_API_KEY` environment variable by name, keeping its value out of command arguments. Pace resolves the project's actual filesystem path before starting Codex, including its original casing on Windows, while preserving case-insensitive session lookup. Pace uses a workspace-write sandbox with network access disabled and approval policy `never`; work outside those boundaries remains restricted.
 
-Pace pins the Vex GitHub dependency to commit `3a796ddc07a66f03bbe6121611880c4234789acf`, which builds Vex during Git installs. That commit must be pushed to GitHub before a fresh `npm ci` can resolve it. For local development while the commit is only in a Vex checkout, run `npm run build` there, then run `npm link C:\Github\Vex` in the Pace checkout. Pace resolves the installed package's bundled `dist/index.js` for both MCP connections. Run `npm ci` after the commit is available on GitHub to restore the locked dependency. Do not set a key in Pace configuration or in command arguments.
+Pace uses the `@sidearker/vex-mcp` npm package for Vex MCP routing and decision support. Pace resolves the installed package's bundled `dist/index.js` for both MCP connections. For local development with a local Vex checkout, you can link it or install the published `@sidearker/vex-mcp` release via `npm install @sidearker/vex-mcp@latest`. Do not set a key in Pace configuration or in command arguments.
 
-To update Vex, commit and push the Vex change first. In Pace, run `npm install 'vex-mcp@git+https://github.com/SideArker/Vex.git#<commit>'`, then run `npm run build` and `npm test`. Commit both `package.json` and `package-lock.json` so installs use the same Vex revision.
+To update Vex, run `npm install @sidearker/vex-mcp@latest`, then run `npm run build` and `npm test`. Commit both `package.json` and `package-lock.json` so installs use the same Vex revision.
 
-On Windows, a project-local link also works without a global Vex command: build Vex, then run `New-Item -ItemType Junction -Path .\node_modules\vex-mcp -Target C:\Github\Vex` from Pace. Remove an existing `node_modules/vex-mcp` directory before creating the link.
+On Windows, a project-local link also works without a global Vex command: build Vex, then run `New-Item -ItemType Junction -Path .\node_modules\@sidearker\vex-mcp -Target C:\Github\Vex` from Pace. Remove an existing `node_modules/@sidearker/vex-mcp` directory before creating the link.
 
 ## Sessions and safety
 
