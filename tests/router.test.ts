@@ -15,6 +15,7 @@ it('sends original request, recent conversation, all valid pairs, capabilities, 
   expect(stage.options).toEqual(routeChoices(DEFAULT_CONFIG.models));
   expect(stage.options).toHaveLength(10);
   expect(shape.decisionType).toBe('routing');
+  expect(shape.constraints).toContain('plan must choose single, scout, or clarify');
 });
 
 it('accepts narrow leads and exact ties, rejects invalid or inconsistent choices', () => {

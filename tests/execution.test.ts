@@ -69,6 +69,22 @@ it('asks for clarification without starting Codex', async () => {
   expect(outcome.stages).toHaveLength(0);
 });
 
+it('passes an actionable read-only plan into the execution stage', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  const calls: { mode?: string; prompt: string; route: Route }[] = [];
+  const runner: CodexRunner = { async run(prompt, _project, route, _id, _progress, _signal, mode) {
+    calls.push({ prompt, route, mode });
+    return mode === 'side'
+      ? { result: JSON.stringify({ summary: 'Implement parser', files: ['src/parser.ts'], checks: ['npm test'], risks: [] }), completed: true }
+      : { result: 'implemented', completed: true };
+  } };
+  const vex = { choose: async (request: VexRequest) => decision(request, request.options[0]?.id === 'single' ? 'plan_execute' : request.context.stageObjective === 'Read-only implementation plan' ? '0:low' : '1:high') };
+  const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('Plan and implement parser', newSession('/example/project', 'auto'), config, () => {});
+  expect(calls.map(call => call.mode)).toEqual(['side', 'main']);
+  expect(calls[1]?.prompt).toContain('Implement parser');
+  expect(outcome.stages.map(stage => stage.route)).toEqual([{ model: 'gpt-6-luna', effort: 'low' }, { model: 'gpt-6-sol', effort: 'high' }]);
+});
+
 it('retries invalid decisions once, then exposes error without model fallback', async () => {
   dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
   let calls = 0;
