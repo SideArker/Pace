@@ -5,7 +5,7 @@
     "@openai/codex-sdk": "^0.156.1",
     "ink": "^7.1.1",
     "react": "^19.3.0",
-    "vex-mcp": "git+https://github.com/SideArker/Vex.git#a2e83f0cf53411746de9ae9d59869b7b312d25c8"
+    "vex-mcp": "git+https://github.com/SideArker/Vex.git#ea50ecb5453e3d0034fea40cec785b9d7e9f4187"
   },
   "name": "pace",
   "version": "0.1.0",
