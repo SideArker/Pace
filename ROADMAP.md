@@ -31,7 +31,7 @@ Interactive Ink terminal; official Codex SDK execution and streaming; Vex MCP ro
 
 **Goal:** establish whether Vex actually improves model choice rather than assuming it does.
 
-**In progress:** Pace now presents one locally selected effort per model to Vex. Routing quality and abstention rates still need a repeatable evaluation against a fixed-model baseline.
+**In progress:** Pace routes clear task intents locally, selects one effort per model for ambiguous Vex decisions, and can hand a read-only Luna repository scan to a Sol implementation turn. Routing quality, scan overhead, and abstention rates still need a repeatable evaluation against a fixed-model baseline.
 
 - Local routing log: task category, selected model/effort, manual overrides, reported SDK usage and elapsed time.
 - `/route` to explain the most recent selection, separating Vex's reported assessment from Pace's policy decision.
@@ -81,7 +81,7 @@ Interactive Ink terminal; official Codex SDK execution and streaming; Vex MCP ro
 
 ## Deferred / not planned until justified
 
-- Multiple concurrent coding agents or automatic task decomposition.
+- Multiple concurrent coding agents or general automatic task decomposition beyond the bounded read-only scan.
 - Hosted account system, cloud session synchronization or team collaboration.
 - Background autonomous coding runs.
 - Heavy analytics dashboards, remote telemetry or a vector database.

@@ -35,6 +35,6 @@ it('loads definitive routes for an untouched legacy automatic config', async () 
   const store = new PaceStore(dir);
   await writeFile(join(dir, 'config.json'), JSON.stringify({ models: [], defaultRoute: {}, routingMode: 'auto' }));
   const config = await store.loadConfig();
-  expect(config.defaultRoute).toEqual({ model: 'gpt-6-sol', effort: 'medium' });
+  expect(config.defaultRoute).toEqual({ model: 'gpt-6-sol', effort: 'high' });
   expect(config.models.map(model => model.model)).toEqual(['gpt-6-luna', 'gpt-6-sol', 'gpt-6-astra']);
 });
