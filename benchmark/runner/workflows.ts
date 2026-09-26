@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { PaceStore } from "../../src/core/sessions.js";
 import { PRICE_SNAPSHOT } from "../../src/core/routing/pricing.js";
 import { loadRoutingPrompts } from "../../src/core/routing/routing-prompts.js";
-import { vexServerPath } from "../../src/core/vex.js";
+import { vexServerPath } from "../../src/core/vex/client.js";
 import { args, parseSuite } from "./suite.js";
 import { runArm, git } from "./execute.js";
 import { total, summarize } from "./summary.js";
@@ -42,7 +42,7 @@ async function main() {
   }
   const sourcePaths = [
     "benchmark/runner/workflows.ts", "benchmark/runner/execute.ts", "benchmark/runner/summary.ts",
-    "src/core/orchestrator.ts", "src/core/vex.ts", "src/integrations/codex.ts",
+    "src/core/orchestrator.ts", "src/core/vex/client.ts", "src/integrations/codex.ts",
   ];
   const sourceContents = await Promise.all(sourcePaths.map(path => readFile(resolve(path))));
   await writeFile(

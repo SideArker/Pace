@@ -6,7 +6,7 @@ import { Orchestrator } from '../src/core/orchestrator.js';
 import { PaceStore, newSession } from '../src/core/sessions.js';
 import { codexOptions, eventProgress, SdkRunner, type CodexRunner } from '../src/integrations/codex.js';
 import type { Config, Route } from '../src/types.js';
-import type { VexRequest } from '../src/core/vex.js';
+import type { VexRequest } from '../src/core/vex/client.js';
 import { decision } from './routing-fixture.js';
 
 let dir: string;

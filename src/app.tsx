@@ -5,7 +5,7 @@ import type { Config, Session, Route } from "./types.js";
 import { PaceStore, newSession } from "./core/sessions.js";
 import { Orchestrator, VexUnavailableError } from "./core/orchestrator.js";
 import { SdkRunner } from "./integrations/codex.js";
-import { VexRouter } from "./core/vex.js";
+import { VexRouter } from "./core/vex/client.js";
 import { EFFORTS, withModels } from "./config.js";
 import { artifactSnapshot } from "./core/artifacts.js";
 import { existingFolder, sameFolder } from "./core/folders.js";
