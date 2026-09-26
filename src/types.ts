@@ -1,4 +1,5 @@
 import type { ModelReasoningEffort, Usage } from "@openai/codex-sdk";
+import type { StageRecord, RoutingRecord } from './core/orchestrator.js';
 export type Effort = ModelReasoningEffort;
 export type ModelOption = {
   model: string;
@@ -23,6 +24,9 @@ export type TurnSummary = {
   durationMs?: number;
   artifacts?: string[];
   usage?: Usage;
+  stages?: StageRecord[];
+  routing?: RoutingRecord[];
+  estimatedCostUsd?: number;
   failed?: boolean;
 };
 export type Session = {
