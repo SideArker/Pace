@@ -51,8 +51,8 @@ function taskContext(prompt: string, turns: TurnSummary[], models: ModelOption[]
   };
 }
 export const shapeChoices: RoutingChoice[] = [
-  { id: 'single', description: 'One Codex agent completes requested deliverable. Cheapest when no separate handoff improves total cost or quality.' },
-  { id: 'scout', description: 'Luna read-only scout maps relevant repository files; second agent completes request using structured handoff. Include both stages in expected Codex cost.' },
+  { id: 'single', description: 'One Codex agent completes requested deliverable. Best for direct lookups and work where a scout cannot reduce the completion agent\'s repository exploration.' },
+  { id: 'scout', description: 'Luna read-only scout identifies relevant files, behavior, and tests; second agent completes the request from a structured handoff. A small scout can cut expensive coding agent exploration even for a focused feature. Include both stages in total Codex cost.' },
   { id: 'plan_execute', description: 'Planning agent produces actionable plan; execution agent completes requested implementation. Use only when user requests implementation and planning improves quality and total cost.' },
   { id: 'clarify', description: 'Ask user to clarify requested outcome when deliverable cannot be determined from original request and conversation.' },
 ];
@@ -63,11 +63,11 @@ export function shapeRequest(prompt: string, turns: TurnSummary[], models: Model
     constraints: 'Infer requested deliverable from original words and conversation. A complex topic alone does not imply implementation. A request only for a plan must choose single, scout, or clarify; never plan_execute. Scout requires enabled Luna. Compare expected total Codex cost of every stage. Ignore Vex cost. Choose clarify only when requested outcome is unclear.',
   };
 }
-export function stageRequest(prompt: string, turns: TurnSummary[], models: ModelOption[], objective: string, handoff?: string): VexRequest {
+export function stageRequest(prompt: string, turns: TurnSummary[], models: ModelOption[], objective: string, handoff?: string, availableModels = models): VexRequest {
   const options = routeChoices(models);
   return {
     question: 'Which supported Codex model and effort together can meet Sol High quality for this stage at the least expected Codex cost?',
-    context: { ...taskContext(prompt, turns, models), stageObjective: objective, ...(handoff ? { priorStageHandoff: handoff } : {}) },
+    context: { ...taskContext(prompt, turns, availableModels), stageObjective: objective, ...(handoff ? { priorStageHandoff: handoff } : {}) },
     options, decisionType: 'routing',
     constraints: 'Choose one valid model and effort pair. Account for stage scope and expected token use at current prices. Reasoning output is part of output cost. Use prior handoff when supplied. Do not turn a plan-only request into implementation.',
   };

@@ -53,6 +53,7 @@ it('runs a read-only scout, reroutes after handoff, and sums stage costs', async
   expect(calls.map(call => call.mode)).toEqual(['side', 'main']);
   expect(calls[0]?.route).toEqual({ model: 'gpt-6-luna', effort: 'low' });
   expect(requests[1]?.options.map(option => option.id)).toEqual(['0:low']);
+  expect((requests[1]?.context.availableModels as { id: string }[]).map(model => model.id)).toContain('gpt-6-sol');
   expect(calls[1]?.prompt).toContain('Edit src/a.ts');
   expect(requests[2]?.context.priorStageHandoff).toContain('src/a.ts');
   expect(outcome.usage).toMatchObject({ input_tokens: 300, output_tokens: 25 });
