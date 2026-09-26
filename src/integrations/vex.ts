@@ -60,9 +60,9 @@ export function shapeRequest(prompt: string, turns: TurnSummary[], models: Model
   const options = models.some(model => model.model === 'gpt-6-luna')
     ? shapeChoices : shapeChoices.filter(choice => choice.id !== 'scout');
   return {
-    question: 'Which Codex workflow best completes the requested deliverable at the least total Codex cost while meeting Sol High quality?',
+    question: 'Using the original request and recent conversation, which Codex workflow completes the latest requested deliverable at the least total Codex cost while meeting Sol High quality?',
     context: taskContext(prompt, turns, models), options, decisionType: 'routing',
-    constraints: 'Infer requested deliverable from original words and conversation. A complex topic alone does not imply implementation. A request only for a plan must choose single, scout, or clarify; never plan_execute. Scout requires enabled Luna. Compare expected total Codex cost of every stage. Ignore Vex cost. Choose clarify only when requested outcome is unclear.',
+    constraints: 'Infer requested deliverable from original words and conversation. For follow-up questions, use the most recent relevant user and assistant turns to resolve pronouns and omitted nouns. Ask for clarification only if no actionable interpretation follows from that context; uncertainty between plausible interpretations is not enough when one clear referent exists. A complex topic alone does not imply implementation. A request only for a plan must choose single, scout, or clarify; never plan_execute. Scout requires enabled Luna. Compare expected total Codex cost of every stage. Ignore Vex cost.',
   };
 }
 export function stageRequest(prompt: string, turns: TurnSummary[], models: ModelOption[], objective: string, handoff?: string, availableModels = models): VexRequest {

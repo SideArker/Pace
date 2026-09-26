@@ -1,5 +1,21 @@
 # Pace benchmark
 
+## Routing decisions
+
+Run the route-only suite before changing workflow guidance:
+
+```powershell
+npm run benchmark:routing -- --suite benchmark/routing-suite.json --repeat 3
+```
+
+This calls Vex without starting Codex agents. The development suite contains 60 labeled requests across direct answers, repository lookups, implementation, plan-only requests, missing context, and requests resolved by recent conversation. Three repetitions yield 180 workflow choices; stage routing adds calls for non-clarification choices. Use `--case <id>` for one case, `--shape-only` to omit stage choices, or `--out <new-directory>` to choose a result path. Every run writes `runs.jsonl` as it goes, plus `summary.json`, `manifest.json`, and Vex statistics in an ignored results directory. Output directories must be new, so separate runs cannot mix results.
+
+`acceptable` labels encode intent constraints and plausible workflows. `preferred` is a **hypothesis** about cost and quality, not ground truth. A single or scout route can both be acceptable for many repository tasks; only an executed paired benchmark can establish which costs less at equal quality. The suite uses a fixed, simulated structured handoff for second-stage routing and records that limitation in the manifest. Inspect per-case choices, probabilities, route pairs, failures, retries, time, and Vex cost. After tuning on the development suite, run the separate 24-case holdout once with `--suite benchmark/routing-holdout.json --repeat 3`. Do not tune on holdout results and report them as independent validation.
+
+For more regular savings, tune guidance only when repeated routing errors point to a clear cause, then run this suite and the executed benchmark below. Require valid routes and plan-only intent compliance on every case. Compare **measured Codex cost among quality-passing runs** for single versus scout versus Sol High, including both stages and latency. Never infer a Codex savings percentage from this route-only suite or from Vex's probabilities alone.
+
+## Executed workflow comparison
+
 The benchmark compares three workflows on the **same literal prompt** and repository commit: plain Sol High, Vex-routed single agent, and Vex-routed scout plus completion. Each arm starts in a fresh Git clone and thread. The order alternates on repeated runs. The benchmark fixes workflow shape so each shape gets measured; Vex still routes every Codex stage. Codex can call Vex in routed arms.
 
 Run the pilot from the Pace checkout:
@@ -7,6 +23,8 @@ Run the pilot from the Pace checkout:
 ```powershell
 npm run benchmark -- --suite benchmark/pilot.json --repeat 1
 ```
+
+Add `--include-auto` to execute Pace's actual Vex-selected workflow alongside the three fixed arms. `summary.json` then includes `autoMatched` pairs with selected shape, stage routes, cost, usage, and time against Sol High. Review each result and diff against the rubric before treating a pair as quality-passing. A route-only pass cannot substitute for this check.
 
 Use `--case usage-trace` for one case, `--repeat 3` for repeated pairs, `--timeout-minutes 12` for a per-run limit, and `--out <directory>` to choose a result directory. Results default to the ignored `benchmark/results/` directory. The suite supports a repository path relative to the invocation directory, suite or per-case Git ref, prompt, optional setup commands, optional check commands, and a review rubric. Setup and checks execute in each clone. If the source repository has `node_modules`, each clone receives a link to it so build and test commands use the same dependencies. A fixed commit is saved in the result manifest even when the suite uses `HEAD`.
 
