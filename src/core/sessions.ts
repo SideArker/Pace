@@ -18,6 +18,20 @@ function isUsage(value: unknown): value is Usage {
   const record = value;
   return ["input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens", "reasoning_output_tokens"].every(key => typeof record[key] === "number");
 }
+const nonnegative = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && value >= 0;
+function isStage(value: unknown): boolean {
+  return isRecord(value) && typeof value.objective === 'string' && isRecord(value.route) &&
+    (value.route.model === undefined || typeof value.route.model === 'string') &&
+    (value.route.effort === undefined || EFFORTS.includes(value.route.effort as (typeof EFFORTS)[number])) &&
+    nonnegative(value.durationMs) && (value.usage === undefined || isUsage(value.usage)) &&
+    (value.estimatedCostUsd === undefined || nonnegative(value.estimatedCostUsd));
+}
+function isRouting(value: unknown): boolean {
+  return isRecord(value) && typeof value.objective === 'string' && typeof value.choice === 'string' &&
+    nonnegative(value.confidence) && (value.confidence as number) <= 1 && isRecord(value.probabilities) &&
+    Object.values(value.probabilities).every(probability => nonnegative(probability) && (probability as number) <= 1) &&
+    Number.isInteger(value.attempts) && (value.attempts as number) >= 0;
+}
 
 export function normalizeProject(path: string): string {
   const absolute = resolve(path);
@@ -75,6 +89,9 @@ function parseSession(value: unknown, project: string): Session | undefined {
         (turn.routeNote === undefined || typeof turn.routeNote === "string") &&
         (turn.durationMs === undefined || (typeof turn.durationMs === "number" && Number.isFinite(turn.durationMs) && turn.durationMs >= 0)) &&
         (turn.usage === undefined || isUsage(turn.usage)) &&
+        (turn.estimatedCostUsd === undefined || nonnegative(turn.estimatedCostUsd)) &&
+        (turn.stages === undefined || (Array.isArray(turn.stages) && turn.stages.every(isStage))) &&
+        (turn.routing === undefined || (Array.isArray(turn.routing) && turn.routing.every(isRouting))) &&
         (turn.artifacts === undefined || (Array.isArray(turn.artifacts) && turn.artifacts.every((artifact: unknown) => typeof artifact === "string" && /^\.pace\/artifacts\/[^/\\]+\.md$/.test(artifact)))) &&
         (turn.failed === undefined || typeof turn.failed === "boolean"),
     ) ||

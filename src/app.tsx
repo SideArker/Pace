@@ -263,7 +263,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         text: turn.result,
         spaceBefore: false,
       });
-      if (!turn.failed) {
+      if (!turn.failed && (turn.stages?.length ?? 1) > 0) {
         newLines.push({
           id: id++,
           role: "meta",
@@ -744,7 +744,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       );
       setSession({ ...outcome.session });
       add("codex", outcome.result);
-      add(
+      if (outcome.stages.length) add(
         "meta",
         formatTurnFooter(
           outcome.route,

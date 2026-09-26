@@ -7,7 +7,7 @@ import { PaceStore, newSession } from '../src/core/sessions.js';
 import { codexOptions, eventProgress, SdkRunner, type CodexRunner } from '../src/integrations/codex.js';
 import type { Config, Route } from '../src/types.js';
 import type { VexRequest } from '../src/integrations/vex.js';
-import { decision, singleVex } from './routing-fixture.js';
+import { decision } from './routing-fixture.js';
 
 let dir: string;
 afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true }); });
@@ -51,6 +51,8 @@ it('runs a read-only scout, reroutes after handoff, and sums stage costs', async
   } };
   const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('Implement feature', newSession('/example/project', 'auto'), config, () => {});
   expect(calls.map(call => call.mode)).toEqual(['side', 'main']);
+  expect(calls[0]?.route).toEqual({ model: 'gpt-6-luna', effort: 'low' });
+  expect(requests[1]?.options.map(option => option.id)).toEqual(['0:low']);
   expect(calls[1]?.prompt).toContain('Edit src/a.ts');
   expect(requests[2]?.context.priorStageHandoff).toContain('src/a.ts');
   expect(outcome.usage).toMatchObject({ input_tokens: 300, output_tokens: 25 });
