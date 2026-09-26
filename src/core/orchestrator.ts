@@ -100,8 +100,8 @@ export class Orchestrator {
         const stageStart = performance.now();
         const side = await this.runner.run(handoffPrompt(shape, prompt), session.projectPath, sideRoute, undefined,
           progress => { if (progress.kind === 'activity') onProgress(progress); }, signal, 'side');
-        handoff = structuredHandoff(side.result);
         stages.push({ objective, route: sideRoute, durationMs: Math.round(performance.now() - stageStart), usage: side.usage, estimatedCostUsd: costForUsage(sideRoute, side.usage) });
+        handoff = structuredHandoff(side.result);
       }
       if (auto) {
         const objective = shape === 'single' ? 'Complete the original user request' : 'Complete the original user request using the prior structured handoff';

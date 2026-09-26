@@ -53,7 +53,7 @@ type Run = {
   paceRoutingCalls: number;
   agentVexCalls: number;
   rubric?: string;
-  subturns: { mode: string; route: Route; usage?: Usage; error?: string }[];
+  subturns: { mode: string; route: Route; durationMs: number; usage?: Usage; estimatedCostUsd?: number; error?: string }[];
   vex?: {
     requests: number;
     inputTokens: number;
@@ -358,6 +358,7 @@ async function runArm(
         mode,
         trustedFolders,
       ) {
+        const subturnStarted = performance.now();
         try {
           const result = await runner.run(
             prompt,
@@ -372,13 +373,16 @@ async function runArm(
           record.subturns.push({
             mode: mode ?? "main",
             route,
+            durationMs: Math.round(performance.now() - subturnStarted),
             usage: result.usage,
+            estimatedCostUsd: costForUsage(route, result.usage),
           });
           return result;
         } catch (error) {
           record.subturns.push({
             mode: mode ?? "main",
             route,
+            durationMs: Math.round(performance.now() - subturnStarted),
             error: String(error),
           });
           throw error;
@@ -406,10 +410,13 @@ async function runArm(
       const selectedShape = arm === 'routed_single' ? 'single' : 'scout';
       const benchmarkVex = {
         verify: () => vex!.verify(),
-        choose: (request: VexRequest) => request.options.some(option => option.id === 'single')
-          ? Promise.resolve({ contractVersion: '1', choice: selectedShape, abstained: false, confidence: 1,
-              probabilities: Object.fromEntries(request.options.map(option => [option.id, option.id === selectedShape ? 1 : 0])) })
-          : vex!.choose(request),
+        choose: (request: VexRequest) => {
+          if (request.options.some(option => option.id === 'single'))
+            return Promise.resolve({ contractVersion: '1', choice: selectedShape, abstained: false, confidence: 1,
+              probabilities: Object.fromEntries(request.options.map(option => [option.id, option.id === selectedShape ? 1 : 0])) });
+          record.paceRoutingCalls++;
+          return vex!.choose(request);
+        },
       };
       const outcome = await new Orchestrator(store, observed, benchmarkVex).turn(
         task.prompt,
@@ -425,7 +432,6 @@ async function runArm(
       record.stages = outcome.stages;
       record.routing = outcome.routing;
       record.estimatedCostUsd = outcome.estimatedCostUsd;
-      record.paceRoutingCalls = outcome.routing.slice(1).reduce((sum, decision) => sum + decision.attempts, 0);
     }
   } catch (error) {
     record.error = String(error);
@@ -433,6 +439,8 @@ async function runArm(
     clearTimeout(timeout);
     await vex?.close().catch(() => {});
     record.durationMs = Math.round(performance.now() - started);
+    if (record.estimatedCostUsd === undefined && record.subturns.length && record.subturns.every(turn => turn.estimatedCostUsd !== undefined))
+      record.estimatedCostUsd = record.subturns.reduce((sum, turn) => sum + turn.estimatedCostUsd!, 0);
     record.agentVexCalls = record.mcpCalls.filter(call => call.startsWith('vex/')).length;
     if (record.result) {
       for (const check of task.checks ?? [])

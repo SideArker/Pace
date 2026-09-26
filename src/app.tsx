@@ -605,7 +605,8 @@ export default function App({ onClear }: { onClear: () => void }) {
         const elapsed = turns.reduce((sum, turn) => sum + (turn.durationMs ?? 0), 0);
         const reported = turns.filter(turn => turn.usage).length;
         const cost = turns.reduce((sum, turn) => sum + (turn.estimatedCostUsd ?? 0), 0);
-        add("info", `Codex usage: ${total("input_tokens")} input (${total("cached_input_tokens")} cached, ${total("cache_write_input_tokens")} cache write), ${total("output_tokens")} output; ~$${cost.toFixed(4)} estimated API equivalent`);
+        const priced = turns.filter(turn => turn.estimatedCostUsd !== undefined).length;
+        add("info", `Codex usage: ${total("input_tokens")} input (${total("cached_input_tokens")} cached, ${total("cache_write_input_tokens")} cache write), ${total("output_tokens")} output; ${priced ? `~$${cost.toFixed(4)} estimated API equivalent (${priced} priced turns)` : 'API-equivalent cost unavailable'}`);
         add("info", `Current conversation, last ${turns.length} turns · ${turns.filter(turn => turn.failed).length} failed · ${(elapsed / 1000).toFixed(1)}s elapsed · ${total("input_tokens")} input / ${total("output_tokens")} output tokens (${reported} turns reported usage)`);
         return;
       }
