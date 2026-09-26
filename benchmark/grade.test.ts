@@ -86,7 +86,7 @@ describe("executed benchmark grading", () => {
       await expect(prepareGrades(directory, runs)).rejects.toMatchObject({ code: "EEXIST" });
       const grades = JSON.parse(await readFile(gradesPath, "utf8")) as Grades;
       for (const grade of grades.runs) grade.pass = true;
-      await writeFile(gradesPath, JSON.stringify(grades));
+      await writeFile(gradesPath, `\uFEFF${JSON.stringify(grades)}`);
       const { path, report } = await reportGrades(directory, runs);
       expect(report.comparisons.routed_single?.qualityPassingPairs).toBe(1);
       expect(JSON.parse(await readFile(path, "utf8")).comparisons.routed_single.costWins).toBe(1);

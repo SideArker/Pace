@@ -191,7 +191,7 @@ export function analyzeGrades(root: string, runs: Map<string, SavedRun>, grades:
 }
 
 export async function reportGrades(root: string, runs: Map<string, SavedRun>) {
-  const grades = JSON.parse(await readFile(join(root, "grades.json"), "utf8")) as Grades;
+  const grades = JSON.parse((await readFile(join(root, "grades.json"), "utf8")).replace(/^\uFEFF/, "")) as Grades;
   const report = analyzeGrades(root, runs, grades);
   const path = join(root, "graded-summary.json");
   await writeFile(path, JSON.stringify(report, null, 2) + "\n");
