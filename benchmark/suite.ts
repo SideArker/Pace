@@ -5,7 +5,7 @@ export function args() {
   const values = process.argv.slice(2);
   if (values.includes("--help") || !values.length) {
     console.log(
-      "Usage: npm run benchmark -- --suite <file.json> [--repeat 3] [--case id] [--include-auto] [--include-luna] [--out directory] [--timeout-minutes 12]",
+      "Usage: npm run benchmark -- --suite <file.json> [--list] [--repeat 3] [--case id] [--include-auto] [--include-luna] [--out directory] [--timeout-minutes 12]",
     );
     process.exit(values.includes("--help") ? 0 : 2);
   }
@@ -23,6 +23,7 @@ export function args() {
     repeat,
     timeoutMinutes,
     selectedCase: get("--case"),
+    list: values.includes("--list"),
     includeAuto: values.includes('--include-auto'),
     includeLuna: values.includes('--include-luna'),
     out: resolve(
@@ -61,6 +62,8 @@ export function parseSuite(value: unknown): Suite {
       throw new Error("Each case needs a unique slug id and nonempty prompt");
     if (task.ref !== undefined && typeof task.ref !== "string")
       throw new Error(`Invalid ref for ${task.id}`);
+    if (task.rubric !== undefined && (typeof task.rubric !== "string" || !task.rubric.trim()))
+      throw new Error(`Invalid rubric for ${task.id}`);
     for (const key of ["setup", "checks"] as const)
       if (
         task[key] !== undefined &&

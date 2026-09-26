@@ -10,6 +10,7 @@ import { VexRouter, vexServerPath } from "../src/core/vex.js";
 import { Orchestrator } from "../src/core/orchestrator.js";
 import { PaceStore, newSession } from "../src/core/sessions.js";
 import { costForUsage } from "../src/core/pricing.js";
+import { routingPromptFile, type RoutingPrompts } from "../src/core/routing-prompts.js";
 import type { VexRequest } from "../src/core/vex.js";
 import type { Config } from "../src/types.js";
 import type { Arm, BenchmarkCase as Case, CommandResult, Run } from "./types.js";
@@ -65,6 +66,7 @@ export async function runArm(
   out: string,
   config: Config,
   timeoutMinutes: number,
+  routingPrompts: RoutingPrompts,
 ): Promise<Run> {
   const root = await mkdtemp(join(tmpdir(), "pace-benchmark-"));
   const fixture = join(root, "workspace");
@@ -208,6 +210,8 @@ export async function runArm(
       vex = new VexRouter();
       const session = newSession(fixture, "auto");
       const store = new PaceStore(join(root, "pace-store"));
+      await mkdir(store.baseDir, { recursive: true });
+      await writeFile(join(store.baseDir, routingPromptFile), JSON.stringify(routingPrompts));
       const selectedShape = arm === 'routed_single' ? 'single' : arm === 'routed_split' ? 'scout' : undefined;
       const benchmarkVex = {
         verify: () => vex!.verify(),
