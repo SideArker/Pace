@@ -26,6 +26,21 @@ npm run benchmark -- --suite benchmark/pilot.json --repeat 1
 
 Add `--include-auto` to execute Pace's actual Vex-selected workflow alongside the three fixed arms. `summary.json` then includes `autoMatched` pairs with selected shape, stage routes, cost, usage, and time against Sol High. Review each result and diff against the rubric before treating a pair as quality-passing. A route-only pass cannot substitute for this check.
 
+For broader executed evidence, use the 12-case validation suite. It spans direct answers, repository lookups, plan-only requests, and implementation, all on fixed Git commit `2fad436`:
+
+```powershell
+npm run benchmark -- --suite benchmark/validation.json --repeat 3 --include-auto
+python benchmark/grade.py prepare <results-directory>
+```
+
+Review each `run.json` answer, `diff.patch`, and check result. Set every `pass` field in `grades.json` to `true` or `false`, then run:
+
+```powershell
+python benchmark/grade.py report <results-directory>
+```
+
+`graded-summary.json` compares only pairs where both arms passed manual review and checks. It reports cost wins and regressions, aggregate and median savings, raw and cached tokens, time, selected shapes and routes, and Vex calls and cost separately. The helper refuses incomplete grades and does not overwrite existing grades. Twelve cases, three repetitions, and four arms mean 144 Codex runs; use `--case <id>` for a smaller first pass.
+
 Use `--case usage-trace` for one case, `--repeat 3` for repeated pairs, `--timeout-minutes 12` for a per-run limit, and `--out <directory>` to choose a result directory. Results default to the ignored `benchmark/results/` directory. The suite supports a repository path relative to the invocation directory, suite or per-case Git ref, prompt, optional setup commands, optional check commands, and a review rubric. Setup and checks execute in each clone. If the source repository has `node_modules`, each clone receives a link to it so build and test commands use the same dependencies. A fixed commit is saved in the result manifest even when the suite uses `HEAD`.
 
 Each run saves `run.json`, raw SDK `events.jsonl`, a full `diff.patch`, and Vex stats when Vex made a decision. `summary.json` reports matched triples with complete Codex usage, per-stage routes, token cache breakdown, elapsed time, estimated Standard API cost, and Vex routing and agent call counts. The result manifest embeds the price snapshot. Input tokens include cached and cache-write input; output includes reasoning. Stage cost charges each input class once, using its stage model. Vex cost stays separate and does not influence routing. Actual Codex account billing is not exposed by the SDK, so dollar amounts are API-equivalent estimates for Standard, short-context processing.
