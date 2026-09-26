@@ -21,9 +21,12 @@ import { Orchestrator } from "./core/orchestrator.js";
 import { PaceStore, newSession } from "./core/sessions.js";
 import type { Config, Route } from "./types.js";
 import type { Usage } from "@openai/codex-sdk";
+import { costForUsage, PRICE_SNAPSHOT } from './core/pricing.js';
+import type { StageRecord, RoutingRecord } from './core/orchestrator.js';
+import type { VexRequest } from './integrations/vex.js';
 
 const exec = promisify(execCallback);
-type Arm = "baseline" | "pace";
+type Arm = "baseline" | "routed_single" | "routed_split";
 type Case = {
   id: string;
   prompt: string;
@@ -44,6 +47,12 @@ type Run = {
   routeNote?: string;
   durationMs: number;
   usage?: Usage;
+  estimatedCostUsd?: number;
+  stages: StageRecord[];
+  routing: RoutingRecord[];
+  paceRoutingCalls: number;
+  agentVexCalls: number;
+  rubric?: string;
   subturns: { mode: string; route: Route; usage?: Usage; error?: string }[];
   vex?: {
     requests: number;
@@ -186,31 +195,44 @@ function summarize(runs: Run[]) {
   }
   const matched = [...pairs].flatMap(([key, pair]) => {
     const baseline = total(pair.baseline?.usage);
-    const pace = total(pair.pace?.usage);
+    const single = total(pair.routed_single?.usage);
+    const split = total(pair.routed_split?.usage);
     if (
       baseline === undefined ||
-      pace === undefined ||
+      single === undefined || split === undefined ||
       baseline === 0 ||
       pair.baseline?.error ||
-      pair.pace?.error ||
+      pair.routed_single?.error || pair.routed_split?.error ||
       pair.baseline?.vexShellCommands.length ||
       pair.baseline?.mcpCalls.some((call) => call.startsWith("vex/")) ||
       pair.baseline?.subturns.some((turn) => turn.error || !turn.usage) ||
-      pair.pace?.subturns.some((turn) => turn.error || !turn.usage)
+      pair.routed_single?.subturns.some((turn) => turn.error || !turn.usage) ||
+      pair.routed_split?.subturns.some((turn) => turn.error || !turn.usage)
     )
       return [];
     return [
       {
         key,
         baselineTokens: baseline,
-        paceTokens: pace,
-        savedTokens: baseline - pace,
-        savedPercent: (100 * (baseline - pace)) / baseline,
+        singleTokens: single,
+        splitTokens: split,
+        usage: { baseline: pair.baseline!.usage, single: pair.routed_single!.usage, split: pair.routed_split!.usage },
+        baselineCostUsd: pair.baseline!.estimatedCostUsd,
+        singleCostUsd: pair.routed_single!.estimatedCostUsd,
+        splitCostUsd: pair.routed_split!.estimatedCostUsd,
+        durationsMs: { baseline: pair.baseline!.durationMs, single: pair.routed_single!.durationMs, split: pair.routed_split!.durationMs },
+        routes: { single: pair.routed_single!.stages.map(stage => stage.route), split: pair.routed_split!.stages.map(stage => stage.route) },
+        vexCalls: { singleRouting: pair.routed_single!.paceRoutingCalls, splitRouting: pair.routed_split!.paceRoutingCalls, singleAgent: pair.routed_single!.agentVexCalls, splitAgent: pair.routed_split!.agentVexCalls },
+        routingAbstentions: { single: pair.routed_single!.routing.filter(decision => !decision.choice).length, split: pair.routed_split!.routing.filter(decision => !decision.choice).length },
+        rubric: pair.baseline!.rubric,
         baselineChecksPassed: pair.baseline!.checks.length
           ? pair.baseline!.checks.every((check) => check.exitCode === 0)
           : null,
-        paceChecksPassed: pair.pace!.checks.length
-          ? pair.pace!.checks.every((check) => check.exitCode === 0)
+        singleChecksPassed: pair.routed_single!.checks.length
+          ? pair.routed_single!.checks.every((check) => check.exitCode === 0)
+          : null,
+        splitChecksPassed: pair.routed_split!.checks.length
+          ? pair.routed_split!.checks.every((check) => check.exitCode === 0)
           : null,
       },
     ];
@@ -219,16 +241,17 @@ function summarize(runs: Run[]) {
     (sum, pair) => sum + pair.baselineTokens,
     0,
   );
-  const paceTokens = matched.reduce((sum, pair) => sum + pair.paceTokens, 0);
+  const singleTokens = matched.reduce((sum, pair) => sum + pair.singleTokens, 0);
+  const splitTokens = matched.reduce((sum, pair) => sum + pair.splitTokens, 0);
   return {
     matched,
     incompletePairs: pairs.size - matched.length,
     baselineTokens,
-    paceTokens,
-    savedTokens: baselineTokens - paceTokens,
-    savedPercent: baselineTokens
-      ? (100 * (baselineTokens - paceTokens)) / baselineTokens
-      : null,
+    singleTokens,
+    splitTokens,
+    singleSavedTokens: baselineTokens - singleTokens,
+    splitSavedTokens: baselineTokens - splitTokens,
+    priceSnapshot: PRICE_SNAPSHOT,
   };
 }
 
@@ -257,6 +280,11 @@ async function runArm(
     promptSha256: createHash("sha256").update(task.prompt).digest("hex"),
     durationMs: 0,
     subturns: [],
+    stages: [],
+    routing: [],
+    paceRoutingCalls: 0,
+    agentVexCalls: 0,
+    rubric: task.rubric,
     mcpCalls: [],
     vexShellCommands: [],
     checks: [],
@@ -311,7 +339,7 @@ async function runArm(
         record.vexShellCommands.push(item.command ?? "");
     };
     const trustPath = fixture.toLowerCase().replace(/'/g, "''");
-    const baseOptions = arm === "pace" ? codexOptions(vexServerPath()) : {};
+    const baseOptions = arm !== "baseline" ? codexOptions(vexServerPath()) : {};
     const runner = new SdkRunner({
       ...baseOptions,
       configOverrides: [
@@ -369,11 +397,21 @@ async function runArm(
       );
       record.result = result.result;
       record.usage = result.usage;
+      record.stages = [{ objective: 'Complete request', route: record.route, durationMs: 0, usage: result.usage, estimatedCostUsd: costForUsage(record.route, result.usage) }];
+      record.estimatedCostUsd = record.stages[0]?.estimatedCostUsd;
     } else {
       vex = new VexRouter();
       const session = newSession(fixture, "auto");
       const store = new PaceStore(join(root, "pace-store"));
-      const outcome = await new Orchestrator(store, observed, vex).turn(
+      const selectedShape = arm === 'routed_single' ? 'single' : 'scout';
+      const benchmarkVex = {
+        verify: () => vex!.verify(),
+        choose: (request: VexRequest) => request.options.some(option => option.id === 'single')
+          ? Promise.resolve({ contractVersion: '1', choice: selectedShape, abstained: false, confidence: 1,
+              probabilities: Object.fromEntries(request.options.map(option => [option.id, option.id === selectedShape ? 1 : 0])) })
+          : vex!.choose(request),
+      };
+      const outcome = await new Orchestrator(store, observed, benchmarkVex).turn(
         task.prompt,
         session,
         config,
@@ -384,6 +422,10 @@ async function runArm(
       record.route = outcome.route;
       record.routeNote = outcome.note;
       record.usage = outcome.usage;
+      record.stages = outcome.stages;
+      record.routing = outcome.routing;
+      record.estimatedCostUsd = outcome.estimatedCostUsd;
+      record.paceRoutingCalls = outcome.routing.slice(1).reduce((sum, decision) => sum + decision.attempts, 0);
     }
   } catch (error) {
     record.error = String(error);
@@ -391,6 +433,7 @@ async function runArm(
     clearTimeout(timeout);
     await vex?.close().catch(() => {});
     record.durationMs = Math.round(performance.now() - started);
+    record.agentVexCalls = record.mcpCalls.filter(call => call.startsWith('vex/')).length;
     if (record.result) {
       for (const check of task.checks ?? [])
         record.checks.push(await command(check, fixture));
@@ -472,6 +515,7 @@ async function main() {
         commits: Object.fromEntries(commits),
         repeats: options.repeat,
         timeoutMinutes: options.timeoutMinutes,
+        priceSnapshot: PRICE_SNAPSHOT,
       },
       null,
       2,
@@ -480,8 +524,8 @@ async function main() {
   for (const task of cases)
     for (let repetition = 1; repetition <= options.repeat; repetition++) {
       for (const arm of (repetition % 2
-        ? ["baseline", "pace"]
-        : ["pace", "baseline"]) as Arm[]) {
+        ? ["baseline", "routed_single", "routed_split"]
+        : ["routed_split", "routed_single", "baseline"]) as Arm[]) {
         console.log(`${task.id} ${repetition}/${options.repeat} ${arm}`);
         const run = await runArm(
           task,
@@ -496,7 +540,7 @@ async function main() {
         runs.push(run);
         console.log(
           run.error ??
-            `${total(run.usage) ?? "missing"} Codex tokens, ${run.durationMs} ms`,
+            `${total(run.usage) ?? "missing"} Codex tokens, $${run.estimatedCostUsd?.toFixed(4) ?? 'unknown'} estimated, ${run.durationMs} ms`,
         );
         await writeFile(
           join(options.out, "summary.json"),
@@ -506,7 +550,7 @@ async function main() {
     }
   const summary = summarize(runs);
   console.log(
-    `${summary.matched.length} matched pairs; ${summary.incompletePairs} incomplete; ${summary.savedTokens} Codex tokens saved (${summary.savedPercent?.toFixed(1) ?? "n/a"}%)`,
+    `${summary.matched.length} matched triples; ${summary.incompletePairs} incomplete. Review quality before selecting guidance.`,
   );
   console.log(`Results: ${options.out}`);
 }
