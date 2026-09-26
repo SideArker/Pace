@@ -1,6 +1,7 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { Box, Text } from "ink";
 import { basename } from "node:path";
+import { getGitBranch } from "../core/git.js";
 
 export type Line = {
   id: number;
@@ -11,43 +12,186 @@ export type Line = {
   sourceId?: string;
 };
 
-const colors = { thinking: "magentaBright", command: "cyan", files: "yellow", tool: "blueBright", search: "blue", plan: "magenta" } as const;
-const paceMark = [
-  { face: "  ______  ", depth: "" },
-  { face: " |  __  |", depth: "\\ " },
-  { face: " | |__) |", depth: "|\\" },
-  { face: " |  ___/", depth: "  |" },
-  { face: " | |", depth: "      | /" },
-  { face: " |_|", depth: "      |/" },
+const activityColors = {
+  thinking: "magentaBright",
+  command: "cyan",
+  files: "yellow",
+  tool: "blueBright",
+  search: "blue",
+  plan: "magenta",
+} as const;
+
+const activityIcons = {
+  thinking: "✧",
+  command: "⚡",
+  files: "◇",
+  tool: "⚙",
+  search: "🔍",
+  plan: "📋",
+} as const;
+
+const paceShadowLetters = [
+  ["  ██████╗ ", "  █████╗ ", "  ██████╗ ", "███████╗"],
+  ["  ██╔══██╗", " ██╔══██╗", " ██╔════╝ ", "██╔════╝"],
+  ["  ██████╔╝", " ███████║", " ██║      ", "█████╗  "],
+  ["  ██╔═══╝ ", " ██╔══██║", " ██║      ", "██╔══╝  "],
+  ["  ██║     ", " ██║  ██║", " ╚██████╗ ", "███████╗"],
+  ["  ╚═╝     ", " ╚═╝  ╚═╝", "  ╚═════╝ ", "╚══════╝"],
 ] as const;
 
+const paceMicroLetters = [
+  ["  █▀█ ", "▄▀█ ", "█▀▀ ", "█▀▀"],
+  ["  █▀▀ ", "█▀█ ", "█▄▄ ", "██▄"],
+] as const;
+
+const letterGradients = ["#59E6A7", "#4ADE80", "#2DD4BF", "#38BDF8"] as const;
+
 export function Header({ project, vexState, width }: { project: string; vexState: "connecting" | "connected" | "failed"; width: number }) {
-  return <Box flexDirection="column">
-    {width >= 16 ? <Box flexDirection="column">{paceMark.map((line, index) => <Text key={index}><Text color="#59E6A7" bold>{line.face}</Text><Text color="#217F5C">{line.depth}</Text></Text>)}</Box> : <Text color="greenBright" bold>P</Text>}
-    <Box gap={2} marginLeft={1}><Text color="gray">{basename(project)}</Text><Text color={vexState === "connected" ? "green" : vexState === "failed" ? "red" : "yellow"}>Vex MCP {vexState === "connected" ? "connected" : vexState === "failed" ? "unavailable" : "connecting"}</Text></Box>
-  </Box>;
+  const branch = useMemo(() => getGitBranch(project), [project]);
+  const dividerLength = Math.max(20, Math.min(width - 4, 72));
+
+  return (
+    <Box flexDirection="column" marginBottom={1}>
+      {width >= 42 ? (
+        <Box flexDirection="column">
+          {paceShadowLetters.map((row, rIdx) => (
+            <Box key={rIdx}>
+              {row.map((letter, lIdx) => (
+                <Text key={lIdx} color={letterGradients[lIdx]} bold>
+                  {letter}
+                </Text>
+              ))}
+            </Box>
+          ))}
+        </Box>
+      ) : width >= 24 ? (
+        <Box flexDirection="column">
+          {paceMicroLetters.map((row, rIdx) => (
+            <Box key={rIdx}>
+              {row.map((letter, lIdx) => (
+                <Text key={lIdx} color={letterGradients[lIdx]} bold>
+                  {letter}
+                </Text>
+              ))}
+            </Box>
+          ))}
+        </Box>
+      ) : (
+        <Text color="#59E6A7" bold>⚡ PACE</Text>
+      )}
+
+      <Box gap={1} marginTop={1} flexWrap="wrap">
+        <Text color="#A7F3D0" bold>📁 {basename(project)}</Text>
+        {branch ? <Text color="#93C5FD">⎇ {branch}</Text> : null}
+        <Text color={vexState === "connected" ? "#34D399" : vexState === "failed" ? "#F87171" : "#FBBF24"}>
+          {vexState === "connected" ? "● Vex MCP connected" : vexState === "failed" ? "⨯ Vex MCP unavailable" : "◌ Vex MCP connecting..."}
+        </Text>
+      </Box>
+
+      <Box marginTop={0}>
+        <Text dimColor>Type </Text>
+        <Text color="#38BDF8" bold>/help</Text>
+        <Text dimColor> for commands · </Text>
+        <Text color="#38BDF8" bold>!cmd</Text>
+        <Text dimColor> for bash · </Text>
+        <Text color="#38BDF8" bold>/models</Text>
+        <Text dimColor> for routing</Text>
+      </Box>
+
+      <Box marginTop={0}>
+        <Text color="#334155">{"─".repeat(dividerLength)}</Text>
+      </Box>
+    </Box>
+  );
 }
 
-export function Transcript({ lines, outputsExpanded, detailsExpanded, rows, scrollBack }: { lines: Line[]; outputsExpanded: boolean; detailsExpanded: boolean; rows: number; scrollBack: number }) {
+export function Transcript({
+  lines,
+  outputsExpanded,
+  detailsExpanded,
+  rows,
+  scrollBack,
+  width = 80,
+}: {
+  lines: Line[];
+  outputsExpanded: boolean;
+  detailsExpanded: boolean;
+  rows: number;
+  scrollBack: number;
+  width?: number;
+}) {
   // Keep the transcript in Ink's redraw area so old entries can actually disappear or collapse.
   const count = Math.max(8, rows - 12);
   const end = Math.max(0, lines.length - scrollBack);
   const visible = lines.slice(Math.max(0, end - count), end);
-  return <Box flexDirection="column">
-    {scrollBack > 0 ? <Text color="gray">↑ Earlier activity · PageDown to return</Text> : null}
-    {visible.map(line => <Box key={line.id} flexDirection="column" marginTop={line.spaceBefore ? 1 : 0}>
-      {line.role === "you" ? <><Text color="cyanBright" bold>You</Text><Text>{line.text}</Text></>
-      : line.role === "codex" ? <><Text color="greenBright" bold>Pace</Text><Text>{line.text}</Text></>
-      : line.role === "side" ? <><Text color="magentaBright" bold>Btw</Text><Text>{line.text}</Text></>
-      : line.role === "activity" && line.activity ? <>
-        <Text color={colors[line.activity.category]}>{line.activity.completed ? "◆" : "◇"} {line.text}{line.activity.detail ? `  ${(line.activity.category === "command" ? outputsExpanded : detailsExpanded) ? "▾" : "▸"}` : ""}</Text>
-        {line.activity.detail && (line.activity.category === "command" ? outputsExpanded : detailsExpanded) ? <Text color="gray">{line.activity.detail.slice(-12000)}</Text> : null}
-      </>
-      : line.role === "divider" ? <Text color="gray">{"─".repeat(42)}</Text>
-      : line.role === "meta" ? <Text color="gray">{line.text}</Text>
-      : line.role === "artifact" ? <Text color="magenta">Artifact: {line.text}</Text>
-      : line.role === "error" ? <Text color="red">Pace: {line.text}</Text>
-      : <Text color="gray">{line.text}</Text>}
-    </Box>)}
-  </Box>;
+  const dividerLength = Math.max(20, Math.min(width - 4, 72));
+
+  return (
+    <Box flexDirection="column">
+      {scrollBack > 0 ? <Text color="#94A3B8">↑ Earlier activity · PageDown to return</Text> : null}
+      {visible.map((line) => (
+        <Box key={line.id} flexDirection="column" marginTop={line.spaceBefore ? 1 : 0}>
+          {line.role === "you" ? (
+            <Box gap={1}>
+              <Text color="#38BDF8" bold>❯ You</Text>
+              <Box flexShrink={1}><Text color="white">{line.text}</Text></Box>
+            </Box>
+          ) : line.role === "codex" ? (
+            <Box gap={1}>
+              <Text color="#59E6A7" bold>◆ Pace</Text>
+              <Box flexShrink={1}><Text>{line.text}</Text></Box>
+            </Box>
+          ) : line.role === "side" ? (
+            <Box gap={1}>
+              <Text color="#E879F9" bold>◇ Btw </Text>
+              <Box flexShrink={1}><Text color="#F5D0FE">{line.text}</Text></Box>
+            </Box>
+          ) : line.role === "activity" && line.activity ? (
+            <Box flexDirection="column">
+              <Box gap={1}>
+                <Text color={activityColors[line.activity.category]}>
+                  {line.activity.completed ? "✔" : "◌"} {activityIcons[line.activity.category]} {line.text}
+                </Text>
+                {line.activity.detail ? (
+                  <Text dimColor>
+                    {(line.activity.category === "command" ? outputsExpanded : detailsExpanded) ? "▾" : "▸"}
+                  </Text>
+                ) : null}
+              </Box>
+              {line.activity.detail && (line.activity.category === "command" ? outputsExpanded : detailsExpanded) ? (
+                <Box
+                  marginLeft={2}
+                  paddingLeft={1}
+                  borderStyle="single"
+                  borderLeft
+                  borderRight={false}
+                  borderTop={false}
+                  borderBottom={false}
+                  borderColor="#475569"
+                >
+                  <Text color="gray">{line.activity.detail.slice(-12000)}</Text>
+                </Box>
+              ) : null}
+            </Box>
+          ) : line.role === "divider" ? (
+            <Text color="#334155">{"─".repeat(dividerLength)}</Text>
+          ) : line.role === "meta" ? (
+            <Box marginLeft={1}><Text color="#64748B">{line.text}</Text></Box>
+          ) : line.role === "artifact" ? (
+            <Box gap={1}>
+              <Text color="#C084FC" bold>📦 Artifact:</Text>
+              <Text color="#DDD6FE" underline>{line.text}</Text>
+            </Box>
+          ) : line.role === "error" ? (
+            <Box gap={1}>
+              <Text color="#F87171" bold>✖ Pace:</Text>
+              <Box flexShrink={1}><Text color="#EF4444">{line.text}</Text></Box>
+            </Box>
+          ) : (
+            <Text color="gray">{line.text}</Text>
+          )}
+        </Box>
+      ))}
+    </Box>
+  );
 }
