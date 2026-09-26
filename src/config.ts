@@ -82,5 +82,11 @@ export function parseConfig(value: unknown): Config {
     throw new Error("defaultRoute is not in configured model options");
   if (value.routingMode !== "auto" && value.routingMode !== "manual")
     throw new Error("routingMode must be auto or manual");
-  return { models, defaultRoute, routingMode: value.routingMode };
+  if (value.trustedFolders !== undefined && (!Array.isArray(value.trustedFolders) || !value.trustedFolders.every((path: unknown) => typeof path === "string" && path.length > 0)))
+    throw new Error("trustedFolders must be a list of folder paths");
+  if (value.skillFolder !== undefined && (typeof value.skillFolder !== "string" || !value.skillFolder.length))
+    throw new Error("skillFolder must be a folder path");
+  return { models, defaultRoute, routingMode: value.routingMode,
+    trustedFolders: value.trustedFolders as string[] | undefined,
+    skillFolder: value.skillFolder as string | undefined };
 }

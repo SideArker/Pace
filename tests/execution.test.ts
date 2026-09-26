@@ -138,14 +138,14 @@ it('reads usage from the SDK turn-completed event', async () => {
   };
   const savedProjectPath = newSession(process.cwd(), 'auto').projectPath;
   const actualProjectPath = await realpath(savedProjectPath);
-  const result = await runner.run('Create a planning artifact', savedProjectPath, { model: 'configured', effort: 'medium' }, undefined, () => {});
+  const result = await runner.run('Create a planning artifact', savedProjectPath, { model: 'configured', effort: 'medium' }, undefined, () => {}, undefined, 'main', [actualProjectPath]);
   expect(result).toMatchObject({ threadId: 'thread-1', result: 'done', usage });
   expect(receivedPrompt).toContain('.pace/artifacts/');
-  expect(options).toMatchObject({ workingDirectory: actualProjectPath, sandboxMode: 'workspace-write', approvalPolicy: 'never', networkAccessEnabled: false, model: 'configured', modelReasoningEffort: 'medium' });
+  expect(options).toMatchObject({ workingDirectory: actualProjectPath, sandboxMode: 'workspace-write', approvalPolicy: 'never', networkAccessEnabled: false, model: 'configured', modelReasoningEffort: 'medium', additionalDirectories: [actualProjectPath] });
   await runner.run('follow-up', savedProjectPath, { model: 'gpt-6-luna', effort: 'low' }, 'thread-1', () => {});
   expect(options).toMatchObject({ model: 'gpt-6-luna', modelReasoningEffort: 'low' });
   await runner.run('side question', savedProjectPath, { model: 'gpt-6-luna', effort: 'low' }, undefined, () => {}, undefined, 'side');
-  expect(options).toMatchObject({ sandboxMode: 'read-only', approvalPolicy: 'never' });
+  expect(options).toMatchObject({ sandboxMode: 'read-only', approvalPolicy: 'never', additionalDirectories: [] });
   expect(receivedPrompt).toBe('side question');
 });
 it('gives Codex an independent Vex MCP launch without exposing the key value', () => {

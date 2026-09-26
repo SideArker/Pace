@@ -27,6 +27,8 @@ export interface CodexRunner {
     threadId: string | undefined,
     onProgress: (progress: Progress) => void | Promise<void>,
     signal?: AbortSignal,
+    mode?: "main" | "side",
+    trustedFolders?: string[],
   ): Promise<Execution>;
 }
 export function eventProgress(event: ThreadEvent): Progress | undefined {
@@ -83,6 +85,7 @@ export class SdkRunner implements CodexRunner {
     onProgress: (progress: Progress) => void | Promise<void>,
     signal?: AbortSignal,
     mode: "main" | "side" = "main",
+    trustedFolders: string[] = [],
   ): Promise<Execution> {
     const options: ThreadOptions = {
       // Session keys are case-folded on Windows; the native sandbox needs the
@@ -93,6 +96,7 @@ export class SdkRunner implements CodexRunner {
       networkAccessEnabled: false,
       model: route.model,
       modelReasoningEffort: route.effort,
+      additionalDirectories: mode === "main" ? trustedFolders : [],
     };
     const thread = threadId
       ? this.codex.resumeThread(threadId, options)

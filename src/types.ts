@@ -11,6 +11,8 @@ export type Config = {
   models: ModelOption[];
   defaultRoute: Route;
   routingMode: "auto" | "manual";
+  trustedFolders?: string[];
+  skillFolder?: string;
 };
 export type TurnSummary = {
   prompt: string;
