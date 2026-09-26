@@ -36,7 +36,7 @@ const commands = [
   "/exit",
 ];
 const modelCatalog = ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra"];
-const spinner = ["|", "/", "-", "\\"];
+const spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const folderArgument = (value: string) => value.trim().replace(/^(?:"(.*)"|'(.*)')$/, (_match, double: string | undefined, single: string | undefined) => double ?? single ?? value);
 const project = process.cwd();
 const store = new PaceStore();
@@ -639,16 +639,11 @@ export default function App({ onClear }: { onClear: () => void }) {
   return (
     <Box flexDirection="column" paddingX={1}>
       {showHeader ? <Header project={project} vexState={vexState} width={stdout.columns ?? 80} /> : null}
-      <Transcript lines={lines} outputsExpanded={outputsExpanded} detailsExpanded={detailsExpanded} rows={stdout.rows ?? 24} scrollBack={scrollBack} />
+      <Transcript lines={lines} outputsExpanded={outputsExpanded} detailsExpanded={detailsExpanded} rows={stdout.rows ?? 24} scrollBack={scrollBack} width={stdout.columns ?? 80} />
       {modelMenu ? <ModelMenu mode={modelMenu} models={menuModels} selectedModel={menuModel} selectedIndex={menuIndex} config={config} /> : null}
       {resumeMenu ? <ResumeMenu choices={resumeChoices} selectedIndex={menuIndex} /> : null}
       {busy || shellJobs ? (
-        <Text dimColor>
-          {spinner[tick % spinner.length]} {status}
-          {shellJobs
-            ? ` · ${shellJobs} Bash command${shellJobs === 1 ? "" : "s"} running`
-            : ""}
-        </Text>
+        <Box gap={1}><Text color="#59E6A7" bold>{spinner[tick % spinner.length]}</Text><Text color="#38BDF8">{status}</Text>{shellJobs ? <Text color="#FBBF24">· ⚡ {shellJobs} Bash command{shellJobs === 1 ? "" : "s"} running</Text> : null}</Box>
       ) : null}
       <Box marginTop={1}>
         <Composer value={draft} onChange={value => { setDraft(value); setSelection(0); }} onSubmit={value => { void submit(value); }} history={history}

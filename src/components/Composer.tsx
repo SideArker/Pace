@@ -60,8 +60,39 @@ export function Composer({ value, onChange, onSubmit, history, disabled, shellMo
   const before = value.slice(0, cursor);
   const at = value[cursor] ?? " ";
   const after = value.slice(cursor + (cursor < value.length ? 1 : 0));
-  return <Box flexDirection="column">
-    <Box><Text color="greenBright" bold>{shellMode ? "! " : "❯ "}</Text><Text color="white">{value ? before : ""}</Text><Text inverse>{value ? at : placeholder[0] ?? " "}</Text><Text color={value ? "white" : "gray"}>{value ? after : placeholder.slice(1)}</Text></Box>
-    {value.includes("\n") ? <Text color="gray">Shift+Enter/Ctrl+Enter newline · Enter send</Text> : null}
-  </Box>;
+  const hasGhost = !!(completion && value && completion.startsWith(value) && cursor === value.length);
+  const ghostText = hasGhost ? completion.slice(value.length) : "";
+
+  return (
+    <Box flexDirection="column">
+      <Box>
+        {shellMode ? (
+          <Box marginRight={1}>
+            <Text backgroundColor="#D97706" color="#000000" bold> BASH </Text>
+            <Text color="#FBBF24" bold> !</Text>
+          </Box>
+        ) : (
+          <Box marginRight={1}>
+            <Text color="#59E6A7" bold>❯</Text>
+          </Box>
+        )}
+        <Text color="white">{value ? before : ""}</Text>
+        <Text inverse color={value ? "#59E6A7" : "gray"}>
+          {value ? at : placeholder[0] ?? " "}
+        </Text>
+        <Text color={value ? "white" : "gray"}>
+          {value ? after : placeholder.slice(1)}
+        </Text>
+        {hasGhost ? (
+          <Text color="#64748B" italic>
+            {ghostText}
+            <Text color="#475569" dimColor> (Tab)</Text>
+          </Text>
+        ) : null}
+      </Box>
+      {value.includes("\n") ? (
+        <Text color="#64748B">Shift+Enter / Ctrl+Enter newline · Enter send</Text>
+      ) : null}
+    </Box>
+  );
 }
