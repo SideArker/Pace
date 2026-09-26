@@ -7,6 +7,7 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { ModelOption, TurnSummary } from '../types.js';
 import { PRICE_SNAPSHOT, modelRates } from '../core/pricing.js';
 import { routeChoices, type RoutingChoice } from '../core/router.js';
+import { DEFAULT_ROUTING_PROMPTS, type RoutingPrompts } from '../core/routing-prompts.js';
 
 const require = createRequire(import.meta.url);
 export function vexServerPath(): string | undefined {
@@ -23,55 +24,80 @@ export type VexRequest = {
   constraints: string;
   decisionType: 'routing';
 };
-const effortCapability: Record<string, string> = {
-  minimal: 'short direct response with minimal reasoning',
-  low: 'focused lookup, narrow repository reading, or routine synthesis',
-  medium: 'multi-file reading, small edits, and moderate synthesis',
-  high: 'substantial implementation or detailed multi-step reasoning',
-  xhigh: 'difficult architecture, debugging, or sensitive implementation',
-  ultra: 'hardest work with automatic task delegation',
-  persistent: 'long-running work that needs proactive follow-through',
-};
-const modelCapability: Record<string, string> = {
-  'gpt-6-luna': 'efficient direct factual answers, focused work, repository scouting, and straightforward plans',
-  'gpt-6-sol': 'complex coding and agentic work; Sol High is the quality baseline',
-  'gpt-6-astra': 'most demanding end-to-end work',
-};
-function taskContext(prompt: string, turns: TurnSummary[], models: ModelOption[]) {
+function taskContext(
+  prompt: string,
+  turns: TurnSummary[],
+  models: ModelOption[],
+  prompts: RoutingPrompts,
+) {
   return {
     originalRequest: prompt,
-    recentConversation: turns.slice(-6).map(turn => ({ user: turn.prompt, assistant: turn.result })),
-    availableModels: models.map(model => ({
+    recentConversation: turns
+      .slice(-6)
+      .map((turn) => ({ user: turn.prompt, assistant: turn.result })),
+    availableModels: models.map((model) => ({
       id: model.model,
-      capability: modelCapability[model.model] ?? 'Configured Codex model; capability unspecified',
-      supportedEfforts: model.efforts.map(effort => ({ id: effort, capability: effortCapability[effort] ?? 'Configured SDK effort' })),
+      capability:
+        prompts.modelCapabilities[model.model] ??
+        prompts.unknownModelCapability,
+      supportedEfforts: model.efforts.map((effort) => ({
+        id: effort,
+        capability:
+          prompts.effortCapabilities[effort] ?? prompts.unknownEffortCapability,
+      })),
       standardUsdPerMillionTokens: modelRates(model.model),
     })),
-    priceSnapshot: { checkedAt: PRICE_SNAPSHOT.checkedAt, source: PRICE_SNAPSHOT.source, processing: PRICE_SNAPSHOT.processing, context: PRICE_SNAPSHOT.context },
+    priceSnapshot: {
+      checkedAt: PRICE_SNAPSHOT.checkedAt,
+      source: PRICE_SNAPSHOT.source,
+      processing: PRICE_SNAPSHOT.processing,
+      context: PRICE_SNAPSHOT.context,
+    },
   };
 }
-export const shapeChoices: RoutingChoice[] = [
-  { id: 'single', description: 'One Codex agent completes requested deliverable. Prefer for self-contained answers and focused repository lookups that Luna can inspect and answer cheaply in one pass. Compare its full cost with both scout stages.' },
-  { id: 'scout', description: 'Luna read-only scout identifies relevant files, behavior, and tests; second agent completes the request from a structured handoff. Use when broad or uncertain repository exploration can materially reduce completion-agent work. Include both stages in total Codex cost.' },
-  { id: 'plan_execute', description: 'Planning agent produces actionable plan; execution agent completes requested implementation. Use only when user requests implementation and planning improves quality and total cost.' },
-  { id: 'clarify', description: 'Ask user to clarify requested outcome when deliverable cannot be determined from original request and conversation.' },
-];
-export function shapeRequest(prompt: string, turns: TurnSummary[], models: ModelOption[]): VexRequest {
-  const options = models.some(model => model.model === 'gpt-6-luna')
-    ? shapeChoices : shapeChoices.filter(choice => choice.id !== 'scout');
+export const shapeChoices: RoutingChoice[] = Object.entries(
+  DEFAULT_ROUTING_PROMPTS.workflow.choices,
+).map(([id, description]) => ({ id, description }));
+export function shapeRequest(
+  prompt: string,
+  turns: TurnSummary[],
+  models: ModelOption[],
+  prompts = DEFAULT_ROUTING_PROMPTS,
+): VexRequest {
+  const configuredChoices = Object.entries(prompts.workflow.choices).map(
+    ([id, description]) => ({ id, description }),
+  );
+  const options = models.some((model) => model.model === "gpt-6-luna")
+    ? configuredChoices
+    : configuredChoices.filter((choice) => choice.id !== "scout");
   return {
-    question: 'Using the original request and recent conversation, which Codex workflow completes the latest requested deliverable at the least total Codex cost while meeting Sol High quality?',
-    context: taskContext(prompt, turns, models), options, decisionType: 'routing',
-    constraints: 'Infer requested deliverable from original words and conversation. For follow-up questions, use the most recent relevant user and assistant turns to resolve pronouns and omitted nouns. Ask for clarification only if no actionable interpretation follows from that context; uncertainty between plausible interpretations is not enough when one clear referent exists. A complex topic alone does not imply implementation. A request only for a plan must choose single, scout, or clarify; never plan_execute. Scout requires enabled Luna. Compare expected total Codex cost of every stage. Ignore Vex cost.',
+    question: prompts.workflow.question,
+    context: taskContext(prompt, turns, models, prompts),
+    options,
+    decisionType: "routing",
+    constraints: prompts.workflow.constraints,
   };
 }
-export function stageRequest(prompt: string, turns: TurnSummary[], models: ModelOption[], objective: string, handoff?: string, availableModels = models): VexRequest {
+export function stageRequest(
+  prompt: string,
+  turns: TurnSummary[],
+  models: ModelOption[],
+  objective: string,
+  handoff?: string,
+  availableModels = models,
+  prompts = DEFAULT_ROUTING_PROMPTS,
+): VexRequest {
   const options = routeChoices(models);
   return {
-    question: 'Which supported Codex model and effort together can meet Sol High quality for this stage at the least expected Codex cost?',
-    context: { ...taskContext(prompt, turns, availableModels), stageObjective: objective, ...(handoff ? { priorStageHandoff: handoff } : {}) },
-    options, decisionType: 'routing',
-    constraints: 'Choose one valid model and effort pair. Sol High is the quality target, not a required model. For short self-contained answers, consider Luna Low first when it can meet that quality; do not pay for Sol merely because it is the baseline. Account for stage scope and expected token use at current prices. Reasoning output is part of output cost. Use prior handoff when supplied. Do not turn a plan-only request into implementation.',
+    question: prompts.stage.question,
+    context: {
+      ...taskContext(prompt, turns, availableModels, prompts),
+      stageObjective: objective,
+      ...(handoff ? { priorStageHandoff: handoff } : {}),
+    },
+    options,
+    decisionType: "routing",
+    constraints: prompts.stage.constraints,
   };
 }
 

@@ -4,6 +4,7 @@ import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isRecord } from './config.js';
 import { PaceStore } from './core/sessions.js';
+import { loadRoutingPrompts } from './core/routing-prompts.js';
 import { pricedModels, PRICE_SNAPSHOT } from './core/pricing.js';
 import { chosenRoute, validateDecision, type RoutingDecision } from './core/router.js';
 import { shapeRequest, stageRequest, VexRouter, type VexRequest } from './integrations/vex.js';
@@ -101,6 +102,7 @@ async function main() {
   const cases = suite.cases.filter(item => !options.selectedCase || item.id === options.selectedCase);
   if (!cases.length) throw new Error('No matching routing cases');
   const config = await new PaceStore().loadConfig();
+  const prompts = loadRoutingPrompts();
   const models = pricedModels(config.models.filter(model => model.enabled !== false));
   if (!models.length || models.reduce((sum, model) => sum + model.efforts.length, 0) > 12)
     throw new Error('Routing benchmark needs 1 to 12 enabled model and effort pairs');
@@ -116,6 +118,7 @@ async function main() {
     const routerSources = await Promise.all(['src/integrations/vex.ts', 'src/core/router.ts'].map(path => readFile(resolve(path))));
     await writeFile(join(options.out, 'manifest.json'), JSON.stringify({ suiteSha256: createHash('sha256').update(suiteText).digest('hex'),
       routerSourceSha256: createHash('sha256').update(Buffer.concat(routerSources)).digest('hex'),
+      routingPromptsSha256: createHash('sha256').update(JSON.stringify(prompts)).digest('hex'),
       suite: options.suite, cases: cases.length, repeats: options.repeat, shapeOnly: options.shapeOnly,
       models, simulatedHandoffForSplitStages: !options.shapeOnly, priceSnapshot: PRICE_SNAPSHOT,
       startedAt: new Date().toISOString() }, null, 2) + '\n');
@@ -144,7 +147,7 @@ async function main() {
           acceptable: item.acceptable, decisions: [], vexCalls: 0, retries: 0, elapsedMs: 0 };
         try {
           const turns = turnsFor(item);
-          const shape = (await decide(shapeRequest(item.prompt, turns, models), 'workflow', run)).choice;
+          const shape = (await decide(shapeRequest(item.prompt, turns, models, prompts), 'workflow', run)).choice;
           run.shape = shape;
           run.acceptableHit = item.acceptable.includes(shape);
           run.preferredHit = item.preferred === shape;
@@ -153,7 +156,7 @@ async function main() {
             if (shape !== 'single') {
               const sideModels: ModelOption[] = shape === 'scout' ? models.filter(model => model.model === 'gpt-6-luna') : models;
               const objective = shape === 'scout' ? 'Read-only repository scout' : 'Read-only implementation plan';
-              const sideRequest = stageRequest(item.prompt, turns, sideModels, objective, undefined, models);
+              const sideRequest = stageRequest(item.prompt, turns, sideModels, objective, undefined, models, prompts);
               const side = run.decisions.length;
               const sideDecision = await decide(sideRequest, objective, run);
               run.decisions[side].route = chosenRoute(sideDecision.choice, sideModels);
@@ -161,7 +164,7 @@ async function main() {
                 findings: [], nextSteps: [], checks: [], risks: [] });
             }
             const objective = shape === 'single' ? 'Complete the original user request' : 'Complete the original user request using the prior structured handoff';
-            const completionRequest = stageRequest(item.prompt, turns, models, objective, handoff);
+            const completionRequest = stageRequest(item.prompt, turns, models, objective, handoff, models, prompts);
             const completion = run.decisions.length;
             const completionDecision = await decide(completionRequest, objective, run);
             run.decisions[completion].route = chosenRoute(completionDecision.choice, models);
