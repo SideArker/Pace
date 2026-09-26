@@ -8,13 +8,14 @@ import { join } from "node:path";
 import { PaceStore } from "./core/sessions.js";
 import { vexServerPath } from "./integrations/vex.js";
 import App from "./app.js";
+import { execTurn } from "./core/exec.js";
 const require = createRequire(import.meta.url);
 const version = (require("../package.json") as { version: string }).version;
 const args = process.argv.slice(2);
 if (args.includes("--version")) console.log(`pace ${version}`);
 else if (args.includes("--help"))
   console.log(
-    `Pace ${version} · independent Codex SDK terminal client\n\nUsage: pace [doctor|--help|--version]\n\nInteractive commands: /help /models /auto /new /resume /usage /btw <question> /artifacts /clear /exit\nBash: ! <command> or ! to toggle Bash mode\nInput: Shift+Enter or Ctrl+Enter for newline, arrows for history, Ctrl+O outputs, Ctrl+E details`,
+    `Pace ${version} · independent Codex SDK terminal client\n\nUsage: pace [doctor|exec "prompt"|--help|--version]\n\nInteractive commands: /help /models /auto /new /resume /usage /btw <question> /artifacts /trust /skills /route /stats /clear /exit\nBash: ! <command> or ! to toggle Bash mode\nInput: Shift+Enter or Ctrl+Enter for newline, arrows for history, Ctrl+O outputs, Ctrl+E details`,
   );
 else if (args[0] === "doctor") {
   const notices: string[] = [];
@@ -56,6 +57,8 @@ else if (args[0] === "doctor") {
   console.log(
     "Codex SDK: installed; authentication and runtime need a live turn to verify",
   );
+} else if (args[0] === "exec") {
+  process.exitCode = await execTurn(args.slice(1).join(" "));
 } else if (args.length) {
   console.error(`Unknown command: ${args.join(" ")}. Run pace --help.`);
   process.exitCode = 2;
