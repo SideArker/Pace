@@ -110,6 +110,14 @@ When you ask Codex to create an artifact, Pace tells it to save a Markdown worki
 
 Bash mode runs **your typed command** through Bash in the project directory, outside Codex's sandbox. On Windows it uses Git Bash at `C:\Program Files\Git\bin\bash.exe`; on macOS/Linux it uses `bash` from PATH. Command output appears when the process exits and is capped at 32,768 characters. Bash commands may run while Codex works, so concurrent changes to the same files can conflict. The SDK requires a Git repository by default, and a real Codex turn requires working credentials; neither is simulated by the automated tests.
 
+## Source layout
+
+- `src/core/routing/` holds route validation, prices, and routing prompts.
+- `src/core/vex/` holds the Vex MCP client and request builders.
+- `src/core/system/` holds file, Git, folder, and skill helpers.
+- `src/core/` keeps turn orchestration, execution, and session storage at the top level.
+- `benchmark/` groups suites, the execution runner, grading tools, and reports. See [benchmark/README.md](benchmark/README.md).
+
 ## Verify
 
 ```sh
