@@ -1,50 +1,69 @@
-# Pace benchmark
+# Pace benchmarking
 
-## Routing decisions
+Benchmarks answer three different questions. Keep their results separate.
 
-Run the route-only suite before changing workflow guidance:
+| Question | Command | Evidence |
+| --- | --- | --- |
+| Does Vex select a plausible workflow and valid stage routes? | `benchmark:routing` | Choices, probabilities, retries, time, Vex calls and cost. No Codex execution. |
+| What do the workflows produce on the same task? | `benchmark` | Answers, diffs, checks, stage usage, cost estimates, time, reports and Vex calls. |
+| Which completed runs meet the task rubric at lower cost? | `benchmark:grade` | Manual quality grades and matched, quality-passing comparisons. |
+
+## Source layout
+
+- `routing-suite.json`: 60-case development set for shape and stage choices.
+- `routing-holdout.json`: 24-case holdout; do not tune against it.
+- `pilot.json`: short executed comparison.
+- `validation.json`: 12 executed tasks on a fixed Pace commit.
+- `agentic.json`: eight current-repository tasks covering scouting, planning, behavior preservation, report repair, and clarification. Each run records the resolved `HEAD` commit.
+- `types.ts`, `suite.ts`, `execute.ts`, `summary.ts`, `workflows.ts`: executed benchmark runner.
+- `grade.ts`: manual quality grading and cost analysis.
+- `results/`: ignored run artifacts.
+
+The route-only runner remains at `src/routing-benchmark.ts`. It exercises the same routing request builders and validator as Pace. `npm run benchmark:check` type-checks the TypeScript benchmark modules and Pace source.
+
+## 1. Routing decisions
 
 ```powershell
 npm run benchmark:routing -- --suite benchmark/routing-suite.json --repeat 3
+npm run benchmark:routing -- --suite benchmark/routing-holdout.json --repeat 3
 ```
 
-This calls Vex without starting Codex agents. The development suite contains 60 labeled requests across direct answers, repository lookups, implementation, plan-only requests, missing context, and requests resolved by recent conversation. Three repetitions yield 180 workflow choices; stage routing adds calls for non-clarification choices. Use `--case <id>` for one case, `--shape-only` to omit stage choices, or `--out <new-directory>` to choose a result path. Every run writes `runs.jsonl` as it goes, plus `summary.json`, `manifest.json`, and Vex statistics in an ignored results directory. Output directories must be new, so separate runs cannot mix results.
+Use `--case <id>` for one case, `--shape-only` to omit stage choices, or `--out <new-directory>` to set the result path. The runner records `manifest.json`, `runs.jsonl`, `summary.json`, and Vex statistics. It alternates case order on repetitions. Stage routing after a split uses a **simulated** report; this benchmark cannot establish scout quality or Codex savings.
 
-`acceptable` labels encode intent constraints and plausible workflows. `preferred` is a **hypothesis** about cost and quality, not ground truth. A single or scout route can both be acceptable for many repository tasks; only an executed paired benchmark can establish which costs less at equal quality. The suite uses a fixed, simulated report for second-stage routing and records that limitation in the manifest. Only the executed benchmark tests the scout's real report. Inspect per-case choices, probabilities, route pairs, failures, retries, time, and Vex cost. After tuning on the development suite, run the separate 24-case holdout once with `--suite benchmark/routing-holdout.json --repeat 3`. Do not tune on holdout results and report them as independent validation.
+`acceptable` labels encode intent constraints and plausible workflows. `preferred` is a cost hypothesis, not a measured best route. The 60-case development suite was used to tune guidance. Run the holdout after changing guidance, then use executed comparisons before claiming quality or savings. Do not use holdout results for further tuning and still describe them as independent validation.
 
-For more regular savings, tune guidance only when repeated routing errors point to a clear cause, then run this suite and the executed benchmark below. Require valid routes and plan-only intent compliance on every case. Compare **measured Codex cost among quality-passing runs** for single versus scout versus Sol High, including both stages and latency. Never infer a Codex savings percentage from this route-only suite or from Vex's probabilities alone.
-
-## Executed workflow comparison
-
-The benchmark compares three workflows on the **same literal prompt** and repository commit: plain Sol High, Vex-routed single agent, and Vex-routed scout plus completion. Each arm starts in a fresh Git clone and thread. The order alternates on repeated runs. The benchmark fixes workflow shape so each shape gets measured; Vex still routes every Codex stage. Codex can call Vex in routed arms.
-
-Run the pilot from the Pace checkout:
+## 2. Executed workflows
 
 ```powershell
-npm run benchmark -- --suite benchmark/pilot.json --repeat 1
-```
-
-Add `--include-auto` to execute Pace's actual Vex-selected workflow alongside the three fixed arms. Add `--include-luna` to execute a fixed Luna Low single-agent arm and check whether Vex missed a cheaper quality-passing model. `summary.json` then includes `autoMatched` and `lunaMatched` pairs with routes, cost, usage, and time against Sol High. Review each result and diff against the rubric before treating a pair as quality-passing. A route-only pass cannot substitute for this check.
-
-For broader executed evidence, use the 12-case validation suite. It spans direct answers, repository lookups, plan-only requests, and implementation, all on fixed Git commit `2fad436`:
-
-```powershell
+npm run benchmark -- --suite benchmark/pilot.json --repeat 2
 npm run benchmark -- --suite benchmark/validation.json --repeat 3 --include-auto --include-luna
-python benchmark/grade.py prepare <results-directory>
+npm run benchmark -- --suite benchmark/agentic.json --repeat 3 --include-auto
 ```
 
-Review each `run.json` answer, `diff.patch`, and check result. Set every `pass` field in `grades.json` to `true` or `false`, then run:
+Every arm receives the same literal prompt and starts from a fresh clone of the same resolved Git commit. Repetitions alternate arm order. Default arms are Sol High baseline, Vex-routed single, and Vex-routed Luna scout plus completion. `--include-auto` also runs Pace's chosen workflow. `--include-luna` adds fixed Luna Low to detect missed cheap single-agent routes. Vex routes model and effort for each routed Codex stage. The scout's validated report is the only scout context passed to completion.
+
+Use `--list` to preview tasks without starting agents. Use `--case <id>`, `--repeat <1-10>`, `--timeout-minutes <1-120>`, and `--out <directory>` to control a run. The suite may specify a repository, Git ref, setup commands, check commands, and a review rubric. A suite with `HEAD` resolves one commit at the start of a run. Commit source changes before benchmarking them; uncommitted repository changes are not cloned into arms.
+
+Each arm saves `run.json`, `events.jsonl`, `diff.patch`, and Vex statistics where applicable. The manifest saves the model configuration, routing prompt snapshot, resolved commits, and price snapshot. The runner writes `summary.json` after every arm, so interrupted runs still leave results. Run directories should be new; do not mix separate experiments.
+
+## 3. Grade completed work
 
 ```powershell
-python benchmark/grade.py report <results-directory>
+npm run benchmark:grade -- prepare <results-directory>
 ```
 
-`graded-summary.json` compares only pairs where both arms passed manual review and checks. It reports cost wins and regressions, aggregate and median savings, raw and cached tokens, time, selected shapes and routes, and Vex calls and cost separately. The helper refuses incomplete grades and does not overwrite existing grades. Twelve cases, three repetitions, and four arms mean 144 Codex runs; adding `--include-luna` makes 180. Use `--case <id>` for a smaller first pass.
+Inspect each answer, `diff.patch`, check output, and rubric. Set every `pass` in `grades.json` to `true` or `false`, with a short `notes` entry for failures. Then run:
 
-Use `--case usage-trace` for one case, `--repeat 3` for repeated pairs, `--timeout-minutes 12` for a per-run limit, and `--out <directory>` to choose a result directory. Results default to the ignored `benchmark/results/` directory. The suite supports a repository path relative to the invocation directory, suite or per-case Git ref, prompt, optional setup commands, optional check commands, and a review rubric. Setup and checks execute in each clone. If the source repository has `node_modules`, each clone receives a link to it so build and test commands use the same dependencies. A fixed commit is saved in the result manifest even when the suite uses `HEAD`.
+```powershell
+npm run benchmark:grade -- report <results-directory>
+```
 
-Each run saves `run.json`, raw SDK `events.jsonl`, a full `diff.patch`, and Vex stats when Vex made a decision. `summary.json` reports matched triples with complete Codex usage, per-stage routes, token cache breakdown, elapsed time, estimated Standard API cost, and Vex routing and agent call counts. The result manifest embeds the price snapshot. Input tokens include cached and cache-write input; output includes reasoning. Stage cost charges each input class once, using its stage model. Vex cost stays separate and does not influence routing. Actual Codex account billing is not exposed by the SDK, so dollar amounts are API-equivalent estimates for Standard, short-context processing.
+`graded-summary.json` compares only pairs where baseline and candidate both pass manual review and checks, with complete usage and cost. It rejects mismatched prompts or commits and incomplete grades. It reports pass counts, cost wins and regressions, aggregate and median savings, raw tokens, cached and cache-write input, output and reasoning tokens, elapsed time, selected shapes and routes, and Vex calls and cost. The script refuses to overwrite an existing `grades.json`.
 
-Check commands and the rubric help assess quality; passing broad build and test commands does not prove the requested behavior. Review each final answer and diff against its case rubric, record success per arm, then compare cost among successful arms. Repeat each task at least twice before changing routing guidance. A quality failure or cost regression calls for revised choice descriptions and another paired run.
+Build and test success alone do not establish requested behavior. For example, a previous Luna coding run passed tests but changed copy-on-parse behavior; manual review caught it. Grade answers and diffs against each task rubric. Record failures as failures even when they are cheap.
 
-The benchmark runs sequentially and may consume substantial Codex account allowance. It uses the existing Codex login and applies a per-run trust override for the temporary checkout. The baseline SDK configuration disables MCP servers. Do not mention Vex in a benchmark prompt when testing the no-Vex baseline against the Pace repository: the repository itself depends on `vex-mcp`, so an agent could invoke that package through a shell command. Do not share raw event logs without reviewing them: they can contain repository content and command output.
+## Reading cost and safety limits
+
+Codex dollar values are **estimated Standard API equivalents**, since actual account billing is unavailable to the SDK. Stage cost uses its own model's ordinary, cached, cache-write, and output rates; reasoning output is already in output. Workflow cost sums all recorded stages. Vex cost is measured separately and never enters routing optimization. Compare cost only among quality-passing runs; report latency and raw tokens separately.
+
+Runs are sequential and consume Codex account allowance. They use the existing Codex login. The baseline disables MCP servers; routed arms may call Vex, and those agent-initiated calls are counted separately from Pace routing calls. A repository under test can still invoke installed programs through shell commands. Review raw event logs before sharing them because they may contain source text or command output.

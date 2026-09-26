@@ -1,0 +1,48 @@
+{
+  "repository": ".",
+  "ref": "HEAD",
+  "cases": [
+    {
+      "id": "trace-scout-boundary",
+      "prompt": "Trace how Pace runs a read-only scout, validates its report, and passes information to the completion agent. Name the functions and files. Explain which scout state the completion agent can and cannot see. Do not edit files.",
+      "rubric": "Names the actual orchestration and SDK seams, distinguishes structured report from scout thread and tool history, does not invent validation guarantees, and leaves Git clean."
+    },
+    {
+      "id": "trace-routing-prices",
+      "prompt": "Trace how current model prices and supported efforts reach a Vex stage decision, then how a completed stage receives an estimated cost. Name the functions and files. Do not edit files.",
+      "rubric": "Explains model-effort pairs, price snapshot, stage usage, cached and cache-write input treatment, and output reasoning treatment accurately; Git stays clean."
+    },
+    {
+      "id": "trace-scout-failure",
+      "prompt": "Inspect the current scout handoff path. If the scout returns malformed JSON, what does Pace save, what reaches the main agent, and what does the user see? Cite code paths. Do not edit files.",
+      "rubric": "Accurately describes current failure handling and saved stage information without claiming a retry or completion that does not occur; Git stays clean."
+    },
+    {
+      "id": "plan-handoff-repair",
+      "prompt": "Inspect Pace's scout report parser and tests. Write an actionable plan for one bounded repair attempt when the scout returns malformed JSON. Include usage accounting, failure visibility, and a focused test. Stop after the plan; do not edit files.",
+      "rubric": "Plan identifies real code and test seams, keeps report facts untrusted, accounts for repair cost, stops without edits, and proposes a test that distinguishes recovery from silent fallback."
+    },
+    {
+      "id": "plan-quality-review",
+      "prompt": "Inspect the benchmark workflow and propose a plan to detect behavior regressions that still pass build and tests. Include a quality rubric and cost of any review stage. Do not implement.",
+      "rubric": "Plan references real benchmark seams, uses task-specific review, separates quality from cost and latency, and leaves Git clean."
+    },
+    {
+      "id": "build-handoff-repair",
+      "prompt": "When a read-only scout returns malformed handoff JSON, give it one bounded chance to repair the report in the same thread. Keep both attempts' usage and cost visible, fail explicitly if repair is invalid, and add focused tests. Preserve the completion agent's report-only context boundary.",
+      "checks": ["npm run build", "npm test"],
+      "rubric": "One repair attempt uses the scout thread, valid repair continues, repeated invalid output fails clearly, all scout usage and cost are counted, completion sees only validated report, focused tests pass."
+    },
+    {
+      "id": "build-targeted-clarification",
+      "prompt": "Make Pace ask a specific question when Vex chooses clarify. Use the missing outcome or referent from the request and recent conversation, while keeping Vex's routing choice forced and validated. Add focused tests for an isolated ambiguous request and a follow-up with context.",
+      "checks": ["npm run build", "npm test"],
+      "rubric": "Question names the actual missing detail, clear follow-ups are not needlessly clarified, forced-choice routing remains valid, and tests cover both contexts."
+    },
+    {
+      "id": "clarify-unknown-request",
+      "prompt": "Change that file too.",
+      "rubric": "Requests the missing file or change before editing, avoids guessing a referent, and leaves Git clean."
+    }
+  ]
+}
