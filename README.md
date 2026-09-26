@@ -26,7 +26,7 @@ pace doctor
 pace
 ```
 
-For development, use `npm run dev` instead of linking. `pace --help` and `pace --version` work without authentication. `pace doctor` checks Node, local storage, Git presence, SDK installation, Vex server installation, and configuration; only a live coding turn verifies authentication and runtime access.
+For development, use `npm run dev` instead of linking. Interactive `pace` opens a fresh conversation; use `/resume` to continue a saved one. `pace --help` and `pace --version` work without authentication. `pace doctor` checks Node, local storage, Git presence, SDK installation, Vex server installation, and configuration; only a live coding turn verifies authentication and runtime access.
 
 ## Chat commands
 
@@ -35,7 +35,7 @@ For development, use `npm run dev` instead of linking. `pace --help` and `pace -
 | `/help` | Show commands and Ctrl+C behavior |
 | `/models` | Open the model menu; Space toggles a model, Enter opens its reasoning levels |
 | `/auto` | Enable Vex routing for the next turn, including in a resumed conversation |
-| `/new` | Start a fresh Pace and Codex conversation |
+| `/new` | Alias for `/clear` |
 | `/resume` | Open a saved conversation picker for this project |
 | `/usage` | Refresh Codex account usage percentages |
 | `/artifacts` | List Markdown artifacts in this project's `.pace/artifacts` directory |
@@ -44,7 +44,7 @@ For development, use `npm run dev` instead of linking. `pace --help` and `pace -
 | `/skills <folder>` | Discover skills in a selected folder; `/skills` refreshes and `/skills off` clears it |
 | `/route` | Show the last recorded model, effort, and route explanation |
 | `/stats` | Show observed time, tokens, and failures for the current conversation's last 20 turns |
-| `/clear` | Clear the visible terminal transcript; keep the Codex conversation |
+| `/clear` | Clear the terminal, show the entry screen, and start a new conversation |
 | `/exit` | Quit |
 | `! <command>` | Run one Bash command in the project directory |
 | `!` | Toggle Bash input mode; type `!` again to return to Pace |
@@ -96,7 +96,7 @@ On Windows, a project-local link also works without a global Vex command: build 
 
 ## Sessions and safety
 
-Pace writes config and short, user-visible turn summaries under `~/.pace`; each project uses a SHA-256 path key and each conversation has its own atomic JSON file. Codex owns its thread history in `~/.codex/sessions`. Pace stores the Codex thread ID and resumes it for follow-ups and restarts. Auto mode routes each prompt; manual mode keeps its saved model and effort. Use `/new` to start a separate conversation. Corrupt session files are skipped with a warning.
+Pace writes config and short, user-visible turn summaries under `~/.pace`; each project uses a SHA-256 path key and each conversation has its own atomic JSON file. Codex owns its thread history in `~/.codex/sessions`. Interactive startup opens a new conversation. Pace stores the Codex thread ID for follow-ups within that conversation; after restarting, use `/resume` to continue it. `/clear` and `/new` return to the entry screen with a fresh conversation. Auto mode routes each prompt; manual mode keeps its saved model and effort. Corrupt session files are skipped with a warning.
 
 Pace runs SDK turns in `workspace-write` mode with network access disabled and approval policy `never`. This is a restricted mode: actions requiring higher permissions are denied rather than approved. The TypeScript SDK used here does not expose an in-app approval response interface, so Pace has no interactive approval prompt. It does not enable unrestricted access or bypass Codex safeguards.
 

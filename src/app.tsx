@@ -82,6 +82,12 @@ export default function App({ onClear }: { onClear: () => void }) {
   const activePrompt = useRef<string | undefined>(undefined);
   const sideAbort = useRef<AbortController | undefined>(undefined);
   const shells = useRef(new Set<{ kill: () => boolean }>());
+  const stopSideQuestion = () => {
+    const pending = sideAbort.current;
+    sideAbort.current = undefined;
+    pending?.abort();
+    setSideBusy(false);
+  };
   const add = (role: Line["role"], text: string) =>
     setLines((old) => [
       ...old,
@@ -151,32 +157,11 @@ export default function App({ onClear }: { onClear: () => void }) {
         notices.push(message),
       );
       const loaded = await localStore.loadConfig();
-      const saved = await localStore.latest(project);
       if (!active) return;
       setConfig(loaded);
-      setSession(saved ?? newSession(project, loaded.routingMode));
+      setSession(newSession(project, loaded.routingMode));
       for (const notice of notices) add("error", notice);
-      for (const turn of (saved?.turns ?? []).slice(-6)) {
-        add("you", turn.prompt);
-        add(turn.failed ? "error" : "codex", turn.result);
-        if (!turn.failed)
-          add(
-            "meta",
-            formatTurnFooter(
-              turn.route,
-              turn.routeNote,
-              turn.usage,
-              turn.durationMs,
-            ),
-          );
-        for (const artifact of turn.artifacts ?? []) add("artifact", artifact);
-        add("divider", "");
-      }
-      setStatus(
-        saved?.threadId
-          ? `Resumed ${saved.id.slice(0, 8)} · /help for commands`
-          : "Ready · /help for commands",
-      );
+      setStatus("Ready · /help for commands");
     };
     void load().catch((error) => {
       add(
@@ -262,8 +247,21 @@ export default function App({ onClear }: { onClear: () => void }) {
   const activateSession = async (chosen: Session) => {
     try {
       await store.activate(chosen);
+      stopSideQuestion();
+      onClear();
       setSession(chosen);
       setResumeMenu(false);
+      setLines([]);
+      setShowHeader(true);
+      setScrollBack(0);
+      for (const turn of chosen.turns.slice(-6)) {
+        add("you", turn.prompt);
+        add(turn.failed ? "error" : "codex", turn.result);
+        if (!turn.failed)
+          add("meta", formatTurnFooter(turn.route, turn.routeNote, turn.usage, turn.durationMs));
+        for (const artifact of turn.artifacts ?? []) add("artifact", artifact);
+        add("divider", "");
+      }
       add(
         "info",
         `Resumed ${chosen.id.slice(0, 8)} · ${chosen.route.model ?? "Codex default"}`,
@@ -370,12 +368,16 @@ export default function App({ onClear }: { onClear: () => void }) {
     try {
       const prompt = `Answer this side question using the brief conversation context below. Do not edit files or take action. This is separate from the main conversation.\n\nContext:\n${context || "(No previous turns)"}\n\nSide question: ${question}`;
       const result = await runner.run(prompt, session.projectPath, route, undefined, progress => {
+        if (sideAbort.current !== controller) return;
         if (progress.kind === "activity") activity({ ...progress, id: `side-${sideId}-${progress.id}` });
         if (progress.kind === "error") add("error", progress.text);
       }, controller.signal, "side");
-      add("side", result.result);
-    } catch (error) { add("error", `Side question failed: ${String(error)}`); }
-    finally { sideAbort.current = undefined; setSideBusy(false); }
+      if (sideAbort.current === controller) add("side", result.result);
+    } catch (error) {
+      if (sideAbort.current === controller) add("error", `Side question failed: ${String(error)}`);
+    } finally {
+      if (sideAbort.current === controller) { sideAbort.current = undefined; setSideBusy(false); }
+    }
   };
 
   const submit = async (raw: string) => {
@@ -420,11 +422,26 @@ export default function App({ onClear }: { onClear: () => void }) {
     setSelection(0);
     if (text.startsWith("/")) {
       const [command, ...parts] = text.split(/\s+/);
-      if (command === "/clear" && !parts.length) {
-        onClear();
-        setLines([]);
-        setShowHeader(false);
-        setScrollBack(0);
+      if (command === "/clear" || command === "/new") {
+        if (parts.length) {
+          add("error", `Type ${command} without arguments.`);
+          return;
+        }
+        const fresh = newSession(project, session.routingMode);
+        if (session.routingMode === "manual") fresh.route = session.route;
+        try {
+          await store.save(fresh);
+          stopSideQuestion();
+          onClear();
+          setSession(fresh);
+          setLines([]);
+          setShowHeader(true);
+          setShowUsage(false);
+          setScrollBack(0);
+          setStatus("Ready");
+        } catch (error) {
+          add("error", `Could not create conversation: ${String(error)}`);
+        }
         return;
       }
       if (command === "/exit") {
@@ -462,19 +479,6 @@ export default function App({ onClear }: { onClear: () => void }) {
         }
         setModelMenu("models");
         setMenuIndex(0);
-        return;
-      }
-      if (command === "/new") {
-        const fresh = newSession(project, session.routingMode);
-        if (session.routingMode === "manual") fresh.route = session.route;
-        try {
-          await store.save(fresh);
-          setSession(fresh);
-          add("info", `New conversation ${fresh.id.slice(0, 8)}`);
-          setStatus("Ready");
-        } catch (error) {
-          add("error", `Could not create conversation: ${String(error)}`);
-        }
         return;
       }
       if (command === "/artifacts") {
