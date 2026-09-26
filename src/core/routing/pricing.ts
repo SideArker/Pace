@@ -1,5 +1,5 @@
 import type { Usage } from '@openai/codex-sdk';
-import type { ModelOption, Route } from '../types.js';
+import type { ModelOption, Route } from '../../types.js';
 
 /** Standard, short-context API prices in USD per million tokens, checked 2026-09-26. */
 export const PRICE_SNAPSHOT = {

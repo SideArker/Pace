@@ -2,14 +2,14 @@ import type { Usage } from '@openai/codex-sdk';
 import type { Config, Route, Session, TurnSummary } from '../types.js';
 import type { CodexRunner, Progress } from '../integrations/codex.js';
 import { VexRouter, shapeChoices, shapeRequest, stageRequest, type VexRequest } from './vex.js';
-import { chosenRoute, validateDecision, type RoutingDecision } from './router.js';
-import { costForUsage, pricedModels } from './pricing.js';
+import { chosenRoute, validateDecision, type RoutingDecision } from './routing/router.js';
+import { costForUsage, pricedModels } from './routing/pricing.js';
 import { PaceStore } from './sessions.js';
 import { artifactSnapshot, changedArtifacts } from './artifacts.js';
 import { validRoute } from '../config.js';
 import { existingFolder } from './folders.js';
 import { discoverSkills, skillPrompt } from './skills.js';
-import { DEFAULT_ROUTING_PROMPTS, loadRoutingPrompts, type RoutingPrompts } from './routing-prompts.js';
+import { DEFAULT_ROUTING_PROMPTS, loadRoutingPrompts, type RoutingPrompts } from './routing/routing-prompts.js';
 
 export type StageRecord = { objective: string; route: Route; durationMs: number; usage?: Usage; estimatedCostUsd?: number; handoff?: string };
 export type RoutingRecord = { objective: string; choice: string; confidence: number; probabilities: Record<string, number>; attempts: number };

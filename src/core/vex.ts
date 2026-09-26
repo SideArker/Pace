@@ -5,9 +5,9 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { ModelOption, TurnSummary } from '../types.js';
-import { PRICE_SNAPSHOT, modelRates } from './pricing.js';
-import { routeChoices, type RoutingChoice } from './router.js';
-import { DEFAULT_ROUTING_PROMPTS, type RoutingPrompts } from './routing-prompts.js';
+import { PRICE_SNAPSHOT, modelRates } from './routing/pricing.js';
+import { routeChoices, type RoutingChoice } from './routing/router.js';
+import { DEFAULT_ROUTING_PROMPTS, type RoutingPrompts } from './routing/routing-prompts.js';
 
 const require = createRequire(import.meta.url);
 export function vexServerPath(): string | undefined {

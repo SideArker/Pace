@@ -4,9 +4,9 @@ import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isRecord } from './config.js';
 import { PaceStore } from './core/sessions.js';
-import { loadRoutingPrompts } from './core/routing-prompts.js';
-import { pricedModels, PRICE_SNAPSHOT } from './core/pricing.js';
-import { chosenRoute, validateDecision, type RoutingDecision } from './core/router.js';
+import { loadRoutingPrompts } from './core/routing/routing-prompts.js';
+import { pricedModels, PRICE_SNAPSHOT } from './core/routing/pricing.js';
+import { chosenRoute, validateDecision, type RoutingDecision } from './core/routing/router.js';
 import { shapeRequest, stageRequest, VexRouter, type VexRequest } from './core/vex.js';
 import type { ModelOption, TurnSummary } from './types.js';
 
@@ -53,7 +53,7 @@ export function parseRoutingSuite(value: unknown): RoutingSuite {
 
 function args(argv: string[]) {
   if (argv.includes('--help') || !argv.length) {
-    console.log('Usage: npm run benchmark:routing -- --suite benchmark/routing-suite.json [--repeat 3] [--case id] [--shape-only] [--out directory]');
+    console.log('Usage: npm run benchmark:routing -- --suite benchmark/suites/routing-suite.json [--repeat 3] [--case id] [--shape-only] [--out directory]');
     process.exit(argv.includes('--help') ? 0 : 2);
   }
   const get = (key: string) => {
@@ -115,7 +115,7 @@ async function main() {
   const runs: RoutingRun[] = [];
   try {
     await vex.verify();
-    const routerSources = await Promise.all(['src/core/vex.ts', 'src/core/router.ts'].map(path => readFile(resolve(path))));
+    const routerSources = await Promise.all(['src/core/vex.ts', 'src/core/routing/router.ts'].map(path => readFile(resolve(path))));
     await writeFile(join(options.out, 'manifest.json'), JSON.stringify({ suiteSha256: createHash('sha256').update(suiteText).digest('hex'),
       routerSourceSha256: createHash('sha256').update(Buffer.concat(routerSources)).digest('hex'),
       routingPromptsSha256: createHash('sha256').update(JSON.stringify(prompts)).digest('hex'),

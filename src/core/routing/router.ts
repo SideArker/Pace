@@ -1,5 +1,5 @@
-import type { ModelOption, Route } from '../types.js';
-import { isRecord } from '../config.js';
+import type { ModelOption, Route } from '../../types.js';
+import { isRecord } from '../../config.js';
 
 export type RoutingChoice = { id: string; description: string };
 export type RoutingDecision = { contractVersion: '1'; choice: string; abstained: false; confidence: number; probabilities: Record<string, number> };

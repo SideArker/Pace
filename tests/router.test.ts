@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 import { DEFAULT_CONFIG, parseConfig } from '../src/config.js';
-import { chosenRoute, routeChoices, validateDecision } from '../src/core/router.js';
-import { costForUsage, PRICE_SNAPSHOT } from '../src/core/pricing.js';
+import { chosenRoute, routeChoices, validateDecision } from '../src/core/routing/router.js';
+import { costForUsage, PRICE_SNAPSHOT } from '../src/core/routing/pricing.js';
 import { shapeRequest, stageRequest } from '../src/core/vex.js';
 import { parseRoutingSuite, summarizeRouting } from '../src/routing-benchmark.js';
 

@@ -2,9 +2,9 @@ import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { isRecord } from "../config.js";
+import { isRecord } from "../../config.js";
 
-const defaultPath = fileURLToPath(new URL("../../routing-prompts.default.json", import.meta.url));
+const defaultPath = fileURLToPath(new URL("../../../routing-prompts.default.json", import.meta.url));
 export const routingPromptFile = "routing-prompts.json";
 const choiceIds = ["single", "scout", "plan_execute", "clarify"] as const;
 
