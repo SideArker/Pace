@@ -2,7 +2,7 @@ import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Usage } from "@openai/codex-sdk";
-import type { Arm, Run } from "./types.js";
+import type { Arm, Run } from "../types.js";
 
 export type SavedRun = { run: Run; path: string };
 export type Grade = {

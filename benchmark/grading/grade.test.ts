@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { analyzeGrades, loadRuns, prepareGrades, reportGrades, type Grade, type Grades, type SavedRun } from "./grade.js";
-import type { Arm, Run } from "./types.js";
+import type { Arm, Run } from "../types.js";
 
 const root = "C:/results";
 const usage = {

@@ -16,7 +16,7 @@ Benchmarks answer three different questions. Keep their results separate.
 - `suites/validation.json`: 12 executed tasks on a fixed Pace commit.
 - `suites/agentic.json`: eight current-repository tasks covering scouting, planning, behavior preservation, report repair, and clarification. Each run records the resolved `HEAD` commit.
 - `types.ts` and `runner/`: shared types and executed benchmark runner.
-- `grade.ts`: manual quality grading and cost analysis.
+- `grading/`: manual quality grading and cost analysis.
 - `reports/`: written results from earlier benchmark runs.
 - `results/`: ignored run artifacts.
 

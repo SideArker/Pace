@@ -19,7 +19,7 @@
     "start": "node dist/cli.js",
     "benchmark": "tsx benchmark/runner/workflows.ts",
     "benchmark:routing": "npm run build && node dist/routing-benchmark.js",
-    "benchmark:grade": "tsx benchmark/grade.ts",
+    "benchmark:grade": "tsx benchmark/grading/grade.ts",
     "benchmark:check": "tsc -p benchmark/tsconfig.json",
     "prepare": "npm run build"
   },
