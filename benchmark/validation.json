@@ -29,8 +29,8 @@
     },
     {
       "id": "lookup-usage-bar",
-      "prompt": "Trace how Codex token usage reaches Pace's terminal usage bar. Include the event source, aggregation, and render component. Do not modify files.",
-      "rubric": "Names the SDK turn.completed usage, orchestrator or turn summary aggregation, and UsageBar rendering path accurately; Git stays clean."
+      "prompt": "Does per-turn Codex token usage feed Pace's terminal usage bar? Trace both paths, including event sources, aggregation or state, and render components. Do not modify files.",
+      "rubric": "Explains that per-turn SDK turn.completed usage feeds turn footer and stats while UsageBar displays app-server account rate limits; names relevant aggregation or state and render components; Git stays clean."
     },
     {
       "id": "plan-doctor-json",
@@ -50,9 +50,9 @@
     },
     {
       "id": "build-duplicate-efforts",
-      "prompt": "Make Pace configuration reject duplicate reasoning effort entries for one model instead of silently deduplicating them. Preserve valid configs and add a focused test.",
+      "prompt": "Make Pace configuration reject duplicate reasoning effort entries for one model instead of silently deduplicating them. Preserve valid configs, including copy-on-parse behavior, and add a focused test.",
       "checks": ["npm run build", "npm test"],
-      "rubric": "Duplicate efforts cause a clear parseConfig error, unique efforts remain valid, focused test exists, and build/tests pass."
+      "rubric": "Duplicate efforts cause a clear parseConfig error; unique efforts remain valid and are copied instead of aliasing input arrays; focused test exists; build/tests pass."
     },
     {
       "id": "build-invalid-usage",

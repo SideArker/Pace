@@ -55,7 +55,7 @@ def tokens(run):
 
 
 def score(root: Path, runs):
-    grades = json.loads((root / "grades.json").read_text(encoding="utf-8"))
+    grades = json.loads((root / "grades.json").read_text(encoding="utf-8-sig"))
     if grades.get("version") != 1 or not isinstance(grades.get("runs"), list):
         raise ValueError("grades.json must contain version 1 and runs")
     marked = {}
