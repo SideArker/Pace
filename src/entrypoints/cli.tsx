@@ -5,12 +5,12 @@ import { createRequire } from "node:module";
 import { access } from "node:fs/promises";
 import { constants } from "node:fs";
 import { join } from "node:path";
-import { PaceStore } from "./core/sessions.js";
-import { vexServerPath } from "./core/vex/client.js";
-import App from "./components/App.js";
-import { execTurn } from "./core/exec.js";
+import { PaceStore } from "../core/sessions.js";
+import { vexServerPath } from "../core/vex/client.js";
+import App from "../components/App.js";
+import { execTurn } from "../core/exec.js";
 const require = createRequire(import.meta.url);
-const version = (require("../package.json") as { version: string }).version;
+const version = (require("../../package.json") as { version: string }).version;
 const args = process.argv.slice(2);
 if (args.includes("--version")) console.log(`pace ${version}`);
 else if (args.includes("--help"))

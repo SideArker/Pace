@@ -123,8 +123,8 @@ Bash mode runs **your typed command** through Bash in the project directory, out
 ```sh
 npm run build
 npm test
-node dist/cli.js --help
-node dist/cli.js doctor
+node dist/entrypoints/cli.js --help
+node dist/entrypoints/cli.js doctor
 ```
 
 Tests use mocked providers and a temporary storage directory. No API credentials are required. The roadmap in [ROADMAP.md](ROADMAP.md) covers later releases; v0.1 has no server, database, provider framework, or automatic agents.
