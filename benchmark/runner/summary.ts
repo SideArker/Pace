@@ -1,6 +1,6 @@
 import type { Usage } from "@openai/codex-sdk";
-import { PRICE_SNAPSHOT } from "../src/core/pricing.js";
-import type { Arm, Run } from "./types.js";
+import { PRICE_SNAPSHOT } from "../../src/core/pricing.js";
+import type { Arm, Run } from "../types.js";
 
 export function total(usage?: Usage): number | undefined {
   return usage ? usage.input_tokens + usage.output_tokens : undefined;

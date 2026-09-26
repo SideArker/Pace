@@ -1,5 +1,5 @@
 import { join, resolve } from "node:path";
-import type { Suite } from "./types.js";
+import type { Suite } from "../types.js";
 
 export function args() {
   const values = process.argv.slice(2);

@@ -1,14 +1,14 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { PaceStore } from "../src/core/sessions.js";
-import { PRICE_SNAPSHOT } from "../src/core/pricing.js";
-import { loadRoutingPrompts } from "../src/core/routing-prompts.js";
-import { vexServerPath } from "../src/core/vex.js";
+import { PaceStore } from "../../src/core/sessions.js";
+import { PRICE_SNAPSHOT } from "../../src/core/pricing.js";
+import { loadRoutingPrompts } from "../../src/core/routing-prompts.js";
+import { vexServerPath } from "../../src/core/vex.js";
 import { args, parseSuite } from "./suite.js";
 import { runArm, git } from "./execute.js";
 import { total, summarize } from "./summary.js";
-import type { Arm, Run } from "./types.js";
+import type { Arm, Run } from "../types.js";
 
 async function main() {
   const options = args();
@@ -41,7 +41,7 @@ async function main() {
       commits.set(ref, await git(repository, `show -s --format=%H ${ref}`));
   }
   const sourcePaths = [
-    "benchmark/workflows.ts", "benchmark/execute.ts", "benchmark/summary.ts",
+    "benchmark/runner/workflows.ts", "benchmark/runner/execute.ts", "benchmark/runner/summary.ts",
     "src/core/orchestrator.ts", "src/core/vex.ts", "src/integrations/codex.ts",
   ];
   const sourceContents = await Promise.all(sourcePaths.map(path => readFile(resolve(path))));
