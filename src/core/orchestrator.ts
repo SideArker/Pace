@@ -1,7 +1,7 @@
 import type { Config, Route, Session } from "../types.js";
 import type { CodexRunner, Progress } from "../integrations/codex.js";
 import { VexRouter } from "../integrations/vex.js";
-import { lightweightFallback, policyRoute, selectRoute } from "./router.js";
+import { lightweightFallback, policyRoute, routingCandidates, selectRoute } from "./router.js";
 import { routeRequest } from "../integrations/vex.js";
 import { PaceStore } from "./sessions.js";
 import { artifactSnapshot, changedArtifacts } from "./artifacts.js";
@@ -52,33 +52,37 @@ export class Orchestrator {
       route = session.route;
       note = "Continuing manual route";
     } else {
+      const routeContext = routeRequest(prompt, enabled).context;
+      const candidates = routingCandidates(enabled, routeContext);
+      const fallback = candidates.find(model => model.model === usableConfig.defaultRoute.model) ?? candidates[0];
+      const candidateConfig = { ...usableConfig, models: candidates,
+        defaultRoute: fallback ? { model: fallback.model, effort: fallback.efforts[0] } : usableConfig.defaultRoute };
+      const simpleRoute = session.routingMode === "auto" ? lightweightFallback(routeContext, candidateConfig) : undefined;
       let suggestion: unknown;
-      const routeCount = enabled.reduce((count, model) => count + model.efforts.length, 0);
-      if (session.routingMode === "auto" && routeCount >= 2 && routeCount <= 12) {
+      const routeCount = candidates.length;
+      if (session.routingMode === "auto" && !simpleRoute && routeCount >= 2 && routeCount <= 12) {
         onProgress({ kind: "status", text: "Routing…" });
-        try { suggestion = await this.vex.choose(prompt, enabled); }
+        try { suggestion = await this.vex.choose(prompt, candidates); }
         catch (error) { throw new VexUnavailableError(error); }
       }
-      const routeContext = routeRequest(prompt, enabled).context;
-      const simpleRoute = session.routingMode === "auto" ? lightweightFallback(routeContext, usableConfig) : undefined;
       const selected = simpleRoute ? { route: simpleRoute, note: "Policy route for simple question or exploration" } : selectRoute(
-        { ...usableConfig, routingMode: session.routingMode },
+        { ...(session.routingMode === "auto" ? candidateConfig : usableConfig), routingMode: session.routingMode },
         suggestion,
         session.routingMode === "manual"
           ? session.route.model
             ? session.route
             : undefined
           : undefined,
-        session.routingMode === "auto" && routeCount >= 2 && routeCount <= 12
-          ? policyRoute(routeContext, usableConfig)
+        session.routingMode === "auto"
+          ? policyRoute(routeContext, candidateConfig)
           : undefined,
       );
       route = selected.route;
       note = selected.note;
-      if (session.routingMode === "auto" && routeCount < 2)
-        note = "Auto needs two configured routes; using configured default";
-      if (session.routingMode === "auto" && routeCount > 12)
-        note = "Vex supports at most 12 routes; using configured default";
+      if (session.routingMode === "auto" && !simpleRoute && routeCount < 2)
+        note = "Auto needs two configured models; using local effort policy";
+      if (session.routingMode === "auto" && !simpleRoute && routeCount > 12)
+        note = "Vex supports at most 12 models; using local policy";
       session.route = route;
       await save();
     }

@@ -26,7 +26,7 @@ it('resumes the saved SDK thread and route on follow-up', async () => {
   expect(calls).toEqual([{ id: undefined, route: config.defaultRoute }, { id: 'codex-thread-1', route: config.defaultRoute }]);
   const turns = (await store.latest('/example/project'))?.turns;
   expect(turns).toHaveLength(2);
-  expect(turns?.[1]?.routeNote).toContain('Auto needs two configured routes');
+  expect(turns?.[1]?.routeNote).toContain('Auto needs two configured models');
   expect(turns?.[1]?.durationMs).toEqual(expect.any(Number));
 });
 it('exposes SDK activity with stable IDs and the available reasoning summary', () => {
@@ -63,7 +63,7 @@ it('never routes to a disabled model and saves turn usage', async () => {
   session.route = { model: 'allowed', effort: 'high' };
   await expect(new Orchestrator(store, runner, vex).turn('again', session, { ...config, models: [{ model: 'allowed', efforts: ['low'] }] }, () => {})).rejects.toThrow('no longer enabled');
 });
-it('routes every auto turn while resuming the same Codex thread', async () => {
+it('uses Vex for coding and skips it for clear lightweight follow-ups while resuming the same Codex thread', async () => {
   dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
   const calls: { id?: string; route: Route }[] = [];
   const runner: CodexRunner = { async run(_prompt, _project, route, id) {
@@ -84,7 +84,7 @@ it('routes every auto turn while resuming the same Codex thread', async () => {
   const orchestrator = new Orchestrator(new PaceStore(dir), runner, vex);
   await orchestrator.turn('Build a service', session, config, () => {});
   const hello = await orchestrator.turn('hi', session, config, () => {});
-  expect(choices).toBe(2);
+  expect(choices).toBe(1);
   expect(calls).toEqual([
     { id: undefined, route: { model: 'gpt-6-sol', effort: 'medium' } },
     { id: 'thread-1', route: { model: 'gpt-6-luna', effort: 'low' } },
@@ -92,6 +92,24 @@ it('routes every auto turn while resuming the same Codex thread', async () => {
   expect(hello.note).toContain('Policy route');
   expect(session.turns.map(turn => turn.route)).toEqual(calls.map(call => call.route));
 });
+it('routes across models without making adjacent efforts compete in Vex', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  const config: Config = { routingMode: 'auto', defaultRoute: { model: 'gpt-6-sol', effort: 'medium' }, models: [
+    { model: 'gpt-6-sol', efforts: ['low', 'medium', 'high'], defaultEffort: 'medium' },
+    { model: 'gpt-6-luna', efforts: ['low', 'medium', 'high'], defaultEffort: 'low' },
+  ] };
+  const offered: string[][] = [];
+  const vex = { choose: async (_prompt: string, models: Config['models']) => {
+    offered.push(models.map(model => `${model.model}:${model.efforts.join(',')}`));
+    return { contractVersion: '1', choice: '0:medium', abstained: false, confidence: .82, probabilities: { '0:medium': .8, '1:low': .2 } };
+  } };
+  const seen: Route[] = [];
+  const runner: CodexRunner = { async run(_prompt, _project, route) { seen.push(route); return { result: 'done', completed: true }; } };
+  await new Orchestrator(new PaceStore(dir), runner, vex).turn('Fix a small bug', newSession('/example/project', 'auto'), config, () => {});
+  expect(offered).toEqual([['gpt-6-sol:medium', 'gpt-6-luna:low']]);
+  expect(seen).toEqual([{ model: 'gpt-6-sol', effort: 'medium' }]);
+});
+
 it('uses Sol high for sensitive architecture after Vex abstains but keeps greetings and factual questions on Luna low', async () => {
   dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
   const seen: Route[] = [];

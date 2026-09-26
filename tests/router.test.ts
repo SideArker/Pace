@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { lightweightFallback, policyRoute, selectRoute, sensitiveArchitectureFallback } from '../src/core/router.js';
+import { lightweightFallback, policyRoute, routingCandidates, selectRoute, sensitiveArchitectureFallback } from '../src/core/router.js';
 import { DEFAULT_CONFIG } from '../src/config.js';
 import { parseConfig, withModels } from '../src/config.js';
 import { routeRequest } from '../src/integrations/vex.js';
@@ -7,6 +7,20 @@ const config = parseConfig({ routingMode: 'auto', models: [
   { model: 'route-one', efforts: ['medium'] }, { model: 'route-two', efforts: ['high'] },
 ], defaultRoute: { model: 'route-one', effort: 'medium' } });
 describe('routing', () => {
+  it('offers Vex one locally selected effort per model', () => {
+    const models = [
+      { model: 'gpt-6-sol', efforts: ['low' as const, 'medium' as const, 'high' as const], defaultEffort: 'medium' as const },
+      { model: 'gpt-6-luna', efforts: ['low' as const, 'medium' as const, 'high' as const], defaultEffort: 'low' as const },
+    ];
+    const ordinary = routingCandidates(models, routeRequest('Fix a small bug', models).context);
+    expect(ordinary.map(model => model.efforts)).toEqual([['medium'], ['low']]);
+    expect(routeRequest('Fix a small bug', ordinary).options).toHaveLength(2);
+    expect(routeRequest('Fix a small bug', ordinary).question).toContain('model should handle');
+    const demanding = routingCandidates(models, routeRequest('Fix tests across multiple files', models).context);
+    expect(demanding.map(model => model.efforts)).toEqual([['high'], ['high']]);
+    expect(routingCandidates(models, routeRequest('Hello', models).context).map(model => model.efforts)).toEqual([['low'], ['low']]);
+    expect(routingCandidates(models, routeRequest('Find the test files', models).context).map(model => model.efforts)).toEqual([['low'], ['low']]);
+  });
   const result = (choice: string, confidence = .9, probabilities = { '0:medium': .1, '1:high': .9 }) => ({ contractVersion: '1', choice, abstained: false, confidence, probabilities });
   it('accepts only confident configured Vex choices', () => {
     expect(selectRoute(config, result('1:high')).route).toEqual({ model: 'route-two', effort: 'high' });

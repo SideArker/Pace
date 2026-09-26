@@ -39,11 +39,12 @@ export function routeRequest(prompt: string, models: ModelOption[]) {
     const tier = /luna/i.test(model) ? 'fast low-cost tier' : /sol/i.test(model) ? 'strong coding tier' : 'configured coding tier';
     return `${model} at ${effort} reasoning, ${tier}`;
   };
+  const modelOnly = models.length >= 2 && models.every(model => model.efforts.length === 1);
   return {
-    question: 'Which configured Codex model and effort should handle this task?',
+    question: modelOnly ? 'Which supplied Codex model should handle this task?' : 'Which configured Codex model and effort should handle this task?',
     context: { category, intent, requestLength: size, currentInfo, multipleFiles: /\b(all|multiple|several)\s+files?\b/i.test(prompt), testsMentioned: /\b(tests?|specs?)\b/i.test(prompt), complexDomain, architecture },
     options: models.flatMap((model, index) => model.efforts.map(effort => ({ id: `${index}:${effort}`, description: describe(model.model, effort) }))),
-    constraints: 'Choose the cheapest supplied route likely to complete the task. Greetings, short factual questions, current-information lookups, and narrow read-only file exploration use Luna low when available; needing a web lookup does not by itself require deeper reasoning. Ordinary coding, debugging, refactoring, and longer explanations use Sol medium; difficult multi-file work uses Sol high. Sensitive architecture and deeply complex work use Astra high if available, otherwise Sol high. Abstain only when no supplied route can reasonably handle the task; do not abstain merely because adjacent effort levels are close.',
+    constraints: `${modelOnly ? 'Pace has selected one reasoning effort per model. Choose the least costly model likely to complete the task. ' : 'Choose the cheapest supplied route likely to complete the task. '}Greetings, short factual questions, current-information lookups, and narrow read-only file exploration use Luna low when available; needing a web lookup does not by itself require deeper reasoning. Ordinary coding, debugging, refactoring, and longer explanations use Sol medium; difficult multi-file work uses Sol high. Sensitive architecture and deeply complex work use Astra high if available, otherwise Sol high. Abstain only when supplied context is insufficient to choose a capable model; do not abstain merely because multiple capable models exist.`,
   };
 }
 

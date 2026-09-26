@@ -1,6 +1,19 @@
-import type { Config, Route } from '../types.js';
+import type { Config, ModelOption, Route } from '../types.js';
 import { isRecord, validRoute } from '../config.js';
 export type RouteResult = { route: Route; note: string };
+export type RouteContext = { category: string; requestLength: string; complexDomain: boolean; architecture: boolean; multipleFiles: boolean; testsMentioned: boolean };
+
+export function routingCandidates(models: ModelOption[], context: RouteContext): ModelOption[] {
+  const simple = ['conversation', 'general_knowledge', 'exploration'].includes(context.category) && context.requestLength !== 'long' && !context.multipleFiles && !(context.complexDomain && context.architecture);
+  const demanding = !simple && ((context.complexDomain && context.architecture) || context.multipleFiles || context.testsMentioned || (context.requestLength === 'long' && !['general_knowledge', 'exploration'].includes(context.category)));
+  return models.map(model => {
+    const effort = demanding
+      ? model.efforts.find(value => value === 'high') ?? model.efforts.find(value => value === 'xhigh')
+      : simple ? model.efforts.find(value => value === 'low') : undefined;
+    const selected = effort ?? model.defaultEffort ?? model.efforts[0]!;
+    return { ...model, efforts: [selected], defaultEffort: selected };
+  });
+}
 function modelConsensus(config: Config, suggestion: unknown): Route | undefined {
   if (!isRecord(suggestion) || suggestion.contractVersion !== '1' || suggestion.abstained !== true || suggestion.reason !== 'Insufficient confidence or probability lead' || !isRecord(suggestion.probabilities)) return undefined;
   const ids = config.models.flatMap((model, index) => model.efforts.map(effort => `${index}:${effort}`));
