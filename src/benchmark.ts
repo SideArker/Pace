@@ -26,7 +26,7 @@ import type { StageRecord, RoutingRecord } from './core/orchestrator.js';
 import type { VexRequest } from './integrations/vex.js';
 
 const exec = promisify(execCallback);
-type Arm = "baseline" | "routed_single" | "routed_split" | "routed_auto";
+type Arm = "baseline" | "luna_low" | "routed_single" | "routed_split" | "routed_auto";
 type Case = {
   id: string;
   prompt: string;
@@ -73,7 +73,7 @@ function args() {
   const values = process.argv.slice(2);
   if (values.includes("--help") || !values.length) {
     console.log(
-      "Usage: npm run benchmark -- --suite <file.json> [--repeat 3] [--case id] [--include-auto] [--out directory] [--timeout-minutes 12]",
+      "Usage: npm run benchmark -- --suite <file.json> [--repeat 3] [--case id] [--include-auto] [--include-luna] [--out directory] [--timeout-minutes 12]",
     );
     process.exit(values.includes("--help") ? 0 : 2);
   }
@@ -92,6 +92,7 @@ function args() {
     timeoutMinutes,
     selectedCase: get("--case"),
     includeAuto: values.includes('--include-auto'),
+    includeLuna: values.includes('--include-luna'),
     out: resolve(
       get("--out") ??
         join(
@@ -254,6 +255,19 @@ function summarize(runs: Run[]) {
       stages: auto.stages, routing: auto.routing, vexCalls: auto.paceRoutingCalls,
       agentVexCalls: auto.agentVexCalls, rubric: auto.rubric }];
   });
+  const lunaMatched = [...pairs].flatMap(([key, pair]) => {
+    const baseline = pair.baseline;
+    const luna = pair.luna_low;
+    if (!baseline || !luna || baseline.error || luna.error || !baseline.usage || !luna.usage ||
+      baseline.estimatedCostUsd === undefined || luna.estimatedCostUsd === undefined ||
+      baseline.checks.some(check => check.exitCode !== 0) || luna.checks.some(check => check.exitCode !== 0) ||
+      luna.vexShellCommands.length || luna.mcpCalls.some(call => call.startsWith('vex/')))
+      return [];
+    return [{ key, baselineCostUsd: baseline.estimatedCostUsd, lunaCostUsd: luna.estimatedCostUsd,
+      savingFraction: 1 - luna.estimatedCostUsd / baseline.estimatedCostUsd,
+      baselineDurationMs: baseline.durationMs, lunaDurationMs: luna.durationMs,
+      baselineUsage: baseline.usage, lunaUsage: luna.usage, route: luna.route, rubric: luna.rubric }];
+  });
   const baselineTokens = matched.reduce(
     (sum, pair) => sum + pair.baselineTokens,
     0,
@@ -263,7 +277,9 @@ function summarize(runs: Run[]) {
   return {
     matched,
     autoMatched,
+    lunaMatched,
     incompleteAutoPairs: runs.some(run => run.arm === 'routed_auto') ? pairs.size - autoMatched.length : 0,
+    incompleteLunaPairs: runs.some(run => run.arm === 'luna_low') ? pairs.size - lunaMatched.length : 0,
     incompletePairs: pairs.size - matched.length,
     baselineTokens,
     singleTokens,
@@ -353,17 +369,17 @@ async function runArm(
         item?.type === "mcp_tool_call"
       )
         record.mcpCalls.push(`${item.server}/${item.tool}`);
-      if (arm === "baseline" && (event as { type?: string }).type === "item.completed" && item?.type === "command_execution" &&
+      if ((arm === "baseline" || arm === 'luna_low') && (event as { type?: string }).type === "item.completed" && item?.type === "command_execution" &&
         /\bjev(?:\.cmd|\.ps1)?\b|vex-mcp|vex_choose/i.test(item.command ?? ""))
         record.vexShellCommands.push(item.command ?? "");
     };
     const trustPath = fixture.toLowerCase().replace(/'/g, "''");
-    const baseOptions = arm !== "baseline" ? codexOptions(vexServerPath()) : {};
+    const baseOptions = arm !== "baseline" && arm !== 'luna_low' ? codexOptions(vexServerPath()) : {};
     const runner = new SdkRunner({
       ...baseOptions,
       configOverrides: [
         `projects.'${trustPath}'.trust_level="trusted"`,
-        ...(arm === "baseline" ? ["mcp_servers={}"] : []),
+        ...(arm === "baseline" || arm === 'luna_low' ? ["mcp_servers={}"] : []),
       ],
     }, onEvent);
     const observed: CodexRunner = {
@@ -408,8 +424,8 @@ async function runArm(
         }
       },
     };
-    if (arm === "baseline") {
-      record.route = { model: "gpt-6-sol", effort: "high" };
+    if (arm === "baseline" || arm === 'luna_low') {
+      record.route = arm === 'luna_low' ? { model: 'gpt-6-luna', effort: 'low' } : { model: "gpt-6-sol", effort: "high" };
       const result = await observed.run(
         task.prompt,
         fixture,
@@ -543,6 +559,7 @@ async function main() {
         repeats: options.repeat,
         timeoutMinutes: options.timeoutMinutes,
         includeAuto: options.includeAuto,
+        includeLuna: options.includeLuna,
         priceSnapshot: PRICE_SNAPSHOT,
       },
       null,
@@ -552,8 +569,8 @@ async function main() {
   for (const task of cases)
     for (let repetition = 1; repetition <= options.repeat; repetition++) {
       for (const arm of (repetition % 2
-        ? ["baseline", "routed_single", "routed_split", ...(options.includeAuto ? ["routed_auto"] : [])]
-        : [...(options.includeAuto ? ["routed_auto"] : []), "routed_split", "routed_single", "baseline"]) as Arm[]) {
+        ? ["baseline", ...(options.includeLuna ? ['luna_low'] : []), "routed_single", "routed_split", ...(options.includeAuto ? ["routed_auto"] : [])]
+        : [...(options.includeAuto ? ["routed_auto"] : []), "routed_split", "routed_single", ...(options.includeLuna ? ['luna_low'] : []), "baseline"]) as Arm[]) {
         console.log(`${task.id} ${repetition}/${options.repeat} ${arm}`);
         const run = await runArm(
           task,
@@ -578,7 +595,7 @@ async function main() {
     }
   const summary = summarize(runs);
   console.log(
-    `${summary.matched.length} matched triples; ${summary.incompletePairs} incomplete; ${summary.autoMatched.length} matched auto pairs. Review quality before selecting guidance.`,
+    `${summary.matched.length} matched triples; ${summary.incompletePairs} incomplete; ${summary.autoMatched.length} matched auto pairs; ${summary.lunaMatched.length} matched Luna pairs. Review quality before selecting guidance.`,
   );
   console.log(`Results: ${options.out}`);
 }

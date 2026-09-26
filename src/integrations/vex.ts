@@ -33,7 +33,7 @@ const effortCapability: Record<string, string> = {
   persistent: 'long-running work that needs proactive follow-through',
 };
 const modelCapability: Record<string, string> = {
-  'gpt-6-luna': 'efficient focused work, repository scouting, and straightforward plans',
+  'gpt-6-luna': 'efficient direct factual answers, focused work, repository scouting, and straightforward plans',
   'gpt-6-sol': 'complex coding and agentic work; Sol High is the quality baseline',
   'gpt-6-astra': 'most demanding end-to-end work',
 };
@@ -51,8 +51,8 @@ function taskContext(prompt: string, turns: TurnSummary[], models: ModelOption[]
   };
 }
 export const shapeChoices: RoutingChoice[] = [
-  { id: 'single', description: 'One Codex agent completes requested deliverable. Best when no repository reading is needed or a scout cannot reduce the completion agent\'s work.' },
-  { id: 'scout', description: 'Luna read-only scout identifies relevant files, behavior, and tests; second agent completes the request from a structured handoff. A small Luna scout can reduce expensive completion-agent exploration even for a focused repository lookup or feature. Include both stages in total Codex cost.' },
+  { id: 'single', description: 'One Codex agent completes requested deliverable. Prefer for self-contained answers and focused repository lookups that Luna can inspect and answer cheaply in one pass. Compare its full cost with both scout stages.' },
+  { id: 'scout', description: 'Luna read-only scout identifies relevant files, behavior, and tests; second agent completes the request from a structured handoff. Use when broad or uncertain repository exploration can materially reduce completion-agent work. Include both stages in total Codex cost.' },
   { id: 'plan_execute', description: 'Planning agent produces actionable plan; execution agent completes requested implementation. Use only when user requests implementation and planning improves quality and total cost.' },
   { id: 'clarify', description: 'Ask user to clarify requested outcome when deliverable cannot be determined from original request and conversation.' },
 ];
@@ -71,7 +71,7 @@ export function stageRequest(prompt: string, turns: TurnSummary[], models: Model
     question: 'Which supported Codex model and effort together can meet Sol High quality for this stage at the least expected Codex cost?',
     context: { ...taskContext(prompt, turns, availableModels), stageObjective: objective, ...(handoff ? { priorStageHandoff: handoff } : {}) },
     options, decisionType: 'routing',
-    constraints: 'Choose one valid model and effort pair. Account for stage scope and expected token use at current prices. Reasoning output is part of output cost. Use prior handoff when supplied. Do not turn a plan-only request into implementation.',
+    constraints: 'Choose one valid model and effort pair. Sol High is the quality target, not a required model. For short self-contained answers, consider Luna Low first when it can meet that quality; do not pay for Sol merely because it is the baseline. Account for stage scope and expected token use at current prices. Reasoning output is part of output cost. Use prior handoff when supplied. Do not turn a plan-only request into implementation.',
   };
 }
 
