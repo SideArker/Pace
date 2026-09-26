@@ -10,11 +10,11 @@ Benchmarks answer three different questions. Keep their results separate.
 
 ## Source layout
 
-- `routing-suite.json`: 60-case development set for shape and stage choices.
-- `routing-holdout.json`: 24-case holdout; do not tune against it.
-- `pilot.json`: short executed comparison.
-- `validation.json`: 12 executed tasks on a fixed Pace commit.
-- `agentic.json`: eight current-repository tasks covering scouting, planning, behavior preservation, report repair, and clarification. Each run records the resolved `HEAD` commit.
+- `suites/routing-suite.json`: 60-case development set for shape and stage choices.
+- `suites/routing-holdout.json`: 24-case holdout; do not tune against it.
+- `suites/pilot.json`: short executed comparison.
+- `suites/validation.json`: 12 executed tasks on a fixed Pace commit.
+- `suites/agentic.json`: eight current-repository tasks covering scouting, planning, behavior preservation, report repair, and clarification. Each run records the resolved `HEAD` commit.
 - `types.ts`, `suite.ts`, `execute.ts`, `summary.ts`, `workflows.ts`: executed benchmark runner.
 - `grade.ts`: manual quality grading and cost analysis.
 - `results/`: ignored run artifacts.
@@ -24,8 +24,8 @@ The route-only runner remains at `src/routing-benchmark.ts`. It exercises the sa
 ## 1. Routing decisions
 
 ```powershell
-npm run benchmark:routing -- --suite benchmark/routing-suite.json --repeat 3
-npm run benchmark:routing -- --suite benchmark/routing-holdout.json --repeat 3
+npm run benchmark:routing -- --suite benchmark/suites/routing-suite.json --repeat 3
+npm run benchmark:routing -- --suite benchmark/suites/routing-holdout.json --repeat 3
 ```
 
 Use `--case <id>` for one case, `--shape-only` to omit stage choices, or `--out <new-directory>` to set the result path. The runner records `manifest.json`, `runs.jsonl`, `summary.json`, and Vex statistics. It alternates case order on repetitions. Stage routing after a split uses a **simulated** report; this benchmark cannot establish scout quality or Codex savings.
@@ -35,9 +35,9 @@ Use `--case <id>` for one case, `--shape-only` to omit stage choices, or `--out 
 ## 2. Executed workflows
 
 ```powershell
-npm run benchmark -- --suite benchmark/pilot.json --repeat 2
-npm run benchmark -- --suite benchmark/validation.json --repeat 3 --include-auto --include-luna
-npm run benchmark -- --suite benchmark/agentic.json --repeat 3 --include-auto
+npm run benchmark -- --suite benchmark/suites/pilot.json --repeat 2
+npm run benchmark -- --suite benchmark/suites/validation.json --repeat 3 --include-auto --include-luna
+npm run benchmark -- --suite benchmark/suites/agentic.json --repeat 3 --include-auto
 ```
 
 Every arm receives the same literal prompt and starts from a fresh clone of the same resolved Git commit. Repetitions alternate arm order. Default arms are Sol High baseline, Vex-routed single, and Vex-routed Luna scout plus completion. `--include-auto` also runs Pace's chosen workflow. `--include-luna` adds fixed Luna Low to detect missed cheap single-agent routes. Vex routes model and effort for each routed Codex stage. The scout's validated report is the only scout context passed to completion.
