@@ -73,7 +73,7 @@ export class VexRouter {
     if (!this.serverPath && !this.transportFactory) throw new Error('Vex MCP server was not found');
     this.connecting = (async () => {
       const client = new Client({ name: 'pace', version: '0.1.0' });
-      const transport = this.transportFactory?.() ?? new StdioClientTransport({ command: process.execPath, args: [this.serverPath!, 'mcp', 'serve'], stderr: 'ignore', env: { ...getDefaultEnvironment(), ...(process.env.OPENROUTER_API_KEY ? { OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY } : {}) } });
+      const transport = this.transportFactory?.() ?? new StdioClientTransport({ command: process.execPath, args: [this.serverPath!, 'mcp', 'serve'], stderr: 'ignore', env: { ...getDefaultEnvironment(), ...(process.env.OPENROUTER_API_KEY ? { OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY } : {}), ...(process.env.VEX_STATS_PATH ? { VEX_STATS_PATH: process.env.VEX_STATS_PATH } : {}) } });
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         await Promise.race([client.connect(transport), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Vex MCP connection timed out')), 8000); })]);

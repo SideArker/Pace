@@ -73,10 +73,13 @@ export function eventProgress(event: ThreadEvent): Progress | undefined {
   return undefined;
 }
 export function codexOptions(serverPath: string | undefined): CodexOptions {
-  return serverPath ? { config: { mcp_servers: { vex: { command: process.execPath, args: [serverPath, 'mcp', 'serve'], env_vars: ['OPENROUTER_API_KEY'] } } } } : {};
+  return serverPath ? { config: { mcp_servers: { vex: { command: process.execPath, args: [serverPath, 'mcp', 'serve'], env_vars: process.env.VEX_STATS_PATH ? ['OPENROUTER_API_KEY', 'VEX_STATS_PATH'] : ['OPENROUTER_API_KEY'] } } } } : {};
 }
 export class SdkRunner implements CodexRunner {
-  private codex = new Codex(codexOptions(vexServerPath()));
+  private codex: Codex;
+  constructor(options: CodexOptions = codexOptions(vexServerPath()), private readonly onEvent?: (event: ThreadEvent) => void | Promise<void>) {
+    this.codex = new Codex(options);
+  }
   async run(
     prompt: string,
     project: string,
@@ -107,6 +110,7 @@ export class SdkRunner implements CodexRunner {
     let failure: string | undefined;
     let usage: Usage | undefined;
     for await (const event of events) {
+      await this.onEvent?.(event);
       const progress = eventProgress(event);
       if (event.type === "thread.started")
         await onProgress({ kind: "thread", text: event.thread_id });
