@@ -92,7 +92,9 @@ export class Orchestrator {
       const skills = config.skillFolder ? await discoverSkills(config.skillFolder) : [];
       if (auto && (shape === 'scout' || shape === 'plan_execute')) {
         const objective = shape === 'scout' ? 'Read-only repository scout' : 'Read-only implementation plan';
-        const sideRoute = chosenRoute((await choose(stageRequest(prompt, session.turns, enabled, objective), objective)).choice, enabled);
+        const stageModels = shape === 'scout' ? enabled.filter(model => model.model === 'gpt-6-luna') : enabled;
+        if (!stageModels.length) throw new Error('Vex chose a Luna scout, but Luna is not enabled');
+        const sideRoute = chosenRoute((await choose(stageRequest(prompt, session.turns, stageModels, objective), objective)).choice, stageModels);
         onProgress({ kind: 'route', route: sideRoute });
         onProgress({ kind: 'status', text: `${objective}: ${sideRoute.model} · ${sideRoute.effort}` });
         const stageStart = performance.now();

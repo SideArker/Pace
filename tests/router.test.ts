@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { DEFAULT_CONFIG } from '../src/config.js';
+import { DEFAULT_CONFIG, parseConfig } from '../src/config.js';
 import { chosenRoute, routeChoices, validateDecision } from '../src/core/router.js';
 import { costForUsage, PRICE_SNAPSHOT } from '../src/core/pricing.js';
 import { shapeRequest, stageRequest } from '../src/integrations/vex.js';
@@ -34,4 +34,8 @@ it('prices ordinary, cached, cache writes, and output once at the stage model ra
   expect(costForUsage({ model: 'gpt-6-luna', effort: 'low' }, usage)).toBeCloseTo((70 * 0.1 + 20 * 0.01 + 10 * 0.125 + 5 * 0.5) / 1_000_000, 12);
   expect(() => costForUsage({ model: 'gpt-6-sol' }, { ...usage, cached_input_tokens: 101 })).toThrow('cache tokens exceed');
   expect(chosenRoute('1:high', DEFAULT_CONFIG.models)).toEqual({ model: 'gpt-6-sol', effort: 'high' });
+});
+
+it('rejects configured model efforts unsupported by Codex', () => {
+  expect(() => parseConfig({ ...DEFAULT_CONFIG, models: [{ model: 'gpt-6-luna', efforts: ['ultra'] }] })).toThrow('Unsupported effort');
 });
