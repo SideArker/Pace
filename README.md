@@ -112,6 +112,8 @@ Bash mode runs **your typed command** through Bash in the project directory, out
 
 ## Source layout
 
+- `src/entrypoints/` holds the CLI and route-only benchmark commands.
+- `src/components/` holds the terminal app, controls, and display formatting.
 - `src/core/routing/` holds route validation, prices, and routing prompts.
 - `src/core/vex/` holds the Vex MCP client and request builders.
 - `src/core/system/` holds file, Git, folder, and skill helpers.
