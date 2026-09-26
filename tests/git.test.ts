@@ -2,7 +2,7 @@ import { afterEach, expect, it } from "vitest";
 import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getGitBranch } from "../src/core/git.js";
+import { getGitBranch } from "../src/core/system/git.js";
 
 let dir: string;
 afterEach(async () => {

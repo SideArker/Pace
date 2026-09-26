@@ -2,7 +2,7 @@ import { afterEach, expect, it } from "vitest";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { artifactDirectory, artifactPrompt, artifactSnapshot, changedArtifacts } from "../src/core/artifacts.js";
+import { artifactDirectory, artifactPrompt, artifactSnapshot, changedArtifacts } from "../src/core/system/artifacts.js";
 import { PaceStore, newSession } from "../src/core/sessions.js";
 import { Orchestrator } from "../src/core/orchestrator.js";
 import type { Config } from "../src/types.js";

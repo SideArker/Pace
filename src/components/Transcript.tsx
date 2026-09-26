@@ -1,7 +1,7 @@
 import React, { useMemo } from "react";
 import { Box, Text } from "ink";
 import { basename } from "node:path";
-import { getGitBranch } from "../core/git.js";
+import { getGitBranch } from "../core/system/git.js";
 
 export type Line = {
   id: number;

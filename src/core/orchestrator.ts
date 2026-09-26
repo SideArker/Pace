@@ -5,10 +5,10 @@ import { VexRouter, shapeChoices, shapeRequest, stageRequest, type VexRequest } 
 import { chosenRoute, validateDecision, type RoutingDecision } from './routing/router.js';
 import { costForUsage, pricedModels } from './routing/pricing.js';
 import { PaceStore } from './sessions.js';
-import { artifactSnapshot, changedArtifacts } from './artifacts.js';
+import { artifactSnapshot, changedArtifacts } from './system/artifacts.js';
 import { validRoute } from '../config.js';
-import { existingFolder } from './folders.js';
-import { discoverSkills, skillPrompt } from './skills.js';
+import { existingFolder } from './system/folders.js';
+import { discoverSkills, skillPrompt } from './system/skills.js';
 import { DEFAULT_ROUTING_PROMPTS, loadRoutingPrompts, type RoutingPrompts } from './routing/routing-prompts.js';
 
 export type StageRecord = { objective: string; route: Route; durationMs: number; usage?: Usage; estimatedCostUsd?: number; handoff?: string };
