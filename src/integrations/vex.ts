@@ -22,11 +22,13 @@ export function routeRequest(prompt: string, models: ModelOption[]) {
   // Keep user text, repository content and paths out of the remote decision.
   const trimmed = prompt.trim();
   const greeting = /^(hi|hello|hey|thanks|thank you|good (morning|afternoon|evening))[!.?\s]*$/i.test(trimmed);
-  const planning = /\b(plan|planning|roadmap|proposal|approach|strategy)\b/i.test(prompt)
+  const implementationVerb = /\b(build|implement|create|code|write|develop|fix|debug|refactor|migrate|deploy|integrate|edit|change|add)\b/i.test(prompt)
+    || /\b(?:run|execute)\s+tests?\b|^test\s+(?:the|this|my|our|a)\b/i.test(trimmed);
+  const planning = /\b(plan|planning|roadmap|proposal|approach|strategy|design|architect)\b/i.test(prompt)
+    && (!implementationVerb || /\bplan(?:ning)?\s+(?:how|to|for)\b/i.test(prompt))
     && !/\bplan\s*(?:,?\s*(?:and|then)\s+)(?:build|implement|create|develop|write)\b|\b(?:build|implement|create|develop|write)\s+and\s+plan\b/i.test(prompt)
     && !/\b(create|write|edit|save|update)\b.*\b(file|artifact|document|markdown)\b|\b(create|write|edit|save|update)\b.*\.md\b/i.test(prompt);
-  const implementation = (/\b(build|implement|create|code|write|develop|fix|debug|refactor|migrate|deploy|integrate|edit|change|add)\b/i.test(prompt)
-    || /\b(?:run|execute)\s+tests?\b|^test\s+(?:the|this|my|our|a)\b/i.test(trimmed)) && !planning;
+  const implementation = implementationVerb && !planning;
   const codingAction = implementation || planning || /\b(design|architect)\b/i.test(prompt);
   const currentInfo = /\b(today|tomorrow|latest|current|recent|forecast|weather|news|price|prices)\b/i.test(prompt);
   const factualQuestion = !greeting && !codingAction && (

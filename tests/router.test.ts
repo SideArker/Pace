@@ -98,6 +98,7 @@ describe('routing', () => {
       ['Help me plan an architectural design', 'planning', 'gpt-6-luna', 'high'],
       ['Analyze this repository', 'exploration', 'gpt-6-luna', 'low'],
       ['Analyze the current codebase and plan how to make an alert system', 'planning', 'gpt-6-luna', 'high'],
+      ['Plan how to build an alert system', 'planning', 'gpt-6-luna', 'high'],
       ['Build a strong PDF generation system', 'coding', 'gpt-6-sol', 'high'],
       ['Build a simple website', 'coding', 'gpt-6-sol', 'medium'],
       ['Implement new functionality', 'coding', 'gpt-6-sol', 'high'],
@@ -105,6 +106,7 @@ describe('routing', () => {
       ['Plan then build an advanced payment system', 'coding', 'gpt-6-sol', 'xhigh'],
       ['Build a production payment system', 'coding', 'gpt-6-sol', 'xhigh'],
       ['Create a planning artifact', 'coding', 'gpt-6-sol', 'high'],
+      ['Implement a routing strategy', 'coding', 'gpt-6-sol', 'high'],
       ['Migrate the production payment system during an outage', 'refactoring', 'gpt-6-sol', 'ultra'],
     ] as const;
     for (const [prompt, category, model, effort] of examples) {
