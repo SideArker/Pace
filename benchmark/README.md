@@ -17,6 +17,7 @@ Benchmarks answer three different questions. Keep their results separate.
 - `suites/agentic.json`: eight current-repository tasks covering scouting, planning, behavior preservation, report repair, and clarification. Each run records the resolved `HEAD` commit.
 - `types.ts`, `suite.ts`, `execute.ts`, `summary.ts`, `workflows.ts`: executed benchmark runner.
 - `grade.ts`: manual quality grading and cost analysis.
+- `reports/`: written results from earlier benchmark runs.
 - `results/`: ignored run artifacts.
 
 The route-only runner remains at `src/routing-benchmark.ts`. It exercises the same routing request builders and validator as Pace. `npm run benchmark:check` type-checks the TypeScript benchmark modules and Pace source.
