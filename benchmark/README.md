@@ -20,7 +20,7 @@ Benchmarks answer three different questions. Keep their results separate.
 - `reports/`: written results from earlier benchmark runs.
 - `results/`: ignored run artifacts.
 
-The route-only runner remains at `src/routing-benchmark.ts`. It exercises the same routing request builders and validator as Pace. `npm run benchmark:check` type-checks the TypeScript benchmark modules and Pace source.
+The route-only runner is at `src/entrypoints/routing-benchmark.ts`. It exercises the same routing request builders and validator as Pace. `npm run benchmark:check` type-checks the TypeScript benchmark modules and Pace source.
 
 ## 1. Routing decisions
 

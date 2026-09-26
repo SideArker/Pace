@@ -2,13 +2,13 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile, appendFile, stat } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isRecord } from './config.js';
-import { PaceStore } from './core/sessions.js';
-import { loadRoutingPrompts } from './core/routing/routing-prompts.js';
-import { pricedModels, PRICE_SNAPSHOT } from './core/routing/pricing.js';
-import { chosenRoute, validateDecision, type RoutingDecision } from './core/routing/router.js';
-import { shapeRequest, stageRequest, VexRouter, type VexRequest } from './core/vex/client.js';
-import type { ModelOption, TurnSummary } from './types.js';
+import { isRecord } from '../config.js';
+import { PaceStore } from '../core/sessions.js';
+import { loadRoutingPrompts } from '../core/routing/routing-prompts.js';
+import { pricedModels, PRICE_SNAPSHOT } from '../core/routing/pricing.js';
+import { chosenRoute, validateDecision, type RoutingDecision } from '../core/routing/router.js';
+import { shapeRequest, stageRequest, VexRouter, type VexRequest } from '../core/vex/client.js';
+import type { ModelOption, TurnSummary } from '../types.js';
 
 export type RoutingCase = {
   id: string;

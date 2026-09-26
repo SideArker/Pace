@@ -3,7 +3,7 @@ import { DEFAULT_CONFIG, parseConfig } from '../src/config.js';
 import { chosenRoute, routeChoices, validateDecision } from '../src/core/routing/router.js';
 import { costForUsage, PRICE_SNAPSHOT } from '../src/core/routing/pricing.js';
 import { shapeRequest, stageRequest } from '../src/core/vex/client.js';
-import { parseRoutingSuite, summarizeRouting } from '../src/routing-benchmark.js';
+import { parseRoutingSuite, summarizeRouting } from '../src/entrypoints/routing-benchmark.js';
 
 it('sends original request, recent conversation, all valid pairs, capabilities, and prices', () => {
   const prompt = 'Plan a payment system. Do not implement it.';
