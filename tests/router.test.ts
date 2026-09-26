@@ -103,6 +103,7 @@ describe('routing', () => {
       ['Implement new functionality', 'coding', 'gpt-6-sol', 'high'],
       ['Plan and build an advanced payment system', 'coding', 'gpt-6-sol', 'xhigh'],
       ['Plan then build an advanced payment system', 'coding', 'gpt-6-sol', 'xhigh'],
+      ['Build a production payment system', 'coding', 'gpt-6-sol', 'xhigh'],
       ['Create a planning artifact', 'coding', 'gpt-6-sol', 'high'],
       ['Migrate the production payment system during an outage', 'refactoring', 'gpt-6-sol', 'ultra'],
     ] as const;

@@ -42,7 +42,7 @@ export function routeRequest(prompt: string, models: ModelOption[]) {
   const size = words < 12 ? 'short' : words < 40 ? 'medium' : 'long';
   const complexDomain = /\b(payment|payments|billing|financial|security|auth|authentication|distributed)\b/i.test(prompt);
   const architecture = /\b(system|architecture|architect|design|platform|end.to.end)\b/i.test(prompt);
-  const critical = /\b(outage|production|critical|irreversible|data loss|zero.downtime)\b/i.test(prompt) && /\b(migrat|deploy|security|auth|payment|billing|distributed|system|service|database)/i.test(prompt);
+  const critical = /\b(outage|critical|irreversible|data loss|zero.downtime)\b/i.test(prompt) && /\b(migrat|deploy|security|auth|payment|billing|distributed|system|service|database)/i.test(prompt);
   const simpleChange = /\b(small|simple|minor|tiny|button color|colour|typo)\b/i.test(prompt);
   const needsRepository = /\b(existing|current|repo|repository|codebase|project|add|implement|fix|debug|refactor|migrate)\b/i.test(prompt);
   const intent = greeting ? 'brief social greeting' : planning ? 'read-only planning' : exploration ? 'read-only repository exploration' : factualQuestion ? currentInfo ? 'current-information lookup' : 'brief factual explanation' : implementation ? 'software implementation' : 'unclear task';
