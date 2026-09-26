@@ -267,7 +267,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         newLines.push({
           id: id++,
           role: "meta",
-          text: formatTurnFooter(turn.route, turn.routeNote, turn.usage, turn.durationMs),
+          text: formatTurnFooter(turn.route, turn.routeNote, turn.usage, turn.durationMs, turn.estimatedCostUsd),
           spaceBefore: false,
         });
       }
@@ -601,9 +601,11 @@ export default function App({ onClear }: { onClear: () => void }) {
       if (command === "/stats") {
         const turns = session.turns;
         if (!turns.length) { add("info", "No recorded turns yet."); return; }
-        const total = (key: "input_tokens" | "output_tokens") => turns.reduce((sum, turn) => sum + (turn.usage?.[key] ?? 0), 0);
+        const total = (key: "input_tokens" | "cached_input_tokens" | "cache_write_input_tokens" | "output_tokens") => turns.reduce((sum, turn) => sum + (turn.usage?.[key] ?? 0), 0);
         const elapsed = turns.reduce((sum, turn) => sum + (turn.durationMs ?? 0), 0);
         const reported = turns.filter(turn => turn.usage).length;
+        const cost = turns.reduce((sum, turn) => sum + (turn.estimatedCostUsd ?? 0), 0);
+        add("info", `Codex usage: ${total("input_tokens")} input (${total("cached_input_tokens")} cached, ${total("cache_write_input_tokens")} cache write), ${total("output_tokens")} output; ~$${cost.toFixed(4)} estimated API equivalent`);
         add("info", `Current conversation, last ${turns.length} turns · ${turns.filter(turn => turn.failed).length} failed · ${(elapsed / 1000).toFixed(1)}s elapsed · ${total("input_tokens")} input / ${total("output_tokens")} output tokens (${reported} turns reported usage)`);
         return;
       }
@@ -748,6 +750,7 @@ export default function App({ onClear }: { onClear: () => void }) {
           outcome.note,
           outcome.usage,
           outcome.durationMs,
+          outcome.estimatedCostUsd,
         ),
       );
       for (const artifact of outcome.artifacts) add("artifact", artifact);

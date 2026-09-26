@@ -39,6 +39,7 @@ export function modelName(route?: Route): string {
 
 function routeSource(note?: string): string {
   if (!note) return "saved";
+  if (note.startsWith('Vex chose')) return 'auto';
   if (note.startsWith("Selected by Vex")) return "auto";
   if (note.startsWith("Policy route")) return "auto (policy)";
   if (note.startsWith("Selected from Vex model consensus"))
@@ -64,6 +65,7 @@ export function formatTurnFooter(
   note?: string,
   usage?: Usage,
   durationMs?: number,
+  estimatedCostUsd?: number,
 ): string {
   const model = modelName(route);
   const first = [model, title(route?.effort ?? "default")];
@@ -74,8 +76,9 @@ export function formatTurnFooter(
       `${compact(usage.input_tokens)} input`,
       `${compact(usage.output_tokens)} output`,
     );
+  if (estimatedCostUsd !== undefined) first.push(`~$${estimatedCostUsd.toFixed(4)}`);
   const second = [
-    usage ? `Cache: ${compact(usage.cached_input_tokens)} hit` : undefined,
+    usage ? `Cache: ${compact(usage.cached_input_tokens)} hit, ${compact(usage.cache_write_input_tokens)} write` : undefined,
     `Route: ${routeSource(note)} → ${model}`,
   ].filter(Boolean);
   return `↳ ${first.join(" · ")}\n${second.join(" · ")}`;

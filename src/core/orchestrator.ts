@@ -81,7 +81,7 @@ export class Orchestrator {
       if (shape === 'clarify') {
         const result = 'What outcome would you like from this request? Please describe the deliverable.';
         const durationMs = Math.round(performance.now() - startedAt);
-        session.turns = [...session.turns, { prompt: prompt.slice(0, 180), result, at: new Date().toISOString(), routeNote: 'Vex requested clarification', durationMs }].slice(-20);
+        session.turns = [...session.turns, { prompt, result, at: new Date().toISOString(), routeNote: 'Vex requested clarification', durationMs }].slice(-20);
         await save();
         return { session, result, note: 'Vex requested clarification', route: {}, durationMs, artifacts: [], stages, routing };
       }
@@ -123,11 +123,11 @@ export class Orchestrator {
       const durationMs = Math.round(performance.now() - startedAt);
       const usage = addUsage(stages);
       const estimatedCostUsd = stages.every(stage => stage.estimatedCostUsd !== undefined) ? stages.reduce((sum, stage) => sum + stage.estimatedCostUsd!, 0) : undefined;
-      session.turns = [...session.turns, { prompt: prompt.slice(0, 180), result: execution.result.slice(0, 500), at: new Date().toISOString(), route, routeNote: note, durationMs, artifacts, usage, stages, routing, estimatedCostUsd }].slice(-20);
+      session.turns = [...session.turns, { prompt, result: execution.result, at: new Date().toISOString(), route, routeNote: note, durationMs, artifacts, usage, stages, routing, estimatedCostUsd }].slice(-20);
       await save();
       return { session, result: execution.result, note, route, durationMs, artifacts, usage, stages, routing, estimatedCostUsd };
     } catch (error) {
-      session.turns = [...session.turns, { prompt: prompt.slice(0, 180), result: String(error).slice(0, 500), at: new Date().toISOString(), route, routeNote: note, durationMs: Math.round(performance.now() - startedAt), failed: true, stages, routing }].slice(-20);
+      session.turns = [...session.turns, { prompt, result: String(error), at: new Date().toISOString(), route, routeNote: note, durationMs: Math.round(performance.now() - startedAt), failed: true, stages, routing }].slice(-20);
       await save();
       throw error;
     }
