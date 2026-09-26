@@ -1,0 +1,22 @@
+{
+  "repository": ".",
+  "ref": "2fad436",
+  "cases": [
+    {
+      "id": "usage-trace",
+      "prompt": "Locate where Pace records input, output, cached, and reasoning token usage for a coding turn. Explain how the read-only Luna repository scan is included. Do not change files.",
+      "rubric": "Names the SDK turn.completed event, the orchestrator's combined usage, and the saved turn summary accurately."
+    },
+    {
+      "id": "project-path",
+      "prompt": "Locate the function that normalizes project paths before session storage. Name its file and explain how Windows casing is handled.",
+      "rubric": "Identifies normalizeProject in src/core/sessions.ts and explains its lowercase Windows path behavior."
+    },
+    {
+      "id": "doctor-json",
+      "prompt": "Make pace doctor machine-readable for scripts with a --json option while preserving its existing human-readable output. Include the Vex and Codex SDK checks in the JSON object. Cover this behavior with a focused test.",
+      "checks": ["npm run build", "npm test"],
+      "rubric": "JSON is parseable and contains the same checks as human-readable doctor; default output remains usable."
+    }
+  ]
+}
