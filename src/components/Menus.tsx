@@ -115,7 +115,7 @@ export type ConversationChoice = {
   id: string;
   title?: string;
   prompt: string;
-  state: "ready" | "running" | "approval";
+  state: "ready" | "running" | "approval" | "done";
 };
 
 export function ConversationPicker({ choices, activeId, selectedIndex, focused }: {
@@ -137,7 +137,7 @@ export function ConversationPicker({ choices, activeId, selectedIndex, focused }
           <Box key={choice.id} gap={1}>
             <Text color={selected ? "#38BDF8" : "#64748B"}>{selected ? "▶" : " "}</Text>
             <Text color={current ? "#59E6A7" : "#94A3B8"}>{choice.id.slice(0, 8)}</Text>
-            <Text color={choice.state === "approval" ? "#FBBF24" : choice.state === "running" ? "#38BDF8" : "#64748B"}>{choice.state === "approval" ? "approval" : choice.state === "running" ? "running" : current ? "current" : "ready"}</Text>
+            <Text color={choice.state === "approval" ? "#FBBF24" : choice.state === "running" ? "#38BDF8" : choice.state === "done" ? "#59E6A7" : "#64748B"}>{choice.state === "approval" ? "approval" : choice.state === "running" ? "running" : choice.state === "done" ? "done" : current ? "current" : "ready"}</Text>
             <Text color={selected ? "white" : "#CBD5E1"} wrap="truncate">{prompt.slice(0, 60) || "New conversation"}</Text>
           </Box>
         );

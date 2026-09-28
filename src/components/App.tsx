@@ -22,6 +22,7 @@ import { resolve } from "node:path";
 const commands = [
   "/help",
   "/models",
+  "/model",
   "/auto",
   "/new",
   "/resume",
@@ -139,6 +140,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const sessionDrafts = useRef(new Map<string, string>());
   const preSessionLines = useRef<Line[]>([]);
   const sessionStatuses = useRef(new Map<string, string>());
+  const unreadCompletions = useRef(new Set<string>());
   const pendingApprovals = useRef(new Map<string, PendingApproval>());
   const sideAbort = useRef<AbortController | undefined>(undefined);
   const titleAborts = useRef(new Map<string, AbortController>());
@@ -151,11 +153,15 @@ export default function App({ onClear }: { onClear: () => void }) {
     if (index < 0) return [...old, target];
     return old.map((item, at) => at === index ? target : item);
   });
+  const forgetViewedSession = (sessionId?: string) => {
+    if (!sessionId || jobs.current.has(sessionId) || unreadCompletions.current.has(sessionId)) return;
+    setOpenSessions(old => old.filter(item => item.id !== sessionId));
+  };
   const pickerChoices: ConversationChoice[] = openSessions.map(item => ({
     id: item.id,
     title: item.title,
     prompt: jobs.current.get(item.id)?.prompt ?? item.turns.at(-1)?.prompt ?? "",
-    state: pendingApprovals.current.has(item.id) ? "approval" : runningIds.includes(item.id) ? "running" : "ready",
+    state: pendingApprovals.current.has(item.id) ? "approval" : runningIds.includes(item.id) ? "running" : unreadCompletions.current.has(item.id) ? "done" : "ready",
   }));
   const stopSideQuestion = () => {
     const pending = sideAbort.current;
@@ -426,6 +432,8 @@ export default function App({ onClear }: { onClear: () => void }) {
       stopSideQuestion();
       onClear();
       setSession(target);
+      unreadCompletions.current.delete(target.id);
+      if (previousId !== target.id) forgetViewedSession(previousId);
       rememberSession(target);
       setResumeMenu(false);
       setConvoMenu(false);
@@ -721,7 +729,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       void askBtw(text.slice(4).trim());
       return;
     }
-    if (jobs.current.has(session.id) && !/^\/(?:new|clear|resume|help|exit|usage|stats|route|artifacts|models|auto|trust|skills)(?:\s|$)/.test(text)) {
+    if (jobs.current.has(session.id) && !/^\/(?:new|clear|resume|help|exit|usage|stats|route|artifacts|models|model|auto|trust|skills)(?:\s|$)/.test(text)) {
       add(
         "info",
         "This conversation is working. Use /new or /resume to switch conversations.",
@@ -750,6 +758,7 @@ export default function App({ onClear }: { onClear: () => void }) {
           activeSessionId.current = fresh.id;
           sessionLines.current.set(fresh.id, []);
           setSession(fresh);
+          forgetViewedSession(previousId);
           rememberSession(fresh);
           setLines([]);
           setDraft("");
@@ -777,7 +786,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       if (command === "/help") {
         add(
           "info",
-          "/models · /auto · /new · /resume · /convo · /undo · /usage · /btw <q> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /route · /stats · /clear · /exit · Esc/Ctrl+C cancel · Ctrl+Z undo · ! Bash · Ctrl+O toggle reasoning and command output · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
+          "/models · /model <name> [effort] · /auto · /new · /resume · /convo · /undo · /usage · /btw <q> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /route · /stats · /clear · /exit · Esc/Ctrl+C cancel · Ctrl+Z undo · ! Bash · Ctrl+O toggle reasoning and command output · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
         );
         add("info", "With multiple open conversations, press Down from the input to focus the picker. Use arrows and Enter to switch; Esc returns to input. Ctrl+C cancels the selected turn. /exit quits.");
         return;
@@ -828,7 +837,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       }
       if (command === "/route") {
         const last = session.turns.at(-1);
-        add("info", last?.route ? `${modelName(last.route)} · ${last.routeNote ?? "Route detail unavailable"}${last.failed ? " · failed" : ""}` : "No completed route yet.");
+        add("info", `${session.routingMode === "manual" ? `Manual: ${session.route.model ?? "Codex default"} ${session.route.effort ?? "default"}` : "Auto: Vex selects each turn"}. ${last?.route ? `Last: ${modelName(last.route)} · ${last.routeNote ?? "Route detail unavailable"}${last.failed ? " · failed" : ""}` : "No completed route yet."}`);
         return;
       }
       if (command === "/stats") {
@@ -948,6 +957,25 @@ export default function App({ onClear }: { onClear: () => void }) {
         add("info", "Undid last turn. Prompt restored to composer.");
         return;
       }
+      if (command === "/model") {
+        const [modelName, effort, extra] = parts;
+        const choice = config.models.find(item => item.model === modelName && item.enabled !== false);
+        if (!choice || extra || (effort && !choice.efforts.includes(effort as NonNullable<Route["effort"]>))) {
+          add("error", "Use /model <enabled-model> [configured-effort]. See /models for available choices.");
+          return;
+        }
+        const route: Route = { model: choice.model, effort: (effort as Route["effort"]) ?? choice.defaultEffort ?? choice.efforts[0] };
+        const updated = { ...session, route, routingMode: "manual" as const };
+        try {
+          await store.save(updated);
+          setSession(updated);
+          rememberSession(updated);
+          add("info", `Manual route: ${route.model} ${route.effort}.`);
+        } catch (error) {
+          add("error", `Could not save manual route: ${String(error)}`);
+        }
+        return;
+      }
       if (command === "/convo" || command === "/turns") {
         if (!session.turns.length) {
           add("info", "No messages in conversation yet.");
@@ -1063,6 +1091,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       const pending = pendingApprovals.current.get(sessionId);
       if (pending?.owner === controller) pending.respond("decline");
       jobs.current.delete(sessionId);
+      if (activeSessionId.current !== sessionId) unreadCompletions.current.add(sessionId);
       rememberSession(turnSession);
       setRunningIds([...jobs.current.keys()]);
     }
@@ -1075,7 +1104,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       {resumeMenu ? <ResumeMenu choices={resumeChoices} selectedIndex={menuIndex} runningIds={runningIds} processIds={resumeProcessIds} missingProjectPaths={missingProjectPaths} /> : null}
       {convoMenu && session ? <ConvoMenu turns={session.turns} selectedIndex={menuIndex} /> : null}
       {runningIds.length || shellJobs ? (
-      <Box gap={1}><Text color="#59E6A7" bold>{spinner[tick % spinner.length]}</Text><Text color="#38BDF8">{busy ? status === "Thinking" ? thinkingWords[Math.floor(tick / 30) % thinkingWords.length] : status : "Ready"}</Text>{shellJobs ? <Text color="#FBBF24">· ⚡ {shellJobs} Bash command{shellJobs === 1 ? "" : "s"} running</Text> : null}</Box>
+      <Box gap={1}><Text color="#59E6A7" bold>{spinner[tick % spinner.length]}</Text><Text color="#38BDF8">{busy ? status === "Thinking" ? thinkingWords[Math.floor(tick / 30) % thinkingWords.length] : status : runningIds.length ? `${runningIds.length} background turn${runningIds.length === 1 ? "" : "s"} running` : "Ready"}</Text>{shellJobs ? <Text color="#FBBF24">· ⚡ {shellJobs} Bash command{shellJobs === 1 ? "" : "s"} running</Text> : null}</Box>
       ) : null}
       {approval ? (
         <Box flexDirection="column" borderStyle="round" borderColor="#FBBF24" paddingX={1}>
