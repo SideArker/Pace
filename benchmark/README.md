@@ -61,6 +61,16 @@ npm run benchmark:grade -- report <results-directory>
 
 `graded-summary.json` compares only pairs where baseline and candidate both pass manual review and checks, with complete usage and cost. It rejects mismatched prompts or commits and incomplete grades. It reports pass counts, cost wins and regressions, aggregate and median savings, raw tokens, cached and cache-write input, output and reasoning tokens, elapsed time, selected shapes and routes, and Vex calls and cost. The script refuses to overwrite an existing `grades.json`.
 
+## 4. Model switch: fresh thread vs same thread
+
+```powershell
+npm run benchmark:thread-switch -- --repeat 3
+```
+
+This runs the same two-turn context-retention task in both strategies. The fresh-thread arm changes from Sol High to Luna Low and replays the first successful exchange in its second prompt, matching Pace's current behavior. The same-thread arm resumes the first Codex thread with Luna Low and sends only the follow-up. The runner disables MCP servers, uses read-only turns, alternates arm order, and writes answers, per-turn usage, estimated costs, timings, thread IDs, and errors to a new JSON file under `benchmark/results/`.
+
+Use `--from-model`, `--from-effort`, `--to-model`, `--to-effort`, `--repeat 1-10`, and `--out <file>` to vary routes and output. For example, `npm run benchmark:thread-switch -- --from-model gpt-6-luna --from-effort low --to-model gpt-6-sol --to-effort high --repeat 5`. A rejected same-thread model change is recorded as a failed run. Inspect answers against the same facts before judging token savings; the script does not auto-grade quality. SDK usage is not account billing, and one synthetic task is a smoke comparison rather than broad quality evidence.
+
 Build and test success alone do not establish requested behavior. For example, a previous Luna coding run passed tests but changed copy-on-parse behavior; manual review caught it. Grade answers and diffs against each task rubric. Record failures as failures even when they are cheap.
 
 ## Reading cost and safety limits
