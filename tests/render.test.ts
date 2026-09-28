@@ -70,6 +70,17 @@ describe("activity transcript", () => {
     expect(output).not.toContain("3 thoughts");
   });
 
+  it("shows file diffs without expanding activity details", () => {
+    const output = renderToString(React.createElement(Transcript, {
+      lines: [{ id: 1, role: "activity", text: "Edited src/example.ts", spaceBefore: false,
+        activity: { category: "files", detail: "@@ -1 +1 @@\n-old\n+new", completed: false } }],
+      outputsExpanded: false, detailsExpanded: false, rows: 24, scrollBack: 0,
+    }), { columns: 80 });
+    expect(output).toContain("Edited src/example.ts");
+    expect(output).toContain("-old");
+    expect(output).toContain("+new");
+  });
+
   it("renders only one terminal screen of transcript while scrolling back", () => {
     const output = renderToString(React.createElement(Transcript, {
       lines: Array.from({ length: 40 }, (_, index) => ({

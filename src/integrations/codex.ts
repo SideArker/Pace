@@ -9,7 +9,7 @@ import type { Route } from "../shared/types.js";
 import { realpath } from "node:fs/promises";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import { createInterface } from "node:readline";
 import { artifactPrompt } from "../core/system/artifacts.js";
 import { vexServerPath } from '../core/vex/client.js';
@@ -228,7 +228,27 @@ export function appServerTurnParams(
   };
 }
 
-function appItemProgress(item: JsonRecord, event: string): Progress | undefined {
+function fileChangeProgress(item: JsonRecord, completed: boolean, project: string): Progress {
+  const changes = Array.isArray(item.changes) ? item.changes.filter(isRecord) : [];
+  const displayPath = (path: string) => isAbsolute(path) ? relative(project, path) : path;
+  const title = changes.length === 1 && typeof changes[0]?.path === "string"
+    ? displayPath(changes[0].path)
+    : `${changes.length} files`;
+  return {
+    kind: "activity",
+    id: typeof item.id === "string" ? item.id : "codex-item",
+    category: "files",
+    title: `${item.status === "failed" ? "Failed to edit" : "Edited"} ${title}`,
+    detail: changes.map(change => {
+      const path = typeof change.path === "string" ? displayPath(change.path) : "";
+      const diff = typeof change.diff === "string" ? change.diff.trimEnd() : "";
+      return changes.length === 1 ? diff || `${String(change.kind)} ${path}` : `${path}\n${diff || String(change.kind)}`;
+    }).join("\n\n"),
+    completed,
+  };
+}
+
+function appItemProgress(item: JsonRecord, event: string, project: string): Progress | undefined {
   const id = typeof item.id === "string" ? item.id : "codex-item";
   const completed = event === "item/completed";
   switch (item.type) {
@@ -240,12 +260,7 @@ function appItemProgress(item: JsonRecord, event: string): Progress | undefined 
       detail: typeof item.aggregatedOutput === "string" ? item.aggregatedOutput : undefined,
       completed,
     };
-    case "fileChange": return {
-      kind: "activity", id, category: "files",
-      title: `${item.status === "failed" ? "Failed to edit" : "Edited"} ${Array.isArray(item.changes) ? item.changes.length : 0} file${Array.isArray(item.changes) && item.changes.length === 1 ? "" : "s"}`,
-      detail: Array.isArray(item.changes) ? item.changes.map(change => isRecord(change) ? `${String(change.kind)} ${String(change.path)}` : "").join("\n") : undefined,
-      completed,
-    };
+    case "fileChange": return fileChangeProgress(item, completed, project);
     case "webSearch": return { kind: "activity", id, category: "search", title: `Web search: ${String(item.query ?? "")}`, completed };
     case "mcpToolCall": return { kind: "activity", id, category: "tool", title: `Tool ${String(item.server)}/${String(item.tool)}: ${String(item.status)}`, completed };
     case "plan": return { kind: "activity", id, category: "plan", title: "Plan", detail: typeof item.text === "string" ? item.text : undefined, completed };
@@ -286,6 +301,10 @@ export class AppServerRunner implements CodexRunner {
     const turnDone = new Promise<void>(resolve => { turnResolve = resolve; });
     const server = this.createServer(message => {
       const params = isRecord(message.params) ? message.params : {};
+      if (message.method === "item/fileChange/patchUpdated" && typeof params.itemId === "string") {
+        void onProgress(fileChangeProgress({ id: params.itemId, changes: params.changes }, false, cwd));
+        return;
+      }
       if (message.method === "turn/completed") {
         const turn = isRecord(params.turn) ? params.turn : {};
         usage = appUsage(params.tokenUsage) ?? appUsage(turn.tokenUsage) ?? appUsage(turn.usage) ?? usage;
@@ -303,7 +322,7 @@ export class AppServerRunner implements CodexRunner {
       const item = isRecord(params.item) ? params.item : undefined;
       if (!item) return;
       if (item.type === "agentMessage" && message.method === "item/completed" && typeof item.text === "string") result = item.text;
-      const progress = appItemProgress(item, message.method ?? "");
+      const progress = appItemProgress(item, message.method ?? "", cwd);
       if (progress) {
         void onProgress(progress);
       }

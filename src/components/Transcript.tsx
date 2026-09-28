@@ -50,6 +50,12 @@ function activityTitle(line: Line): string {
   return line.text;
 }
 
+function DiffDetail({ detail }: { detail: string }) {
+  return <Box flexDirection="column">{detail.slice(-12000).split("\n").map((line, index) => (
+    <Text key={index} color={line.startsWith("+") && !line.startsWith("+++") ? "#34D399" : line.startsWith("-") && !line.startsWith("---") ? "#F87171" : "#94A3B8"} wrap="wrap">{line || " "}</Text>
+  ))}</Box>;
+}
+
 const paceShadowLetters = [
   ["  ██████╗ ", "  █████╗ ", "  ██████╗ ", "███████╗"],
   ["  ██╔══██╗", " ██╔══██╗", " ██╔════╝ ", "██╔════╝"],
@@ -238,7 +244,7 @@ export function Transcript({
                 <Text color={line.activity.category === "command" ? activityColors.command : line.activity.completed ? "#64748B" : activityColors[line.activity.category]} bold={line.activity.category === "command"}>
                   {line.activity.completed ? " " : "◌"} {activityIcons[line.activity.category]} {activityTitle(line)}{line.thinkingCount ? ` · ${line.thinkingCount} thoughts` : ""}
                 </Text>
-                {line.activity.detail ? (
+                {line.activity.detail && line.activity.category !== "files" ? (
                   <Text dimColor>
                     {(
                       line.activity.category === "command"
@@ -251,9 +257,9 @@ export function Transcript({
                 ) : null}
               </Box>
               {line.activity.detail &&
-              (line.activity.category === "command"
+              (line.activity.category === "files" || (line.activity.category === "command"
                 ? outputsExpanded
-                : detailsExpanded) ? (
+                : detailsExpanded)) ? (
                 <Box
                   marginLeft={2}
                   paddingLeft={1}
@@ -264,7 +270,9 @@ export function Transcript({
                   borderBottom={false}
                   borderColor="#475569"
                 >
-                  <Text color="gray" wrap="wrap">{line.activity.detail.slice(-12000)}</Text>
+                  {line.activity.category === "files"
+                    ? <DiffDetail detail={line.activity.detail} />
+                    : <Text color="gray" wrap="wrap">{line.activity.detail.slice(-12000)}</Text>}
                 </Box>
               ) : null}
             </Box>

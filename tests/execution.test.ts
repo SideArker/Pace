@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Orchestrator } from '../src/core/orchestrator.js';
 import { PaceStore, newSession, undoConversationTurn } from '../src/core/sessions.js';
-import { AppServerRunner, appServerThreadParams, appServerTurnParams, appUsage, codexOptions, eventProgress, SdkRunner, type CodexRunner } from '../src/integrations/codex.js';
+import { AppServerRunner, appServerThreadParams, appServerTurnParams, appUsage, codexOptions, eventProgress, SdkRunner, type CodexRunner, type Progress } from '../src/integrations/codex.js';
 import type { Config, Route } from '../src/shared/types.js';
 import type { VexRequest } from '../src/core/vex/client.js';
 import { decision } from './routing-fixture.js';
@@ -243,6 +243,28 @@ it('ends an active turn when Codex app-server exits', async () => {
   });
   await expect(runner.run('work', process.cwd(), { model: 'gpt-6-sol', effort: 'high' }, undefined, () => {}))
     .rejects.toThrow('App Server exited');
+});
+
+it('shows file path and diff as soon as app-server updates the patch', async () => {
+  const changes = [{ path: join(process.cwd(), 'src', 'example.ts'), kind: 'update', diff: '@@ -1 +1 @@\n-old\n+new' }];
+  const progress: Progress[] = [];
+  const runner = new AppServerRunner((onMessage) => ({
+    setRequestHandler() {}, notify() {}, respond() {}, kill() {},
+    async request(method: string) {
+      if (method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (method === 'turn/start') queueMicrotask(() => {
+        onMessage({ method: 'item/fileChange/patchUpdated', params: { itemId: 'edit-1', changes } });
+        onMessage({ method: 'item/completed', params: { item: { type: 'fileChange', id: 'edit-1', changes, status: 'completed' } } });
+        onMessage({ method: 'turn/completed', params: { turn: { status: 'completed' } } });
+      });
+      return {};
+    },
+  }));
+  await runner.run('edit', process.cwd(), { model: 'gpt-6-sol', effort: 'high' }, undefined, event => { progress.push(event); });
+  const edits = progress.filter(event => event.kind === 'activity' && event.category === 'files');
+  expect(edits).toHaveLength(2);
+  expect(edits[0]).toMatchObject({ title: `Edited ${join('src', 'example.ts')}`, detail: '@@ -1 +1 @@\n-old\n+new', completed: false });
+  expect(edits[1]).toMatchObject({ title: `Edited ${join('src', 'example.ts')}`, completed: true });
 });
 
 it('gives Codex independent Vex MCP access without key in command arguments', () => {
