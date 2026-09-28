@@ -441,6 +441,10 @@ export class Orchestrator {
         note = `Vex chose ${shape} workflow`;
       }
       signal?.throwIfAborted();
+      if (session.threadId && session.route.model !== route.model) {
+        session.threadId = undefined;
+        systemMessage("Model changed. Starting a fresh Codex thread with saved successful turns.");
+      }
       session.route = route;
       await save();
       onProgress({ kind: "route", route });

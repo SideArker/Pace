@@ -15,11 +15,11 @@ const config: Config = { routingMode: 'auto', defaultRoute: { model: 'gpt-6-sol'
   { model: 'gpt-6-luna', efforts: ['low'] }, { model: 'gpt-6-sol', efforts: ['medium', 'high'] },
 ] };
 
-it('reroutes each follow-up and resumes its saved main thread', async () => {
+it('starts a fresh thread with retained history when routing changes model', async () => {
   dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
-  const calls: { id?: string; route: Route }[] = [];
-  const runner: CodexRunner = { async run(_prompt, _project, route, id, progress) {
-    calls.push({ id, route });
+  const calls: { id?: string; route: Route; prompt: string }[] = [];
+  const runner: CodexRunner = { async run(prompt, _project, route, id, progress) {
+    calls.push({ id, route, prompt });
     if (!id) await progress({ kind: 'thread', text: 'thread-1' });
     return { threadId: 'thread-1', result: 'done', completed: true };
   } };
@@ -29,7 +29,9 @@ it('reroutes each follow-up and resumes its saved main thread', async () => {
   const orchestrator = new Orchestrator(store, runner, vex);
   await orchestrator.turn('first', session, config, () => {});
   await orchestrator.turn('second', session, config, () => {});
-  expect(calls).toEqual([{ id: undefined, route: { model: 'gpt-6-sol', effort: 'high' } }, { id: 'thread-1', route: { model: 'gpt-6-luna', effort: 'low' } }]);
+  expect(calls[0]).toMatchObject({ id: undefined, route: { model: 'gpt-6-sol', effort: 'high' } });
+  expect(calls[1]).toMatchObject({ id: undefined, route: { model: 'gpt-6-luna', effort: 'low' } });
+  expect(calls[1]?.prompt).toContain('"user":"first"');
   expect((await store.latest('/example/project'))?.turns).toHaveLength(2);
 });
 
@@ -86,17 +88,19 @@ it('runs a read-only scout, reroutes after handoff, and sums stage costs', async
   expect(notices).toEqual([
     'Vex routed the scout to GPT-6 Luna Low.',
     'This task will split into two stages: a read-only scout, then completion.',
+    'Model changed. Starting a fresh Codex thread with saved successful turns.',
     'Vex routed completion to GPT-6 Sol High.',
     'No skills are active for this conversation.',
   ]);
   expect(session.turns.at(-1)?.systemMessages).toEqual(notices);
   expect(calls.map(call => call.mode)).toEqual(['side', 'main']);
-  expect(calls.map(call => call.id)).toEqual([undefined, 'existing-main-thread']);
+  expect(calls.map(call => call.id)).toEqual([undefined, undefined]);
   expect(calls[0]?.prompt).toContain('We discussed the parser in src/a.ts');
   expect(calls[0]?.route).toEqual({ model: 'gpt-6-luna', effort: 'low' });
   expect(requests[1]?.options.map(option => option.id)).toEqual(['0:low']);
   expect((requests[1]?.context.availableModels as { id: string }[]).map(model => model.id)).toContain('gpt-6-sol');
   expect(calls[1]?.prompt).toContain('Parser is defined here');
+  expect(calls[1]?.prompt).toContain('We discussed the parser in src/a.ts');
   expect(calls[1]?.prompt).not.toContain('unshared scout history');
   expect(requests[2]?.context.priorStageHandoff).toContain('src/a.ts');
   expect(requests[2]?.context.priorStageHandoff).not.toContain('unshared scout history');

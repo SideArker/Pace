@@ -13,7 +13,7 @@ export async function execTurn(prompt: string, project = process.cwd()): Promise
   const controller = new AbortController();
   const cancel = () => controller.abort();
   let lastProgressError: string | undefined;
-  process.once("SIGINT", cancel);
+  process.on("SIGINT", cancel);
   try {
     const config = await store.loadConfig();
     const session = await store.latest(project) ?? newSession(project, config.routingMode);

@@ -729,7 +729,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       void askBtw(text.slice(4).trim());
       return;
     }
-    if (jobs.current.has(session.id) && !/^\/(?:new|clear|resume|help|exit|usage|stats|route|artifacts|models|model|auto|trust|skills)(?:\s|$)/.test(text)) {
+    if (jobs.current.has(session.id) && !/^\/(?:new|clear|resume|help|exit|usage|stats|route|artifacts|models|trust|skills)(?:\s|$)/.test(text)) {
       add(
         "info",
         "This conversation is working. Use /new or /resume to switch conversations.",
@@ -965,12 +965,13 @@ export default function App({ onClear }: { onClear: () => void }) {
           return;
         }
         const route: Route = { model: choice.model, effort: (effort as Route["effort"]) ?? choice.defaultEffort ?? choice.efforts[0] };
-        const updated = { ...session, route, routingMode: "manual" as const };
+        const changedModel = !!session.threadId && session.route.model !== route.model;
+        const updated = { ...session, route, routingMode: "manual" as const, threadId: changedModel ? undefined : session.threadId };
         try {
           await store.save(updated);
           setSession(updated);
           rememberSession(updated);
-          add("info", `Manual route: ${route.model} ${route.effort}.`);
+          add("info", `Manual route: ${route.model} ${route.effort}.${changedModel ? " Next turn starts a fresh thread with saved successful turns." : ""}`);
         } catch (error) {
           add("error", `Could not save manual route: ${String(error)}`);
         }
