@@ -18,7 +18,7 @@ function formatWindow(window: UsageWindow): string {
         : minutes % 60 === 0
           ? `${minutes / 60}h`
           : `${minutes}m`;
-  return `${label} ${window.usedPercent}%`;
+  return `${label} ${Math.max(0, Math.min(100, 100 - window.usedPercent))}% left`;
 }
 
 export function formatUsageLimits(limits?: UsageLimits): string {

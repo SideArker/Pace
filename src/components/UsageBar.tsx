@@ -4,9 +4,10 @@ import type { UsageLimits, UsageWindow } from "../integrations/usage.js";
 
 function Meter({ label, window }: { label: string; window: UsageWindow }) {
   const used = Math.max(0, Math.min(100, window.usedPercent));
-  const blocks = Math.round(used / 5);
+  const left = 100 - used;
+  const blocks = Math.round(left / 5);
   const empty = Math.max(0, 20 - blocks);
-  const barColor = used > 90 ? "#F87171" : used > 75 ? "#FBBF24" : "#34D399";
+  const barColor = left < 10 ? "#F87171" : left < 25 ? "#FBBF24" : "#34D399";
 
   return (
     <Box gap={1}>
@@ -16,9 +17,9 @@ function Meter({ label, window }: { label: string; window: UsageWindow }) {
       <Text color={barColor}>{"█".repeat(blocks)}</Text>
       <Text color="#334155">{"░".repeat(empty)}</Text>
       <Text color={barColor} bold>
-        {used.toFixed(0)}%
+        {left.toFixed(0)}% left
       </Text>
-      <Text color="#64748B">({Math.round(100 - used)}% left)</Text>
+      <Text color="#64748B">({used.toFixed(0)}% used)</Text>
     </Box>
   );
 }
@@ -26,7 +27,7 @@ function Meter({ label, window }: { label: string; window: UsageWindow }) {
 export function UsageBar({ limits, error }: { limits?: UsageLimits; error?: string }) {
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="#334155" paddingX={1} marginTop={1}>
-      <Text color="#59E6A7" bold>◈ Rate Limits & Usage</Text>
+      <Text color="#59E6A7" bold>◈ Codex Usage</Text>
       {limits?.primary ? <Meter label={windowLabel(limits.primary)} window={limits.primary} /> : null}
       {limits?.secondary ? <Meter label={windowLabel(limits.secondary)} window={limits.secondary} /> : null}
       {!limits?.primary && !limits?.secondary ? (

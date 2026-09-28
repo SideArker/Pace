@@ -27,7 +27,7 @@ export type Line = {
 
 const activityColors = {
   thinking: "magentaBright",
-  command: "cyan",
+  command: "#38BDF8",
   files: "yellow",
   tool: "blueBright",
   search: "blue",
@@ -235,7 +235,7 @@ export function Transcript({
           ) : line.role === "activity" && line.activity ? (
             <Box flexDirection="column">
               <Box gap={1} marginLeft={1}>
-                <Text color={line.activity.completed ? "#64748B" : activityColors[line.activity.category]}>
+                <Text color={line.activity.category === "command" ? activityColors.command : line.activity.completed ? "#64748B" : activityColors[line.activity.category]} bold={line.activity.category === "command"}>
                   {line.activity.completed ? " " : "◌"} {activityIcons[line.activity.category]} {activityTitle(line)}{line.thinkingCount ? ` · ${line.thinkingCount} thoughts` : ""}
                 </Text>
                 {line.activity.detail ? (
