@@ -108,32 +108,32 @@ it('keeps a skill active across turns and routes only user requests', async () =
   expect(prompts[2]).toContain('No skills are active for this conversation');
 });
 
-it('runs a workflow command as a one-turn starting prompt', async () => {
-  dir = await mkdtemp(join(tmpdir(), 'pace-workflow-'));
+it('routes an @skill mention unchanged and applies the skill for that turn', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-mentions-'));
   await mkdir(join(dir, 'rigorous-code-review'));
-  await writeFile(join(dir, 'rigorous-code-review', 'SKILL.md'), '---\nname: rigorous-code-review\ndescription: Review Git changes.\nmetadata:\n  workflow: Review the current Git changes.\n---\nReview instructions');
+  await writeFile(join(dir, 'rigorous-code-review', 'SKILL.md'), '---\nname: rigorous-code-review\ndescription: Review Git changes.\n---\nReview instructions');
   const config = parseConfig({ ...DEFAULT_CONFIG, skillFolder: dir });
   const skill = (await configuredSkills(config))[0]!;
-  expect(skill.workflowPrompt).toBe('Review the current Git changes.');
-  const requests: string[] = [];
+  const requests: VexRequest[] = [];
   const prompts: string[] = [];
   const baseVex = singleVex('0:medium');
   const vex = { verify: async () => {}, choose: async (request: VexRequest) => {
-    requests.push(String(request.context.originalRequest));
+    requests.push(request);
     return baseVex.choose(request);
   } };
   const runner: CodexRunner = { async run(prompt) { prompts.push(prompt); return { result: 'done', completed: true }; } };
   const session = newSession(dir, 'auto');
   const orchestrator = new Orchestrator(new PaceStore(join(dir, 'store')), runner, vex);
-  await orchestrator.turn('/rigorous-code-review', session, config, () => {});
-  expect(requests).toContain('Review the current Git changes.');
-  expect(prompts[0]).toMatch(/^Review the current Git changes\.\n/);
+  await orchestrator.turn('@rigorous-code-review', session, config, () => {});
+  expect(requests[0]?.context.originalRequest).toBe('@rigorous-code-review');
+  expect(prompts[0]).toMatch(/^@rigorous-code-review\n/);
   expect(prompts[0]).toContain(`/rigorous-code-review (${skill.path})`);
   expect(session.activeSkills).toEqual([]);
   await orchestrator.turn('Next question', session, config, () => {});
   expect(prompts[1]).toContain('No skills are active for this conversation');
-  await orchestrator.turn('/rigorous-code-review inspect staged changes', session, config, () => {});
-  expect(requests).toContain('inspect staged changes');
-  expect(prompts[2]).toContain('Current user request:\ninspect staged changes\n');
+  expect(requests[2]?.context.recentConversation).toEqual([{ user: '@rigorous-code-review', assistant: 'done' }]);
+  await orchestrator.turn('@rigorous-code-review inspect staged changes', session, config, () => {});
+  expect(requests[4]?.context.originalRequest).toBe('@rigorous-code-review inspect staged changes');
+  expect(prompts[2]).toContain('Current user request:\n@rigorous-code-review inspect staged changes\n');
   expect(session.activeSkills).toEqual([]);
 });

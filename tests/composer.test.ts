@@ -30,9 +30,11 @@ it("recognizes modified Enter and Ctrl+J as newline input", () => {
 
 it("finds command tokens after text and newlines", () => {
   expect(commandToken("/mo")).toEqual({ start: 0, prefix: "/mo" });
+  expect(commandToken("@rig")).toEqual({ start: 0, prefix: "@rig" });
   expect(commandToken("explain this /mo")).toEqual({ start: 13, prefix: "/mo" });
   expect(commandToken("first line\n/mo")).toEqual({ start: 11, prefix: "/mo" });
   expect(commandToken("first line\nmore /mo")).toEqual({ start: 16, prefix: "/mo" });
+  expect(commandToken("review @rig")).toEqual({ start: 7, prefix: "@rig" });
   expect(commandToken("plain text")).toBeUndefined();
   expect(commandToken("/models option")).toBeUndefined();
 });
@@ -41,6 +43,7 @@ it("marks every slash command in multiline input", () => {
   expect(commandRanges("/usage and /models\nnext /help")).toEqual([
     { start: 0, end: 6 }, { start: 11, end: 18 }, { start: 24, end: 29 },
   ]);
+  expect(commandRanges("@review and /help")).toEqual([{ start: 0, end: 7 }, { start: 12, end: 17 }]);
 });
 
 it("shows the newline hint before typing", () => {

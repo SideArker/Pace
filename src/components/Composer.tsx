@@ -50,12 +50,12 @@ export function isNewlineKey(input: string, key: { return: boolean; shift: boole
 }
 
 export function commandToken(value: string): { start: number; prefix: string } | undefined {
-  const match = /(?:^|\s)(\/[^\s]*)$/.exec(value);
+  const match = /(?:^|\s)([\/@][^\s]*)$/.exec(value);
   return match ? { start: value.length - match[1]!.length, prefix: match[1]! } : undefined;
 }
 
 export function commandRanges(value: string): { start: number; end: number }[] {
-  return [...value.matchAll(/(?:^|\s)(\/[^\s]*)/g)].map(match => {
+  return [...value.matchAll(/(?:^|\s)([\/@][^\s]*)/g)].map(match => {
     const start = match.index + match[0].length - match[1]!.length;
     return { start, end: start + match[1]!.length };
   });
@@ -108,7 +108,7 @@ export function Composer({ value, onChange, onSubmit, history, disabled, shellMo
     }
     if (key.tab) { if (completion && completionStart !== undefined) { onComplete(); setCursor(completionStart + completion.length); } return; }
     if (key.return) {
-      if (completion && completionStart === 0 && value.trim() !== completion && value.startsWith("/")) {
+      if (completion && completionStart === 0 && value.trim() !== completion && (value.startsWith("/") || value.startsWith("@"))) {
         onComplete();
         setCursor(completion.length);
         return;

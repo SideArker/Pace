@@ -217,7 +217,7 @@ export default function App({ onClear }: { onClear: () => void }) {
     setStatusFor(sessionId, "Waiting for approval");
   };
   const skillCommands = (config ? enabledSkills(skills, config) : [])
-    .map(skill => `/${skill.name}`)
+    .flatMap(skill => [`/${skill.name}`, `@${skill.name}`])
     .filter(command => !commands.includes(command));
   const token = shellMode ? undefined : commandToken(draft);
   const matches = token
@@ -953,7 +953,7 @@ export default function App({ onClear }: { onClear: () => void }) {
     }
     const invokedSkill = skillCommand(text, enabledSkills(skills, config));
     const skillArgument = invokedSkill ? skillRequest(text, invokedSkill) : undefined;
-    const localSkillCommand = invokedSkill && !invokedSkill.workflowPrompt && (!skillArgument || skillArgument === "off" || !!skillOption(invokedSkill, skillArgument));
+    const localSkillCommand = invokedSkill && (!skillArgument || skillArgument === "off" || !!skillOption(invokedSkill, skillArgument));
     const stopCaveman = /^(?:stop caveman|normal mode)$/i.test(text) && session.activeSkills?.includes("caveman");
     if (vexState !== "connected" && !localSkillCommand && !stopCaveman) {
       add(
