@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -42,6 +42,29 @@ it('uses one persistent MCP connection and selects a validated route before Code
     expect(calls[1]).toMatchObject({ name: 'vex_choose', arguments: { options: [{ id: '0:medium' }, { id: '1:high' }] } });
     expect(seen).toEqual([{ model: 'gpt-6-sol', effort: 'high' }, { model: 'gpt-6-sol', effort: 'high' }]);
   } finally { await vex.close(); await server.close(); }
+});
+
+it('waits for a Vex decision that takes longer than twelve seconds', async () => {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const server = new Server({ name: 'slow-vex', version: '1' }, { capabilities: { tools: {} } });
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [{ name: 'vex_choose', inputSchema: { type: 'object' } }] }));
+  server.setRequestHandler(CallToolRequestSchema, async () => {
+    await new Promise(resolve => setTimeout(resolve, 13_000));
+    return { content: [{ type: 'text', text: 'decision' }], structuredContent: { choice: 'first' } };
+  });
+  await server.connect(serverTransport);
+  const vex = new VexRouter('', () => clientTransport);
+  try {
+    await vex.start();
+    vi.useFakeTimers();
+    const decision = vex.choose({ question: 'Pick one', context: {}, options: [{ id: 'first', description: 'First' }, { id: 'second', description: 'Second' }], constraints: 'Choose one.', decisionType: 'routing' });
+    await vi.advanceTimersByTimeAsync(13_000);
+    await expect(decision).resolves.toMatchObject({ choice: 'first' });
+  } finally {
+    vi.useRealTimers();
+    await vex.close();
+    await server.close();
+  }
 });
 
 it('blocks a coding turn when the Vex tool fails', async () => {

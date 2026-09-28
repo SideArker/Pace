@@ -181,7 +181,8 @@ export class VexRouter {
     const result = await this.client!.callTool(
       { name: "vex_choose", arguments: request },
       undefined,
-      { timeout: 12000 },
+      // Vex allows its provider request 45 seconds; leave time for its MCP response.
+      { timeout: 60000 },
     );
     if (result.isError) {
       const detail = Array.isArray(result.content)
