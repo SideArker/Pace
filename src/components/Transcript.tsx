@@ -64,7 +64,7 @@ const paceMicroLetters = [
   ["  █▀▀ ", "█▀█ ", "█▄▄ ", "██▄"],
 ] as const;
 
-export export const letterGradients = ["#59E6A7", "#4ADE80", "#2DD4BF", "#38BDF8"] as const;
+export const letterGradients = ["#59E6A7", "#4ADE80", "#2DD4BF", "#38BDF8"] as const;
 
 export function Header({
   project,
