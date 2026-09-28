@@ -1,5 +1,32 @@
 import React, { useState } from "react";
-import { Box, Text, useInput, usePaste } from "ink";
+import { Box, Text, useInput, usePaste, useStdout } from "ink";
+import { letterGradients } from "./Transcript.js";
+
+export function paceGradient(column: number, width: number): string {
+  const position = Math.max(0, Math.min(1, column / Math.max(1, width - 1))) * (letterGradients.length - 1);
+  const first = Math.min(Math.floor(position), letterGradients.length - 2);
+  const blend = position - first;
+  const start = letterGradients[first]!;
+  const end = letterGradients[first + 1]!;
+  const channel = (offset: number) => Math.round(
+    parseInt(start.slice(offset, offset + 2), 16) * (1 - blend) +
+    parseInt(end.slice(offset, offset + 2), 16) * blend,
+  ).toString(16).padStart(2, "0");
+  return `#${channel(1)}${channel(3)}${channel(5)}`.toUpperCase();
+}
+
+export function inputColumns(value: string, width: number, shellMode: boolean): number[] {
+  const start = Math.min(shellMode ? 10 : 3, Math.max(0, width - 2)); // App padding, prompt, and margin.
+  const lineWidth = Math.max(1, width - start - 1); // Keep App's right padding.
+  const columns: number[] = [];
+  let offset = 0;
+  for (let index = 0; index <= value.length; index++) {
+    columns.push(start + offset);
+    if (value[index] === "\n") offset = 0;
+    else offset = (offset + 1) % lineWidth;
+  }
+  return columns;
+}
 
 export function isNewlineKey(input: string, key: { return: boolean; shift: boolean; ctrl: boolean; meta: boolean }): boolean {
   return (key.return && (key.shift || key.ctrl || key.meta)) || (key.ctrl && input === "j") || input === "\n"
@@ -26,6 +53,8 @@ type Props = {
 };
 
 export function Composer({ value, onChange, onSubmit, history, disabled, shellMode, placeholder, completion, completionStart, onComplete, onHistory }: Props) {
+  const { stdout } = useStdout();
+  const terminalWidth = stdout.columns ?? 80;
   const [cursor, setCursor] = useState(0);
   const [historyIndex, setHistoryIndex] = useState<number>();
   const [savedDraft, setSavedDraft] = useState("");
@@ -76,6 +105,15 @@ export function Composer({ value, onChange, onSubmit, history, disabled, shellMo
   const before = value.slice(0, cursor);
   const at = value[cursor] ?? " ";
   const after = value.slice(cursor + (cursor < value.length ? 1 : 0));
+  const columns = inputColumns(value, terminalWidth, shellMode);
+  const renderText = (text: string, start: number) => {
+    let position = start;
+    return [...text].map((character) => {
+      const index = position;
+      position += character.length;
+      return <Text key={index} color={paceGradient(columns[index]!, terminalWidth)} >{character}</Text>;
+    });
+  };
   const prefix = completionStart === undefined ? "" : value.slice(completionStart);
   const hasGhost = !!(completion && prefix && completion.startsWith(prefix) && cursor === value.length);
   const ghostText = hasGhost ? completion.slice(prefix.length) : "";
@@ -93,13 +131,11 @@ export function Composer({ value, onChange, onSubmit, history, disabled, shellMo
             <Text color="#59E6A7" bold>❯</Text>
           </Box>
         )}
-        <Text color="white">{value ? before : ""}</Text>
-        <Text inverse color={value ? "#59E6A7" : "gray"}>
+        {value ? renderText(before, 0) : null}
+        <Text inverse color={value ? paceGradient(columns[cursor]!, terminalWidth) : "gray"}>
           {value ? at : placeholder[0] ?? " "}
         </Text>
-        <Text color={value ? "white" : "gray"}>
-          {value ? after : placeholder.slice(1)}
-        </Text>
+        {value ? renderText(after, cursor + (cursor < value.length ? 1 : 0)) : <Text color="gray">{placeholder.slice(1)}</Text>}
         {hasGhost ? (
           <Text color="#64748B" italic>
             {ghostText}
