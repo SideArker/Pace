@@ -18,6 +18,7 @@ export async function execTurn(prompt: string, project = process.cwd()): Promise
     const session = await store.latest(project) ?? newSession(project, config.routingMode);
     const outcome = await new Orchestrator(store, new AppServerRunner(), vex).turn(prompt, session, config, progress => {
       if (progress.kind === "error") console.error(progress.text);
+      if (progress.kind === "system") console.error(`System: ${progress.text}`);
       if (progress.kind === "approval") {
         console.error(`Denied command approval in non-interactive mode: ${progress.command}`);
         progress.respond("decline");

@@ -377,6 +377,9 @@ export default function App({ onClear }: { onClear: () => void }) {
         text: turn.prompt,
         spaceBefore: newLines.length > 0,
       });
+      for (const message of turn.systemMessages ?? []) newLines.push({
+        id: id++, role: "system", text: message, spaceBefore: false,
+      });
       newLines.push({
         id: id++,
         role: turn.failed ? "error" : "codex",
@@ -1009,6 +1012,7 @@ export default function App({ onClear }: { onClear: () => void }) {
           }
           if (progress.kind === "route")
             setStatusFor(sessionId, `Using ${modelName(progress.route)}…`);
+          if (progress.kind === "system") addFor(sessionId, "system", progress.text);
           if (progress.kind === "activity") {
             activityFor(sessionId, { ...progress, id: `turn-${turnId}-${progress.id}` });
             setStatusFor(sessionId, progress.title);
