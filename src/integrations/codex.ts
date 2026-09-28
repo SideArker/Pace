@@ -302,7 +302,7 @@ export class AppServerRunner implements CodexRunner {
         ...(route.model ? { model: route.model } : {}),
         cwd,
         approvalPolicy: mode === "side" ? "never" : "on-request",
-        sandbox: mode === "side" ? "readOnly" : "workspaceWrite",
+        sandbox: mode === "side" ? "read-only" : "workspace-write",
         serviceName: "pace",
       });
       thread = isRecord(threadResult) && isRecord(threadResult.thread) ? threadResult.thread : undefined;
@@ -322,7 +322,7 @@ export class AppServerRunner implements CodexRunner {
           input: [{ type: "text", text: mode === "side" ? prompt : artifactPrompt(prompt) }],
           cwd,
           approvalPolicy: mode === "side" ? "never" : "on-request",
-          sandboxPolicy: mode === "side" ? { type: "readOnly" } : { type: "workspaceWrite", writableRoots, networkAccess: false },
+          sandboxPolicy: mode === "side" ? { type: "readOnly", networkAccess: false } : { type: "workspaceWrite", writableRoots, networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false },
           ...(route.model ? { model: route.model } : {}),
           ...(route.effort ? { effort: route.effort } : {}),
         });

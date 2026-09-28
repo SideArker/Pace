@@ -92,7 +92,7 @@ it('stops before completion when scout report lacks verifiable findings schema',
   await expect(new Orchestrator(new PaceStore(dir), runner, vex).turn('Implement feature', session, config, () => {})).rejects.toThrow('Invalid stage handoff');
   expect(mainRuns).toBe(0);
   expect(session.turns.at(-1)?.failed).toBe(true);
-  expect(session.turns.at(-1)?.stages).toHaveLength(1);
+  expect(session.turns.at(-1)?.stages).toHaveLength(2);
 });
 
 it('passes an actionable read-only plan into the execution stage', async () => {
