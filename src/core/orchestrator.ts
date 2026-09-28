@@ -116,13 +116,48 @@ export class Orchestrator {
         const sideRoute = chosenRoute((await choose(stageRequest(prompt, session.turns, stageModels, objective, undefined, enabled, prompts), objective)).choice, stageModels);
         onProgress({ kind: 'route', route: sideRoute });
         onProgress({ kind: 'status', text: `${objective}: ${sideRoute.model} · ${sideRoute.effort}` });
-        const stageStart = performance.now();
-        const side = await this.runner.run(handoffPrompt(shape, prompt, session.turns, prompts), session.projectPath, sideRoute, undefined,
-          progress => { if (progress.kind === 'activity') onProgress(progress); }, signal, 'side');
-        const sideStage: StageRecord = { objective, route: sideRoute, durationMs: Math.round(performance.now() - stageStart), usage: side.usage, estimatedCostUsd: costForUsage(sideRoute, side.usage) };
-        stages.push(sideStage);
-        handoff = structuredHandoff(side.result);
-        sideStage.handoff = handoff;
+        const basePrompt = handoffPrompt(shape, prompt, session.turns, prompts);
+        let previousResult: string | undefined;
+        let handoffError: unknown;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const correction = previousResult
+            ? `\n\nYour previous report was rejected (${String(handoffError)}). Rewrite it as exactly one JSON object following the required handoff schema. Previous report:\n${previousResult.slice(0, 10_000)}`
+            : "";
+          const stageStart = performance.now();
+          const side = await this.runner.run(
+            `${basePrompt}${correction}`,
+            session.projectPath,
+            sideRoute,
+            undefined,
+            (progress) => {
+              if (progress.kind === "activity") onProgress(progress);
+            },
+            signal,
+            "side",
+          );
+          signal?.throwIfAborted();
+          const sideStage: StageRecord = {
+            objective,
+            route: sideRoute,
+            durationMs: Math.round(performance.now() - stageStart),
+            usage: side.usage,
+            estimatedCostUsd: costForUsage(sideRoute, side.usage),
+          };
+          stages.push(sideStage);
+          try {
+            handoff = structuredHandoff(side.result);
+            sideStage.handoff = handoff;
+            break;
+          } catch (error) {
+            previousResult = side.result;
+            handoffError = error;
+            if (attempt === 1) throw error;
+            onProgress({
+              kind: "status",
+              text: "Correcting the read-only report format...",
+            });
+          }
+        }
       }
       if (auto) {
         const objective = shape === 'single' ? prompts.objectives.single : prompts.objectives.afterHandoff;

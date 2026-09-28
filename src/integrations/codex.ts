@@ -301,7 +301,7 @@ export class AppServerRunner implements CodexRunner {
         ...(threadId ? { threadId } : {}),
         ...(route.model ? { model: route.model } : {}),
         cwd,
-        approvalPolicy: mode === "side" ? "never" : "onRequest",
+        approvalPolicy: mode === "side" ? "never" : "on-request",
         sandbox: mode === "side" ? "readOnly" : "workspaceWrite",
         serviceName: "pace",
       });
@@ -321,7 +321,7 @@ export class AppServerRunner implements CodexRunner {
           threadId: id,
           input: [{ type: "text", text: mode === "side" ? prompt : artifactPrompt(prompt) }],
           cwd,
-          approvalPolicy: mode === "side" ? "never" : "onRequest",
+          approvalPolicy: mode === "side" ? "never" : "on-request",
           sandboxPolicy: mode === "side" ? { type: "readOnly" } : { type: "workspaceWrite", writableRoots, networkAccess: false },
           ...(route.model ? { model: route.model } : {}),
           ...(route.effort ? { effort: route.effort } : {}),
