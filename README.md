@@ -43,7 +43,10 @@ For development, use `npm run dev` instead of linking. Interactive `pace` opens 
 | `/artifacts` | List Markdown artifacts in this project's `.pace/artifacts` directory |
 | `/trust add <folder>` | Allow Codex to edit an additional existing folder |
 | `/trust remove <folder>` | Remove an additional folder; `/trust list` shows current entries |
-| `/skills <folder>` | Discover skills in a selected folder; `/skills` refreshes and `/skills off` clears it |
+| `/skills [folder]` | Discover skills in the default or selected folder; `/skills` refreshes the list |
+| `/skills enable <name>` / `/skills disable <name>` | Enable or disable a discovered skill command |
+| `/skills default` / `/skills off` | Use the default skill folder or turn skill discovery off |
+| `/<skill> [request]` | Invoke an enabled skill, such as `/caveman` or `/caveman explain this` |
 | `/route` | Show the last recorded model, effort, and route explanation |
 | `/stats` | Show observed time, tokens, and failures for the current conversation's last 20 turns |
 | `/clear` | Clear the terminal, show the entry screen, and start a new conversation |
@@ -61,7 +64,7 @@ Run `pace exec "your request"` from a project directory to continue its active c
 
 Use `/trust add C:\path\to\folder` to give Codex workspace-write access to an existing folder outside the project. Pace resolves and checks each folder before every coding turn. Remove access with `/trust remove <folder>`. Trusted folders are stored in `~/.pace/config.json` as `trustedFolders`. Side questions stay read-only and do not receive trusted folders.
 
-Use `/skills C:\path\to\skills` to select a folder containing `<skill-name>/SKILL.md` directories. Pace lists discovered names and descriptions, then passes their metadata and file paths to Codex on coding turns. Codex reads a relevant `SKILL.md` when it chooses to use the skill. Pace scans the selected folder and its immediate children, up to 32 skills. The folder is not granted write access unless you separately trust it. Use `/skills off` to stop including it. The setting is `skillFolder` in `~/.pace/config.json`.
+Pace discovers skills in `~/.agents/skills` by default (`C:\Users\<user>\.agents\skills` on Windows and `/home/<user>/.agents/skills` on Linux). Use `/skills C:\path\to\skills` to select another folder containing `<skill-name>/SKILL.md` directories. `/skills` refreshes the list after you add a skill. Discovered skills are enabled by default and appear as slash commands in completion. Use `/skills disable caveman` to hide `/caveman`, and `/skills enable caveman` to restore it. An enabled command can take a request, for example `/caveman summarize these changes`; Pace tells Codex to read that skill's `SKILL.md` for the turn. Pace also passes enabled skills' metadata and file paths to Codex on ordinary coding turns so it can choose relevant skills. Pace scans the selected folder and its immediate children, up to 32 skills. The folder is not granted write access unless you separately trust it. `/skills off` stops discovery and `/skills default` restores the home folder. These settings are stored in `~/.pace/config.json` as `skillFolder` and `disabledSkills`.
 
 ## Models and routing
 

@@ -2,7 +2,7 @@ import { afterEach, expect, it } from 'vitest';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { discoverSkills, skillPrompt } from '../src/core/system/skills.js';
+import { configuredSkills, defaultSkillFolder, discoverSkills, enabledSkills, skillCommand, skillPrompt } from '../src/core/system/skills.js';
 import { existingFolder } from '../src/core/system/folders.js';
 import { parseConfig, DEFAULT_CONFIG } from '../src/shared/config.js';
 import { Orchestrator } from '../src/core/orchestrator.js';
@@ -42,10 +42,34 @@ it('validates trusted folders before execution and passes skill names to the run
   await orchestrator.turn('Check this', newSession(dir, 'auto'), config, () => {});
   expect(folders).toEqual([trusted]);
   expect(received).toContain('review: Review code changes.');
+  await orchestrator.turn('/review inspect this', newSession(dir, 'auto'), config, () => {});
+  expect(received).toContain(`Read ${join(skillFolder, 'review', 'SKILL.md')}`);
+  await orchestrator.turn('Check this', newSession(dir, 'auto'), { ...config, disabledSkills: ['review'] }, () => {});
+  expect(received).not.toContain('review: Review code changes.');
   await expect(orchestrator.turn('Check this', newSession(dir, 'auto'), { ...config, trustedFolders: [join(dir, 'missing')] }, () => {})).rejects.toThrow();
 });
 
 it('rejects invalid folder settings', () => {
   expect(() => parseConfig({ ...DEFAULT_CONFIG, trustedFolders: 'all' })).toThrow('trustedFolders');
   expect(() => parseConfig({ ...DEFAULT_CONFIG, skillFolder: 42 })).toThrow('skillFolder');
+  expect(() => parseConfig({ ...DEFAULT_CONFIG, disabledSkills: ['/bad'] })).toThrow('disabledSkills');
+});
+
+it('uses the home skills folder by default and allows disabling it', async () => {
+  expect(defaultSkillFolder()).toBe(join((await import('node:os')).homedir(), '.agents', 'skills'));
+  expect(await configuredSkills({ ...DEFAULT_CONFIG, skillFolder: null })).toEqual([]);
+  expect(parseConfig({ ...DEFAULT_CONFIG, skillFolder: null }).skillFolder).toBeNull();
+});
+
+it('invokes enabled skill commands with their file path and user arguments', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-skills-'));
+  await mkdir(join(dir, 'caveman'));
+  await writeFile(join(dir, 'caveman', 'SKILL.md'), '---\nname: caveman\ndescription: Respond briefly.\n---\nInstructions');
+  const config = parseConfig({ ...DEFAULT_CONFIG, skillFolder: dir });
+  const skills = enabledSkills(await configuredSkills(config), config);
+  expect(skillCommand('/caveman explain this', skills)?.name).toBe('caveman');
+  expect(skillPrompt('/caveman explain this', skills)).toContain(`Read ${skills[0]!.path} and follow that skill for this turn`);
+  expect(skillPrompt('/caveman explain this', skills)).toContain('The text after the command is the user\'s request.');
+  expect(enabledSkills(skills, { ...config, disabledSkills: ['caveman'] })).toEqual([]);
+  expect(skillCommand('/caveman', enabledSkills(skills, { ...config, disabledSkills: ['caveman'] }))).toBeUndefined();
 });

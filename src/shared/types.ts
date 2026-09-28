@@ -13,7 +13,8 @@ export type Config = {
   defaultRoute: Route;
   routingMode: "auto" | "manual";
   trustedFolders?: string[];
-  skillFolder?: string;
+  skillFolder?: string | null;
+  disabledSkills?: string[];
 };
 export type TurnSummary = {
   prompt: string;

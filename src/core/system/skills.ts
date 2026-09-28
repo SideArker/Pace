@@ -1,8 +1,30 @@
 import { readFile, readdir, realpath } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, sep } from "node:path";
+import { homedir } from "node:os";
+import type { Config } from "../../shared/types.js";
 import { existingFolder } from "./folders.js";
 
 export type Skill = { name: string; description: string; path: string };
+
+export const defaultSkillFolder = () => join(homedir(), ".agents", "skills");
+
+export async function configuredSkills(config: Config): Promise<Skill[]> {
+  if (config.skillFolder === null) return [];
+  try {
+    return await discoverSkills(config.skillFolder ?? defaultSkillFolder());
+  } catch (error) {
+    if (config.skillFolder === undefined && (error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+export const enabledSkills = (skills: Skill[], config: Config) =>
+  skills.filter(skill => !config.disabledSkills?.includes(skill.name));
+
+export function skillCommand(prompt: string, skills: Skill[]): Skill | undefined {
+  const command = /^\/([^\s]+)(?:\s|$)/.exec(prompt)?.[1]?.toLowerCase();
+  return skills.find(skill => skill.name.toLowerCase() === command && /^[a-z0-9][a-z0-9_-]*$/i.test(skill.name));
+}
 
 export async function discoverSkills(input: string): Promise<Skill[]> {
   const folder = await existingFolder(input);
@@ -32,5 +54,7 @@ export async function discoverSkills(input: string): Promise<Skill[]> {
 
 export function skillPrompt(prompt: string, skills: Skill[]): string {
   if (!skills.length) return prompt;
-  return `${prompt}\n\nAvailable skills from the user-selected folder (read SKILL.md before using a relevant skill):\n${skills.map(skill => `- ${skill.name}: ${skill.description} (${skill.path})`).join("\n")}`;
+  const invoked = skillCommand(prompt, skills);
+  const instruction = invoked ? `The user invoked /${invoked.name}. Read ${invoked.path} and follow that skill for this turn. The text after the command is the user's request.` : undefined;
+  return `${prompt}\n\n${instruction ? `${instruction}\n\n` : ""}Available skills (read SKILL.md before using a relevant skill):\n${skills.map(skill => `- ${skill.name}: ${skill.description} (${skill.path})`).join("\n")}`;
 }
