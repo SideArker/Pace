@@ -16,7 +16,7 @@ import type { UsageLimits } from "../integrations/usage.js";
 import { Composer, commandToken } from "./Composer.js";
 import { Header, Transcript, type Line } from "./Transcript.js";
 import { UsageBar } from "./UsageBar.js";
-import { CommandMenu, ConvoMenu, ModelMenu, ResumeMenu } from "./Menus.js";
+import { CommandMenu, ConversationPicker, ConvoMenu, ModelMenu, ResumeMenu, type ConversationChoice } from "./Menus.js";
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 const commands = [
@@ -39,6 +39,17 @@ const commands = [
 ];
 const modelCatalog = ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra"];
 const spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+// Words shown beside the animated spinner during agent thinking.
+const thinkingWords = [
+  "Pondering",
+  "Connecting dots",
+  "Untangling",
+  "Scheming",
+  "Percolating",
+  "Chasing clues",
+  "Cooking",
+  "Daydreaming",
+] as const;
 const folderArgument = (value: string) => value.trim().replace(/^(?:"(.*)"|'(.*)')$/, (_match, double: string | undefined, single: string | undefined) => double ?? single ?? value);
 const manualApprovalCommand = (command: string) => /\bgit\b[^;&|()\n]*\s(?:push|reset)\b/i.test(command);
 function displayShellCommand(command: string): string | undefined {
@@ -78,6 +89,8 @@ const store = new PaceStore();
 const vex = new VexRouter();
 const runner = new AppServerRunner();
 const orchestrator = new Orchestrator(store, runner, vex);
+type TurnJob = { session: Session; controller: AbortController; prompt: string };
+type PendingApproval = Extract<Progress, { kind: "approval" }> & { owner?: AbortController };
 
 export default function App({ onClear }: { onClear: () => void }) {
   const { exit } = useApp();
@@ -85,14 +98,16 @@ export default function App({ onClear }: { onClear: () => void }) {
   const [config, setConfig] = useState<Config>();
   const [skills, setSkills] = useState<Skill[]>([]);
   const [session, setSession] = useState<Session>();
+  const [openSessions, setOpenSessions] = useState<Session[]>([]);
+  const [pickerFocused, setPickerFocused] = useState(false);
+  const [pickerIndex, setPickerIndex] = useState(0);
   const [lines, setLines] = useState<Line[]>([]);
   const [status, setStatus] = useState("Loading…");
-  const [busy, setBusy] = useState(false);
+  const [runningIds, setRunningIds] = useState<string[]>([]);
   const [sideBusy, setSideBusy] = useState(false);
   const [draft, setDraft] = useState("");
   const [history, setHistory] = useState<string[]>([]);
   const [outputsExpanded, setOutputsExpanded] = useState(false);
-  const [detailsExpanded, setDetailsExpanded] = useState(true);
   const [usageLimits, setUsageLimits] = useState<UsageLimits>();
   const [usageError, setUsageError] = useState<string>();
   const [showUsage, setShowUsage] = useState(false);
@@ -116,51 +131,89 @@ export default function App({ onClear }: { onClear: () => void }) {
   const [menuIndex, setMenuIndex] = useState(0);
   const nextId = useRef(0);
   const turnSequence = useRef(0);
-  const abort = useRef<AbortController | undefined>(undefined);
-  const pendingApproval = useRef<Extract<Progress, { kind: "approval" }> | undefined>(undefined);
-  const activePrompt = useRef<string | undefined>(undefined);
+  const jobs = useRef(new Map<string, TurnJob>());
+  const activeSessionId = useRef<string | undefined>(undefined);
+  const sessionLines = useRef(new Map<string, Line[]>());
+  const sessionDrafts = useRef(new Map<string, string>());
+  const preSessionLines = useRef<Line[]>([]);
+  const sessionStatuses = useRef(new Map<string, string>());
+  const pendingApprovals = useRef(new Map<string, PendingApproval>());
   const sideAbort = useRef<AbortController | undefined>(undefined);
+  const titleAborts = useRef(new Map<string, AbortController>());
   const shells = useRef(new Set<{ kill: () => boolean }>());
+  const lastInterruptAt = useRef(0);
+  const switchingSession = useRef(false);
+  const busy = !!session && runningIds.includes(session.id);
+  const rememberSession = (target: Session) => setOpenSessions(old => {
+    const index = old.findIndex(item => item.id === target.id);
+    if (index < 0) return [...old, target];
+    return old.map((item, at) => at === index ? target : item);
+  });
+  const pickerChoices: ConversationChoice[] = openSessions.map(item => ({
+    id: item.id,
+    title: item.title,
+    prompt: jobs.current.get(item.id)?.prompt ?? item.turns.at(-1)?.prompt ?? "",
+    state: pendingApprovals.current.has(item.id) ? "approval" : runningIds.includes(item.id) ? "running" : "ready",
+  }));
   const stopSideQuestion = () => {
     const pending = sideAbort.current;
     sideAbort.current = undefined;
     pending?.abort();
     setSideBusy(false);
   };
-  const add = (role: Line["role"], text: string) =>
-    setLines((old) => [
-      ...old,
-      {
-        id: nextId.current++,
-        role,
-        text,
-        spaceBefore: role === "you" && old.length > 0,
-      },
-    ]);
-  const activity = (event: Extract<Progress, { kind: "activity" }>) => setLines(old => {
+  const addFor = (sessionId: string, role: Line["role"], text: string) => {
+    const old = sessionLines.current.get(sessionId) ?? [];
+    const updated: Line[] = [...old, {
+      id: nextId.current++, role, text,
+      spaceBefore: role === "you" && old.length > 0,
+    }];
+    sessionLines.current.set(sessionId, updated);
+    if (activeSessionId.current === sessionId) setLines(updated);
+  };
+  const add = (role: Line["role"], text: string) => {
+    if (activeSessionId.current) addFor(activeSessionId.current, role, text);
+    else {
+      const old = preSessionLines.current;
+      const updated: Line[] = [...old, { id: nextId.current++, role, text, spaceBefore: role === "you" && old.length > 0 }];
+      preSessionLines.current = updated;
+      setLines(updated);
+    }
+  };
+  const activityFor = (sessionId: string, event: Extract<Progress, { kind: "activity" }>) => {
+    const old = sessionLines.current.get(sessionId) ?? [];
     const sourceId = event.id;
     const display = event.category === "command" ? formatCommandActivity(event.title, event.detail) : { title: event.title, detail: event.detail };
     const update = { text: display.title, activity: { category: event.category, detail: display.detail, completed: event.completed } };
     const index = old.findIndex(line => line.sourceId === sourceId);
-    if (index < 0) return [...old, { id: nextId.current++, role: "activity", sourceId, spaceBefore: false, ...update }];
-    return old.map((line, at) => at === index ? { ...line, ...update } : line);
-  });
-  const showApproval = (request: Extract<Progress, { kind: "approval" }>) => {
-    if (pendingApproval.current) {
+    const updated: Line[] = index < 0
+      ? [...old, { id: nextId.current++, role: "activity", sourceId, spaceBefore: false, ...update }]
+      : old.map((line, at) => at === index ? { ...line, ...update } : line);
+    sessionLines.current.set(sessionId, updated);
+    if (activeSessionId.current === sessionId) setLines(updated);
+  };
+  const activity = (event: Extract<Progress, { kind: "activity" }>) => {
+    if (activeSessionId.current) activityFor(activeSessionId.current, event);
+  };
+  const setStatusFor = (sessionId: string, value: string) => {
+    sessionStatuses.current.set(sessionId, value);
+    if (activeSessionId.current === sessionId) setStatus(value);
+  };
+  const showApproval = (request: Extract<Progress, { kind: "approval" }>, sessionId = activeSessionId.current, owner?: AbortController) => {
+    if (!sessionId || pendingApprovals.current.has(sessionId)) {
       request.respond("decline");
       return;
     }
-    const pending = { ...request, respond: (decision: ApprovalDecision) => {
-      if (pendingApproval.current?.id !== request.id) return;
-      pendingApproval.current = undefined;
-      setApproval(undefined);
+    const pending: PendingApproval = { ...request, owner, respond: (decision: ApprovalDecision) => {
+      if (pendingApprovals.current.get(sessionId)?.id !== request.id) return;
+      pendingApprovals.current.delete(sessionId);
+      if (activeSessionId.current === sessionId) setApproval(undefined);
       request.respond(decision);
-      add("info", decision === "accept" ? "Approved once." : "Declined.");
-      setStatus(decision === "accept" ? "Resuming" : "Stopped command");
+      addFor(sessionId, "info", decision === "accept" ? "Approved once." : "Declined.");
+      setStatusFor(sessionId, decision === "accept" ? "Resuming" : "Stopped command");
     } };
-    pendingApproval.current = pending;
-    setApproval(pending);
-    setStatus("Waiting for approval");
+    pendingApprovals.current.set(sessionId, pending);
+    if (activeSessionId.current === sessionId) setApproval(pending);
+    setStatusFor(sessionId, "Waiting for approval");
   };
   const skillCommands = (config ? enabledSkills(skills, config) : [])
     .map(skill => `/${skill.name}`)
@@ -181,13 +234,15 @@ export default function App({ onClear }: { onClear: () => void }) {
     ]),
   ];
   useEffect(() => {
-    if (!busy && !sideBusy && shellJobs === 0) return;
+    if (!runningIds.length && !sideBusy && shellJobs === 0) return;
     const timer = setInterval(() => setTick((value) => value + 1), 80);
     return () => clearInterval(timer);
-  }, [busy, sideBusy, shellJobs]);
+  }, [runningIds.length, sideBusy, shellJobs]);
   useEffect(
     () => () => {
-      pendingApproval.current?.respond("decline");
+      for (const pending of pendingApprovals.current.values()) pending.respond("decline");
+      for (const job of jobs.current.values()) job.controller.abort();
+      for (const controller of titleAborts.current.values()) controller.abort();
       for (const child of shells.current) child.kill();
     },
     [],
@@ -222,7 +277,11 @@ export default function App({ onClear }: { onClear: () => void }) {
       setConfig(loaded);
       try { setSkills(await configuredSkills(loaded)); }
       catch (error) { add("error", `Could not discover skills: ${String(error)}`); }
-      setSession(newSession(project, loaded.routingMode));
+      const fresh = newSession(project, loaded.routingMode);
+      activeSessionId.current = fresh.id;
+      sessionLines.current.set(fresh.id, preSessionLines.current);
+      setSession(fresh);
+      rememberSession(fresh);
       for (const notice of notices) add("error", notice);
       setStatus("Ready · /help for commands");
     };
@@ -309,8 +368,8 @@ export default function App({ onClear }: { onClear: () => void }) {
   };
   const renderSessionTurns = (targetSession: Session) => {
     const newLines: Line[] = [];
-    let id = 0;
-    for (const turn of targetSession.turns.slice(-8)) {
+    let id = nextId.current;
+    for (const turn of targetSession.turns) {
       newLines.push({
         id: id++,
         role: "you",
@@ -347,50 +406,117 @@ export default function App({ onClear }: { onClear: () => void }) {
       });
     }
     nextId.current = id;
-    setLines(newLines);
+    sessionLines.current.set(targetSession.id, newLines);
+    if (activeSessionId.current === targetSession.id) setLines(newLines);
   };
   const activateSession = async (chosen: Session) => {
+    if (switchingSession.current) return;
+    switchingSession.current = true;
+    const previousId = activeSessionId.current;
+    const target = jobs.current.get(chosen.id)?.session ?? chosen;
+    if (previousId) sessionDrafts.current.set(previousId, draft);
+    activeSessionId.current = target.id;
     try {
-      await store.activate(chosen);
+      await store.activate(target);
       stopSideQuestion();
       onClear();
-      setSession(chosen);
+      setSession(target);
+      rememberSession(target);
       setResumeMenu(false);
       setConvoMenu(false);
+      setPickerFocused(false);
+      const targetIndex = openSessions.findIndex(item => item.id === target.id);
+      setPickerIndex(targetIndex < 0 ? openSessions.length : targetIndex);
+      setDraft(sessionDrafts.current.get(target.id) ?? "");
       setShowHeader(true);
       setScrollBack(0);
-      renderSessionTurns(chosen);
-      setHistory(chosen.turns.map(t => t.prompt));
+      if (sessionLines.current.has(target.id)) setLines(sessionLines.current.get(target.id)!);
+      else renderSessionTurns(target);
+      setApproval(pendingApprovals.current.get(target.id));
+      setHistory(target.turns.map(t => t.prompt));
       add(
         "info",
         `Resumed ${chosen.id.slice(0, 8)} · ${chosen.route.model ?? "Codex default"}`,
       );
-      setStatus("Ready");
+      setStatus(sessionStatuses.current.get(target.id) ?? "Ready");
     } catch (error) {
+      activeSessionId.current = previousId;
+      if (previousId) setLines(sessionLines.current.get(previousId) ?? []);
       add("error", `Could not activate conversation: ${String(error)}`);
+    } finally {
+      switchingSession.current = false;
     }
   };
+  const interrupt = () => {
+    const now = Date.now();
+    if (now - lastInterruptAt.current < 150) return;
+    lastInterruptAt.current = now;
+    const id = activeSessionId.current;
+    const pending = id ? pendingApprovals.current.get(id) : undefined;
+    pending?.respond("decline");
+    const job = id ? jobs.current.get(id) : undefined;
+    if (job || sideAbort.current) {
+      job?.controller.abort();
+      sideAbort.current?.abort();
+      if (id) setStatusFor(id, "Cancelling…");
+    } else if (jobs.current.size) {
+      add("info", `${jobs.current.size} background turn(s) running. Use /resume to switch or /exit to quit.`);
+    } else exit();
+  };
+  const interruptRef = useRef(interrupt);
+  interruptRef.current = interrupt;
+  useEffect(() => {
+    const onSignal = () => interruptRef.current();
+    process.on("SIGINT", onSignal);
+    return () => { process.off("SIGINT", onSignal); };
+  }, []);
+  const focusPicker = () => {
+    if (openSessions.length < 2 || modelMenu || resumeMenu || convoMenu) return false;
+    const current = openSessions.findIndex(item => item.id === activeSessionId.current);
+    setPickerIndex((current + 1) % openSessions.length);
+    setPickerFocused(true);
+    return true;
+  };
   useInput((input, key) => {
-    if (approval) {
-      if (input.toLowerCase() === "y") pendingApproval.current?.respond("accept");
-      else if (input.toLowerCase() === "n" || key.escape) pendingApproval.current?.respond("decline");
-      else if (key.ctrl && input === "c") {
-        abort.current?.abort();
-        pendingApproval.current?.respond("decline");
+    if (key.ctrl && input === "c") { interrupt(); return; }
+    if (pickerFocused) {
+      if (key.escape || key.tab) setPickerFocused(false);
+      else if (key.upArrow) {
+        if (pickerIndex === 0) setPickerFocused(false);
+        else setPickerIndex(value => value - 1);
+      } else if (key.downArrow) setPickerIndex(value => (value + 1) % openSessions.length);
+      else if (key.return) {
+        const chosen = openSessions[pickerIndex];
+        setPickerFocused(false);
+        if (chosen && chosen.id !== activeSessionId.current) void activateSession(chosen);
       }
       return;
     }
-    if (key.escape || (key.ctrl && input === "c")) {
-      if (busy || sideBusy) {
-        abort.current?.abort();
+    if (approval) {
+      if (key.downArrow && focusPicker()) return;
+      const pending = activeSessionId.current ? pendingApprovals.current.get(activeSessionId.current) : undefined;
+      if (input.toLowerCase() === "y") pending?.respond("accept");
+      else if (input.toLowerCase() === "n" || key.escape) pending?.respond("decline");
+      return;
+    }
+    if (key.escape && !modelMenu && !resumeMenu && !convoMenu && !pickerFocused) {
+      const job = activeSessionId.current ? jobs.current.get(activeSessionId.current) : undefined;
+      if (job || sideAbort.current) {
+        job?.controller.abort();
         sideAbort.current?.abort();
         setStatus("Cancelling…");
-      } else if (key.ctrl && input === "c") exit();
+        return;
+      }
     }
     if (key.ctrl && input === "o") setOutputsExpanded(value => !value);
-    if (key.ctrl && input === "e") setDetailsExpanded(value => !value);
-    if (key.pageUp) setScrollBack(value => Math.min(value + Math.max(8, (stdout.rows ?? 24) - 12), lines.length));
-    if (key.pageDown) setScrollBack(value => Math.max(0, value - Math.max(8, (stdout.rows ?? 24) - 12)));
+    if (key.pageUp) {
+      setScrollBack(value => Math.min(value + Math.max(1, (stdout.rows ?? 24) - 12), lines.length));
+      return;
+    }
+    if (key.pageDown) {
+      setScrollBack(value => Math.max(0, value - Math.max(1, (stdout.rows ?? 24) - 12)));
+      return;
+    }
     if (modelMenu) {
       const size = modelMenu === "models" ? menuModels.length : EFFORTS.length;
       if (key.escape) {
@@ -458,7 +584,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       return;
     }
     if (key.ctrl && input === "z") {
-      if (!busy && session?.turns.length) {
+      if (!jobs.current.has(session?.id ?? "") && session?.turns.length) {
         const popped = session.turns.pop()!;
         if (session.turns.length === 0) session.threadId = undefined;
         session.updatedAt = new Date().toISOString();
@@ -527,7 +653,8 @@ export default function App({ onClear }: { onClear: () => void }) {
     if (!session || !config) return;
     if (!question.trim()) { add("error", "Type /btw <question> to ask a side question."); return; }
     if (sideBusy) { add("info", "A side question is already running."); return; }
-    const context = [session.turns.slice(-4).map(turn => `User: ${turn.prompt}\nPace: ${turn.result}`).join("\n\n"), activePrompt.current ? `Current user request (still in progress): ${activePrompt.current}` : ""].filter(Boolean).join("\n\n");
+    const activePrompt = jobs.current.get(session.id)?.prompt;
+    const context = [session.turns.slice(-4).map(turn => `User: ${turn.prompt}\nPace: ${turn.result}`).join("\n\n"), activePrompt ? `Current user request (still in progress): ${activePrompt}` : ""].filter(Boolean).join("\n\n");
     const luna = config.models.find(model => model.enabled !== false && model.model === "gpt-6-luna");
     const route = luna ? { model: luna.model, effort: luna.efforts.includes("low") ? "low" as const : luna.defaultEffort ?? luna.efforts[0] } : session.route.model ? session.route : config.defaultRoute;
     const controller = new AbortController();
@@ -555,6 +682,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   };
 
   const submit = async (raw: string) => {
+    if (switchingSession.current) return;
     const text = raw.trim();
     if (!text || !session || !config) return;
     setHistory(old => [...old.slice(-99), raw]);
@@ -585,10 +713,10 @@ export default function App({ onClear }: { onClear: () => void }) {
       void askBtw(text.slice(4).trim());
       return;
     }
-    if (busy) {
+    if (jobs.current.has(session.id) && !/^\/(?:new|clear|resume|help|exit|usage|stats|route|artifacts|models|auto|trust|skills)(?:\s|$)/.test(text)) {
       add(
         "info",
-        "Codex is working. Use ! for Bash or wait; input remains available.",
+        "This conversation is working. Use /new or /resume to switch conversations.",
       );
       return;
     }
@@ -603,18 +731,34 @@ export default function App({ onClear }: { onClear: () => void }) {
         }
         const fresh = newSession(project, session.routingMode);
         if (session.routingMode === "manual") fresh.route = session.route;
+        switchingSession.current = true;
+        const previousId = activeSessionId.current;
+        if (previousId) sessionDrafts.current.set(previousId, "");
+        activeSessionId.current = fresh.id;
         try {
           await store.save(fresh);
           stopSideQuestion();
           onClear();
+          activeSessionId.current = fresh.id;
+          sessionLines.current.set(fresh.id, []);
           setSession(fresh);
+          rememberSession(fresh);
           setLines([]);
+          setDraft("");
+          setHistory([]);
+          setPickerFocused(false);
+          setPickerIndex(openSessions.length);
           setShowHeader(true);
           setShowUsage(false);
           setScrollBack(0);
           setStatus("Ready");
+          setApproval(undefined);
         } catch (error) {
+          activeSessionId.current = previousId;
+          if (previousId) setLines(sessionLines.current.get(previousId) ?? []);
           add("error", `Could not create conversation: ${String(error)}`);
+        } finally {
+          switchingSession.current = false;
         }
         return;
       }
@@ -625,8 +769,9 @@ export default function App({ onClear }: { onClear: () => void }) {
       if (command === "/help") {
         add(
           "info",
-          "/models · /auto · /new · /resume · /convo · /undo · /usage · /btw <q> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /route · /stats · /clear · /exit · Esc/Ctrl+C cancel · Ctrl+Z undo · ! Bash · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
+          "/models · /auto · /new · /resume · /convo · /undo · /usage · /btw <q> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /route · /stats · /clear · /exit · Esc/Ctrl+C cancel · Ctrl+Z undo · ! Bash · Ctrl+O toggle reasoning and command output · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
         );
+        add("info", "With multiple open conversations, press Down from the input to focus the picker. Use arrows and Enter to switch; Esc returns to input. Ctrl+C cancels the selected turn. /exit quits.");
         return;
       }
       if (command === "/auto") {
@@ -635,6 +780,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         try {
           await store.save(updated);
           setSession(updated);
+          rememberSession(updated);
           add("info", "Auto routing enabled for the next turn.");
         } catch (error) {
           add("error", `Could not save routing mode: ${String(error)}`);
@@ -757,11 +903,17 @@ export default function App({ onClear }: { onClear: () => void }) {
           return;
         }
         const saved = await store.list(project);
-        if (!saved.length) {
+        if (!saved.length && !jobs.current.size) {
           add("info", "No saved conversations.");
           return;
         }
-        setResumeChoices(saved);
+        const choices = [...saved];
+        for (const job of jobs.current.values()) {
+          const index = choices.findIndex(choice => choice.id === job.session.id);
+          if (index >= 0) choices[index] = job.session;
+          else choices.push(job.session);
+        }
+        setResumeChoices(choices);
         setResumeMenu(true);
         setMenuIndex(0);
         return;
@@ -811,40 +963,69 @@ export default function App({ onClear }: { onClear: () => void }) {
       );
       return;
     }
-    add("you", text);
-    setBusy(true);
-    activePrompt.current = text;
-    setStatus("Starting…");
     const controller = new AbortController();
     const turnId = ++turnSequence.current;
-    abort.current = controller;
+    const turnSession = session;
+    const sessionId = turnSession.id;
+    rememberSession(turnSession);
+    jobs.current.set(sessionId, { session: turnSession, controller, prompt: text });
+    setRunningIds([...jobs.current.keys()]);
+    addFor(sessionId, "you", text);
+    setStatusFor(sessionId, "Starting…");
+    if (!turnSession.turns.length && !turnSession.title) {
+      const luna = config.models.find(model => model.enabled !== false && model.model === "gpt-6-luna");
+      if (luna) {
+        const titleController = new AbortController();
+        titleAborts.current.set(sessionId, titleController);
+        const titleRoute = { model: luna.model, effort: luna.efforts.includes("low") ? "low" as const : luna.defaultEffort ?? luna.efforts[0] };
+        void runner.run(
+          `Create a short conversation title from this initial user prompt. Return only the title, at most 8 words. Do not answer the prompt.\n\n${text.slice(0, 4000)}`,
+          turnSession.projectPath,
+          titleRoute,
+          undefined,
+          () => {},
+          titleController.signal,
+          "side",
+        ).then(async result => {
+          const title = result.result.replace(/^['"#]+|['"#]+$/g, "").replace(/\s+/g, " ").trim().slice(0, 80);
+          if (!title || turnSession.title) return;
+          turnSession.title = title;
+          await store.save(turnSession, () => activeSessionId.current === sessionId);
+          rememberSession(turnSession);
+          if (activeSessionId.current === sessionId) setSession({ ...turnSession });
+        }).catch(() => {}).finally(() => {
+          if (titleAborts.current.get(sessionId) === titleController) titleAborts.current.delete(sessionId);
+        });
+      }
+    }
     try {
       const outcome = await orchestrator.turn(
         text,
-        session,
+        turnSession,
         config,
         (progress) => {
           if (progress.kind === "status") {
-            setStatus(progress.text);
-            setSession({ ...session });
+            setStatusFor(sessionId, progress.text);
+            if (activeSessionId.current === sessionId) setSession({ ...turnSession });
           }
           if (progress.kind === "route")
-            setStatus(`Using ${modelName(progress.route)}…`);
+            setStatusFor(sessionId, `Using ${modelName(progress.route)}…`);
           if (progress.kind === "activity") {
-            activity({ ...progress, id: `turn-${turnId}-${progress.id}` });
-            setStatus(progress.title);
+            activityFor(sessionId, { ...progress, id: `turn-${turnId}-${progress.id}` });
+            setStatusFor(sessionId, progress.title);
           }
-          if (progress.kind === "approval") showApproval(progress);
-          if (progress.kind === "error") add("error", progress.text);
+          if (progress.kind === "approval") showApproval(progress, sessionId, controller);
+          if (progress.kind === "error") addFor(sessionId, "error", progress.text);
           if (progress.kind === "message") {
-            setStatus("Finishing response…");
+            setStatusFor(sessionId, "Finishing response…");
           }
         },
         controller.signal,
+        () => activeSessionId.current === sessionId,
       );
-      setSession({ ...outcome.session });
-      add("codex", outcome.result);
-      if (outcome.stages.length) add(
+      if (activeSessionId.current === sessionId) setSession({ ...outcome.session });
+      addFor(sessionId, "codex", outcome.result);
+      if (outcome.stages.length) addFor(sessionId,
         "meta",
         formatTurnFooter(
           outcome.route,
@@ -854,30 +1035,36 @@ export default function App({ onClear }: { onClear: () => void }) {
           outcome.estimatedCostUsd,
         ),
       );
-      for (const artifact of outcome.artifacts) add("artifact", artifact);
-      add("divider", "");
-      setStatus("Done");
+      for (const artifact of outcome.artifacts) addFor(sessionId, "artifact", artifact);
+      addFor(sessionId, "divider", "");
+      setStatusFor(sessionId, "Done");
       refreshUsage();
     } catch (error) {
-      if (controller.signal.aborted) { add("meta", "Turn cancelled by user"); setStatus("Cancelled"); } else { add("error", String(error));
-      if (error instanceof VexUnavailableError && error.source === "connection") setVexState("failed");
-      setStatus("Failed"); }
+      if (controller.signal.aborted) {
+        addFor(sessionId, "meta", "Turn cancelled by user");
+        setStatusFor(sessionId, "Cancelled");
+      } else {
+        addFor(sessionId, "error", String(error));
+        if (error instanceof VexUnavailableError && error.source === "connection") setVexState("failed");
+        setStatusFor(sessionId, "Failed");
+      }
     } finally {
-      pendingApproval.current?.respond("decline");
-      abort.current = undefined;
-      activePrompt.current = undefined;
-      setBusy(false);
+      const pending = pendingApprovals.current.get(sessionId);
+      if (pending?.owner === controller) pending.respond("decline");
+      jobs.current.delete(sessionId);
+      rememberSession(turnSession);
+      setRunningIds([...jobs.current.keys()]);
     }
   };
   return (
     <Box flexDirection="column" paddingX={1}>
       {showHeader ? <Header project={project} vexState={vexState} width={stdout.columns ?? 80} /> : null}
-      <Transcript lines={lines} outputsExpanded={outputsExpanded} detailsExpanded={detailsExpanded} rows={stdout.rows ?? 24} scrollBack={scrollBack} width={stdout.columns ?? 80} />
+      <Transcript lines={lines} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} rows={stdout.rows ?? 24} scrollBack={scrollBack} width={stdout.columns ?? 80} />
       {modelMenu ? <ModelMenu mode={modelMenu} models={menuModels} selectedModel={menuModel} selectedIndex={menuIndex} config={config} /> : null}
-      {resumeMenu ? <ResumeMenu choices={resumeChoices} selectedIndex={menuIndex} /> : null}
+      {resumeMenu ? <ResumeMenu choices={resumeChoices} selectedIndex={menuIndex} runningIds={runningIds} /> : null}
       {convoMenu && session ? <ConvoMenu turns={session.turns} selectedIndex={menuIndex} /> : null}
-      {busy || shellJobs ? (
-        <Box gap={1}><Text color="#59E6A7" bold>{spinner[tick % spinner.length]}</Text><Text color="#38BDF8">{status}</Text>{shellJobs ? <Text color="#FBBF24">· ⚡ {shellJobs} Bash command{shellJobs === 1 ? "" : "s"} running</Text> : null}</Box>
+      {runningIds.length || shellJobs ? (
+      <Box gap={1}><Text color="#59E6A7" bold>{spinner[tick % spinner.length]}</Text><Text color="#38BDF8">{busy ? status === "Thinking" ? thinkingWords[Math.floor(tick / 30) % thinkingWords.length] : status : "Ready"}</Text>{shellJobs ? <Text color="#FBBF24">· ⚡ {shellJobs} Bash command{shellJobs === 1 ? "" : "s"} running</Text> : null}</Box>
       ) : null}
       {approval ? (
         <Box flexDirection="column" borderStyle="round" borderColor="#FBBF24" paddingX={1}>
@@ -889,8 +1076,8 @@ export default function App({ onClear }: { onClear: () => void }) {
         </Box>
       ) : null}
       <Box marginTop={1}>
-        <Composer value={draft} onChange={value => { setDraft(value); setSelection(0); }} onSubmit={value => { void submit(value); }} history={history}
-          disabled={!session || !config || !!approval || !!modelMenu || resumeMenu || convoMenu} shellMode={shellMode}
+        <Composer key={session?.id} value={draft} onChange={value => { setDraft(value); setSelection(0); }} onSubmit={value => { void submit(value); }} history={history}
+          disabled={!session || !config || !!approval || !!modelMenu || resumeMenu || convoMenu || pickerFocused} shellMode={shellMode}
           completion={matches[selection] ?? matches[0]} completionStart={token?.start}
           onComplete={() => setDraft(token ? draft.slice(0, token.start) + (matches[selection] ?? matches[0] ?? token.prefix) : draft)}
           onHistory={direction => {
@@ -898,9 +1085,11 @@ export default function App({ onClear }: { onClear: () => void }) {
             setSelection(value => (value + (direction === "up" ? -1 : 1) + matches.length) % matches.length);
             return true;
           }}
-          placeholder={modelMenu || resumeMenu || convoMenu ? "Close menu to type" : shellMode ? "Bash command; ! returns to Pace" : vexState !== "connected" ? "Vex unavailable; commands still work" : busy ? "Pace is working · Esc or Ctrl+C to cancel" : "Ask Pace or type /"}
+          onMoveDown={focusPicker}
+          placeholder={modelMenu || resumeMenu || convoMenu ? "Close menu to type" : shellMode ? "Bash command; ! returns to Pace" : vexState !== "connected" ? "Vex unavailable; commands still work" : busy ? "Pace is working · /new or /resume to switch · Esc or Ctrl+C to cancel" : "Ask Pace or type /"}
         />
       </Box>
+      {runningIds.length > 0 && openSessions.length > 1 ? <ConversationPicker choices={pickerChoices} activeId={activeSessionId.current} selectedIndex={pickerIndex} focused={pickerFocused} /> : null}
       {showUsage ? <UsageBar limits={usageLimits} error={usageError} /> : null}
       {!modelMenu && !resumeMenu && !convoMenu && matches.length > 0 ? <CommandMenu matches={matches} selectedIndex={selection} /> : null}
     </Box>

@@ -5,10 +5,23 @@ import { getGitBranch } from "../core/system/git.js";
 
 export type Line = {
   id: number;
-  role: "you" | "codex" | "side" | "info" | "meta" | "error" | "artifact" | "divider" | "activity";
+  role:
+    | "you"
+    | "codex"
+    | "side"
+    | "info"
+    | "meta"
+    | "error"
+    | "artifact"
+    | "divider"
+    | "activity";
   text: string;
   spaceBefore: boolean;
-  activity?: { category: "thinking" | "command" | "files" | "tool" | "search" | "plan"; detail?: string; completed: boolean };
+  activity?: {
+    category: "thinking" | "command" | "files" | "tool" | "search" | "plan";
+    detail?: string;
+    completed: boolean;
+  };
   sourceId?: string;
 };
 
@@ -23,12 +36,19 @@ const activityColors = {
 
 const activityIcons = {
   thinking: "✧",
-  command: "⚡",
+  command: "</>",
   files: "◇",
   tool: "⚙",
   search: "🔍",
   plan: "📋",
 } as const;
+
+function activityTitle(line: Line): string {
+  if (line.activity?.category === "command") {
+    return line.text.replace(/^(?:Running|Ran): /, "");
+  }
+  return line.text;
+}
 
 const paceShadowLetters = [
   ["  ██████╗ ", "  █████╗ ", "  ██████╗ ", "███████╗"],
@@ -44,9 +64,17 @@ const paceMicroLetters = [
   ["  █▀▀ ", "█▀█ ", "█▄▄ ", "██▄"],
 ] as const;
 
-const letterGradients = ["#59E6A7", "#4ADE80", "#2DD4BF", "#38BDF8"] as const;
+export const letterGradients = ["#59E6A7", "#4ADE80", "#2DD4BF", "#38BDF8"] as const;
 
-export function Header({ project, vexState, width }: { project: string; vexState: "connecting" | "connected" | "failed"; width: number }) {
+export function Header({
+  project,
+  vexState,
+  width,
+}: {
+  project: string;
+  vexState: "connecting" | "connected" | "failed";
+  width: number;
+}) {
   const branch = useMemo(() => getGitBranch(project), [project]);
   const dividerLength = Math.max(20, Math.min(width - 4, 72));
 
@@ -77,24 +105,46 @@ export function Header({ project, vexState, width }: { project: string; vexState
           ))}
         </Box>
       ) : (
-        <Text color="#59E6A7" bold>⚡ PACE</Text>
+        <Text color="#59E6A7" bold>
+          ⚡ PACE
+        </Text>
       )}
 
       <Box gap={1} marginTop={1} flexWrap="wrap">
-        <Text color="#A7F3D0" bold>📁 {basename(project)}</Text>
+        <Text color="#A7F3D0" bold>
+          📁 {basename(project)}
+        </Text>
         {branch ? <Text color="#93C5FD">⎇ {branch}</Text> : null}
-        <Text color={vexState === "connected" ? "#34D399" : vexState === "failed" ? "#F87171" : "#FBBF24"}>
-          {vexState === "connected" ? "● Vex MCP connected" : vexState === "failed" ? "⨯ Vex MCP unavailable" : "◌ Vex MCP connecting..."}
+        <Text
+          color={
+            vexState === "connected"
+              ? "#34D399"
+              : vexState === "failed"
+                ? "#F87171"
+                : "#FBBF24"
+          }
+        >
+          {vexState === "connected"
+            ? "● Vex MCP connected"
+            : vexState === "failed"
+              ? "⨯ Vex MCP unavailable"
+              : "◌ Vex MCP connecting..."}
         </Text>
       </Box>
 
       <Box marginTop={0}>
         <Text dimColor>Type </Text>
-        <Text color="#38BDF8" bold>/help</Text>
+        <Text color="#38BDF8" bold>
+          /help
+        </Text>
         <Text dimColor> for commands · </Text>
-        <Text color="#38BDF8" bold>!cmd</Text>
+        <Text color="#38BDF8" bold>
+          !cmd
+        </Text>
         <Text dimColor> for bash · </Text>
-        <Text color="#38BDF8" bold>/models</Text>
+        <Text color="#38BDF8" bold>
+          /models
+        </Text>
         <Text dimColor> for routing</Text>
       </Box>
 
@@ -120,45 +170,90 @@ export function Transcript({
   scrollBack: number;
   width?: number;
 }) {
-  // Keep the transcript in Ink's redraw area so old entries can actually disappear or collapse.
-  const count = Math.max(8, rows - 12);
+  // Keep Ink's redraw area within one terminal screen; scroll through the
+  // transcript by changing its end offset instead of rendering a huge buffer.
+  const count = Math.max(1, rows - 12);
   const end = Math.max(0, lines.length - scrollBack);
   const visible = lines.slice(Math.max(0, end - count), end);
+  const displayLines: (Line & { thinkingCount?: number })[] = [];
+  for (const line of visible) {
+    const previous = displayLines.at(-1);
+    if (line.activity?.category === "thinking" && previous?.activity?.category === "thinking") {
+      displayLines[displayLines.length - 1] = {
+        ...previous,
+        sourceId: line.sourceId,
+        thinkingCount: (previous.thinkingCount ?? 1) + 1,
+        activity: {
+          ...line.activity,
+          detail: [previous.activity.detail, line.activity.detail].filter(Boolean).join("\n\n") || undefined,
+        },
+      };
+    } else {
+      displayLines.push(line);
+    }
+  }
   const dividerLength = Math.max(20, Math.min(width - 4, 72));
 
   return (
     <Box flexDirection="column">
-      {scrollBack > 0 ? <Text color="#94A3B8">↑ Earlier activity · PageDown to return</Text> : null}
-      {visible.map((line) => (
-        <Box key={line.id} flexDirection="column" marginTop={line.spaceBefore ? 1 : 0}>
+      {scrollBack > 0 ? (
+        <Text color="#94A3B8">↑ Earlier activity · PageDown to return</Text>
+      ) : null}
+      {displayLines.map((line) => (
+        <Box
+          key={line.id}
+          flexDirection="column"
+          marginTop={line.spaceBefore ? 1 : 0}
+        >
           {line.role === "you" ? (
             <Box gap={1}>
-              <Text color="#38BDF8" bold>❯ You</Text>
-              <Box flexShrink={1}><Text color="white">{line.text}</Text></Box>
+              <Text color="#38BDF8" bold>
+                ❯ You
+              </Text>
+              <Box flexShrink={1}>
+                <Text color="white">{line.text}</Text>
+              </Box>
             </Box>
           ) : line.role === "codex" ? (
             <Box gap={1}>
-              <Text color="#59E6A7" bold>◆ Pace</Text>
-              <Box flexShrink={1}><Text>{line.text}</Text></Box>
+              <Text color="#59E6A7" bold>
+                ◆ Pace
+              </Text>
+              <Box flexShrink={1}>
+                <Text>{line.text}</Text>
+              </Box>
             </Box>
           ) : line.role === "side" ? (
             <Box gap={1}>
-              <Text color="#E879F9" bold>◇ Btw </Text>
-              <Box flexShrink={1}><Text color="#F5D0FE">{line.text}</Text></Box>
+              <Text color="#E879F9" bold>
+                ◇ Btw{" "}
+              </Text>
+              <Box flexShrink={1}>
+                <Text color="#F5D0FE">{line.text}</Text>
+              </Box>
             </Box>
           ) : line.role === "activity" && line.activity ? (
             <Box flexDirection="column">
-              <Box gap={1}>
-                <Text color={activityColors[line.activity.category]}>
-                  {line.activity.completed ? "✔" : "◌"} {activityIcons[line.activity.category]} {line.text}
+              <Box gap={1} marginLeft={1}>
+                <Text color={line.activity.completed ? "#64748B" : activityColors[line.activity.category]}>
+                  {line.activity.completed ? " " : "◌"} {activityIcons[line.activity.category]} {activityTitle(line)}{line.thinkingCount ? ` · ${line.thinkingCount} thoughts` : ""}
                 </Text>
                 {line.activity.detail ? (
                   <Text dimColor>
-                    {(line.activity.category === "command" ? outputsExpanded : detailsExpanded) ? "▾" : "▸"}
+                    {(
+                      line.activity.category === "command"
+                        ? outputsExpanded
+                        : detailsExpanded
+                    )
+                      ? "▾"
+                      : "▸"}
                   </Text>
                 ) : null}
               </Box>
-              {line.activity.detail && (line.activity.category === "command" ? outputsExpanded : detailsExpanded) ? (
+              {line.activity.detail &&
+              (line.activity.category === "command"
+                ? outputsExpanded
+                : detailsExpanded) ? (
                 <Box
                   marginLeft={2}
                   paddingLeft={1}
@@ -169,23 +264,33 @@ export function Transcript({
                   borderBottom={false}
                   borderColor="#475569"
                 >
-                  <Text color="gray">{line.activity.detail.slice(-12000)}</Text>
+                  <Text color="gray" wrap="wrap">{line.activity.detail.slice(-12000)}</Text>
                 </Box>
               ) : null}
             </Box>
           ) : line.role === "divider" ? (
             <Text color="#334155">{"─".repeat(dividerLength)}</Text>
           ) : line.role === "meta" ? (
-            <Box marginLeft={1}><Text color="#64748B">{line.text}</Text></Box>
+            <Box marginLeft={1}>
+              <Text color="#64748B">{line.text}</Text>
+            </Box>
           ) : line.role === "artifact" ? (
             <Box gap={1}>
-              <Text color="#C084FC" bold>📦 Artifact:</Text>
-              <Text color="#DDD6FE" underline>{line.text}</Text>
+              <Text color="#C084FC" bold>
+                📦 Artifact:
+              </Text>
+              <Text color="#DDD6FE" underline>
+                {line.text}
+              </Text>
             </Box>
           ) : line.role === "error" ? (
             <Box gap={1}>
-              <Text color="#F87171" bold>✖ Pace:</Text>
-              <Box flexShrink={1}><Text color="#EF4444">{line.text}</Text></Box>
+              <Text color="#F87171" bold>
+                ✖ Pace:
+              </Text>
+              <Box flexShrink={1}>
+                <Text color="#EF4444">{line.text}</Text>
+              </Box>
             </Box>
           ) : (
             <Text color="gray">{line.text}</Text>
