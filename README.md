@@ -58,6 +58,9 @@ Type `/` to see a command menu. Use Tab to complete and ↑/↓ to choose a matc
 
 After opening a second conversation, a compact picker stays below the input. Press ↓ from the input to focus it, use ↑/↓ to select a conversation, and press Enter to switch. Esc returns to the input. Switching keeps other conversation turns running.
 
+Pace shows System notices for Vex's selected route, split stages, and active skill status as the turn starts. These notices are saved with the conversation and appear again after `/resume`.
+Markdown links in the interactive transcript are clickable in terminals that support OSC 8 hyperlinks; their destinations remain visible in other terminals.
+
 ## Non-interactive runs
 
 Run `pace exec "your request"` from a project directory to continue its active conversation without Ink. Pace writes the final response to stdout. It returns 0 on success, 1 on provider, configuration, or execution failure, 2 for a missing prompt, and 130 after Ctrl+C. Errors go to stderr. This command uses the same routing, trusted folders, skill folder, and session storage as interactive turns.
