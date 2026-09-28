@@ -27,8 +27,11 @@ export function skillCommand(prompt: string, skills: Skill[]): Skill | undefined
 }
 
 export function skillMention(prompt: string, skills: Skill[]): Skill | undefined {
-  const name = /^@([^\s]+)(?:\s|$)/.exec(prompt)?.[1]?.toLowerCase();
-  return skills.find(skill => skill.name.toLowerCase() === name && /^[a-z0-9][a-z0-9_-]*$/i.test(skill.name));
+  for (const match of prompt.matchAll(/(?:^|\s)@([a-z0-9][a-z0-9_-]*)(?=\s|$)/gi)) {
+    const skill = skills.find(candidate => candidate.name.toLowerCase() === match[1]!.toLowerCase());
+    if (skill) return skill;
+  }
+  return undefined;
 }
 
 export function skillRequest(prompt: string, skill: Skill): string {

@@ -132,8 +132,9 @@ it('routes an @skill mention unchanged and applies the skill for that turn', asy
   await orchestrator.turn('Next question', session, config, () => {});
   expect(prompts[1]).toContain('No skills are active for this conversation');
   expect(requests[2]?.context.recentConversation).toEqual([{ user: '@rigorous-code-review', assistant: 'done' }]);
-  await orchestrator.turn('@rigorous-code-review inspect staged changes', session, config, () => {});
-  expect(requests[4]?.context.originalRequest).toBe('@rigorous-code-review inspect staged changes');
-  expect(prompts[2]).toContain('Current user request:\n@rigorous-code-review inspect staged changes\n');
+  await orchestrator.turn('Please @rigorous-code-review inspect staged changes', session, config, () => {});
+  expect(requests[4]?.context.originalRequest).toBe('Please @rigorous-code-review inspect staged changes');
+  expect(prompts[2]).toContain('Current user request:\nPlease @rigorous-code-review inspect staged changes\n');
+  expect(prompts[2]).toContain(`/rigorous-code-review (${skill.path})`);
   expect(session.activeSkills).toEqual([]);
 });
