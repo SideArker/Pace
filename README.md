@@ -1,10 +1,10 @@
 # Pace
 
-Pace is an independent, terminal-only coding client. The official [Codex TypeScript SDK](https://github.com/openai/codex/tree/main/sdk/typescript) runs coding turns; the [Vex MCP server](https://github.com/SideArker/Vex) can recommend a configured model and effort for each automatic turn. Pace is not an OpenAI product.
+Pace is an independent, terminal-only coding client. The official [Codex App Server](https://developers.openai.com/codex/app-server) runs coding turns; the [Vex MCP server](https://github.com/SideArker/Vex) can recommend a configured model and effort for each automatic turn. Pace is not an OpenAI product.
 
 ## Install and run
 
-Requires Node.js 20+, a terminal, and working Codex authentication. Sign in with the [Codex CLI](https://developers.openai.com/codex/cli) (`codex login`) or use a supported Codex SDK/CLI environment credential. Pace never reads or stores a token itself. A Git project is expected by the SDK.
+Requires Node.js 20+, a terminal, and working Codex authentication. Sign in with the [Codex CLI](https://developers.openai.com/codex/cli) (`codex login`) or use a supported Codex SDK/CLI environment credential. Pace never reads or stores a token itself. A Git project is expected by Codex.
 
 On Windows PowerShell:
 
@@ -28,6 +28,8 @@ pace
 
 For development, use `npm run dev` instead of linking. Interactive `pace` opens a fresh conversation; use `/resume` to continue a saved one. `pace --help` and `pace --version` work without authentication. `pace doctor` checks Node, local storage, Git presence, SDK installation, Vex server installation, and configuration; only a live coding turn verifies authentication and runtime access.
 
+`pace sessions` lists saved conversations across projects. It marks moved or deleted project folders as missing. Resume from an available project with `/resume`; missing folders must be restored before Pace can run there. `pace doctor` connects to Vex MCP and checks for `vex_choose`; it exits with status 1 when Vex is unavailable.
+
 ## Chat commands
 
 | Command | Action |
@@ -49,7 +51,7 @@ For development, use `npm run dev` instead of linking. Interactive `pace` opens 
 | `! <command>` | Run one Bash command in the project directory |
 | `!` | Toggle Bash input mode; type `!` again to return to Pace |
 
-Type `/` to see a command menu. Use Tab to complete and ↑/↓ to choose a match. In `/models`, use ↑/↓ or Tab to select, Space to enable or disable, Enter to open reasoning levels, and Esc to go back. Each turn has separate **You** and **Pace** sections, followed by a compact, gray model, timing, usage, and route footer. A divider separates turns. A spinner marks active work; status text comes from Codex SDK events. Ctrl+C cancels the current Codex turn; when idle, it exits. Input stays available during a Codex turn so Bash commands can run concurrently.
+Type `/` to see a command menu. Use Tab to complete and ↑/↓ to choose a match. In `/models`, use ↑/↓ or Tab to select, Space to enable or disable, Enter to open reasoning levels, and Esc to go back. Each turn has separate **You** and **Pace** sections, followed by a compact, gray model, timing, usage, and route footer. A divider separates turns. A spinner marks active work; status text comes from Codex App Server events. When an action needs approval, press Y to approve it once, N or Esc to decline. Ctrl+C cancels the current Codex turn; when idle, it exits. Input stays available during a Codex turn so Bash commands can run concurrently.
 
 ## Non-interactive runs
 
@@ -90,7 +92,7 @@ When Vex chooses a split workflow, the first Codex stage runs in a fresh read-on
 
 To check routing choices across repeated labeled requests and compare actual workflow costs, use the commands in [benchmark/README.md](benchmark/README.md).
 
-The Codex SDK also receives Vex as a separate Codex-owned MCP stdio server, so Codex can call Vex tools during coding turns. Pace does not proxy those calls or make extra routing decisions for Codex. The SDK configuration forwards the `OPENROUTER_API_KEY` environment variable by name, keeping its value out of command arguments. Pace resolves the project's actual filesystem path before starting Codex, including its original casing on Windows, while preserving case-insensitive session lookup. Pace uses a workspace-write sandbox with network access disabled and approval policy `never`; work outside those boundaries remains restricted.
+Codex receives Vex as a separate Codex-owned MCP stdio server, so Codex can call Vex tools during coding turns. Pace does not proxy those calls or make extra routing decisions for Codex. The app-server configuration forwards the `OPENROUTER_API_KEY` environment variable by name, keeping its value out of command arguments. Pace resolves the project's actual filesystem path before starting Codex, including its original casing on Windows, while preserving case-insensitive session lookup. Main turns use a workspace-write sandbox with network access disabled and approval policy `onRequest`; scout turns remain read-only with approvals disabled. Pace asks before `git push` and `git reset` commands, and before other actions Codex identifies as requiring additional permission.
 
 Pace uses the `@sidearker/vex-mcp` npm package for Vex MCP routing and decision support. Pace resolves the installed package's bundled `dist/index.js` for both MCP connections. For local development with a local Vex checkout, you can link it or install the published `@sidearker/vex-mcp` release via `npm install @sidearker/vex-mcp@latest`. Do not set a key in Pace configuration or in command arguments.
 
@@ -102,13 +104,13 @@ On Windows, a project-local link also works without a global Vex command: build 
 
 Pace writes config and up to 20 full user prompts and final Codex responses under `~/.pace`; each project uses a SHA-256 path key and each conversation has its own atomic JSON file. Codex owns its thread history in `~/.codex/sessions`. Interactive startup opens a new conversation. Pace stores the Codex thread ID for follow-ups within that conversation; after restarting, use `/resume` to continue it. `/clear` and `/new` return to the entry screen with a fresh conversation. Auto mode routes each prompt; manual mode keeps its saved model and effort. Corrupt session files are skipped with a warning.
 
-Pace runs SDK turns in `workspace-write` mode with network access disabled and approval policy `never`. This is a restricted mode: actions requiring higher permissions are denied rather than approved. The TypeScript SDK used here does not expose an in-app approval response interface, so Pace has no interactive approval prompt. It does not enable unrestricted access or bypass Codex safeguards.
+Pace runs Codex turns through the App Server protocol so it can answer command-approval requests in the terminal UI. Approval is per command and applies only to that request. A declined command does not run. Non-interactive `pace exec` runs automatically decline approvals. Pace keeps the workspace-write sandbox and disabled network access; approval does not grant unrestricted access or bypass the sandbox.
 
-The SDK streams documented status and agent-message events. Pace shows model, reasoning level, elapsed time, raw input and output tokens, cache hits and writes, estimated cost, and route source. It also reads Codex account rate limits on startup and after each turn. Use `/usage` to refresh them. Some SDK messages arrive as completed items rather than token-by-token text. The SDK does not report token usage per command or message item.
+The App Server streams status and agent-message events. Pace shows model, reasoning level, elapsed time, raw input and output tokens, cache hits and writes, estimated cost, and route source. It also reads Codex account rate limits on startup and after each turn. Use `/usage` to refresh them. Some App Server messages arrive as completed items rather than token-by-token text. The App Server does not report token usage per command or message item.
 
 When you ask Codex to create an artifact, Pace tells it to save a Markdown working note in the project-local `.pace/artifacts/` directory. These files persist across conversations and can be reused by asking Codex to read or update them. `/artifacts` lists them; newly created or updated files are shown after a turn. Artifact files are regular project files under Codex's workspace sandbox.
 
-Bash mode runs **your typed command** through Bash in the project directory, outside Codex's sandbox. On Windows it uses Git Bash at `C:\Program Files\Git\bin\bash.exe`; on macOS/Linux it uses `bash` from PATH. Command output appears when the process exits and is capped at 32,768 characters. Bash commands may run while Codex works, so concurrent changes to the same files can conflict. The SDK requires a Git repository by default, and a real Codex turn requires working credentials; neither is simulated by the automated tests.
+Bash mode runs **your typed command** through Bash in the project directory, outside Codex's sandbox. On Windows it uses Git Bash at `C:\Program Files\Git\bin\bash.exe`; on macOS/Linux it uses `bash` from PATH. Typed commands containing `git push` or `git reset` require approval first. Command output appears when the process exits and is capped at 32,768 characters. Bash commands may run while Codex works, so concurrent changes to the same files can conflict. The App Server requires a Git repository by default, and a real Codex turn requires working credentials; neither is simulated by the automated tests.
 
 ## Source layout
 

@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
-import type { Progress } from "../integrations/codex.js";
+import type { ApprovalDecision, Progress } from "../integrations/codex.js";
 import type { Config, Session, Route } from "../shared/types.js";
 import { PaceStore, newSession } from "../core/sessions.js";
 import { Orchestrator, VexUnavailableError } from "../core/orchestrator.js";
-import { SdkRunner } from "../integrations/codex.js";
+import { AppServerRunner } from "../integrations/codex.js";
 import { VexRouter } from "../core/vex/client.js";
 import { EFFORTS, withModels } from "../shared/config.js";
 import { artifactSnapshot } from "../core/system/artifacts.js";
@@ -40,10 +40,11 @@ const commands = [
 const modelCatalog = ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra"];
 const spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const folderArgument = (value: string) => value.trim().replace(/^(?:"(.*)"|'(.*)')$/, (_match, double: string | undefined, single: string | undefined) => double ?? single ?? value);
+const manualApprovalCommand = (command: string) => /\bgit\b[^;&|()\n]*\s(?:push|reset)\b/i.test(command);
 const project = process.cwd();
 const store = new PaceStore();
 const vex = new VexRouter();
-const runner = new SdkRunner();
+const runner = new AppServerRunner();
 const orchestrator = new Orchestrator(store, runner, vex);
 
 export default function App({ onClear }: { onClear: () => void }) {
@@ -68,6 +69,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const [tick, setTick] = useState(0);
   const [shellMode, setShellMode] = useState(false);
   const [shellJobs, setShellJobs] = useState(0);
+  const [approval, setApproval] = useState<Extract<Progress, { kind: "approval" }>>();
   const [vexState, setVexState] = useState<
     "connecting" | "connected" | "failed"
   >("connecting");
@@ -82,6 +84,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const nextId = useRef(0);
   const turnSequence = useRef(0);
   const abort = useRef<AbortController | undefined>(undefined);
+  const pendingApproval = useRef<Extract<Progress, { kind: "approval" }> | undefined>(undefined);
   const activePrompt = useRef<string | undefined>(undefined);
   const sideAbort = useRef<AbortController | undefined>(undefined);
   const shells = useRef(new Set<{ kill: () => boolean }>());
@@ -108,6 +111,23 @@ export default function App({ onClear }: { onClear: () => void }) {
     if (index < 0) return [...old, { id: nextId.current++, role: "activity", sourceId, spaceBefore: false, ...update }];
     return old.map((line, at) => at === index ? { ...line, ...update } : line);
   });
+  const showApproval = (request: Extract<Progress, { kind: "approval" }>) => {
+    if (pendingApproval.current) {
+      request.respond("decline");
+      return;
+    }
+    const pending = { ...request, respond: (decision: ApprovalDecision) => {
+      if (pendingApproval.current?.id !== request.id) return;
+      pendingApproval.current = undefined;
+      setApproval(undefined);
+      request.respond(decision);
+      add("info", decision === "accept" ? "Approved once." : "Declined.");
+      setStatus(decision === "accept" ? "Resuming" : "Stopped command");
+    } };
+    pendingApproval.current = pending;
+    setApproval(pending);
+    setStatus("Waiting for approval");
+  };
   const matches =
     !shellMode && draft.startsWith("/") && !draft.includes(" ")
       ? commands.filter((command) => command.startsWith(draft))
@@ -130,6 +150,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   }, [busy, sideBusy, shellJobs]);
   useEffect(
     () => () => {
+      pendingApproval.current?.respond("decline");
       for (const child of shells.current) child.kill();
     },
     [],
@@ -311,6 +332,15 @@ export default function App({ onClear }: { onClear: () => void }) {
     }
   };
   useInput((input, key) => {
+    if (approval) {
+      if (input.toLowerCase() === "y") pendingApproval.current?.respond("accept");
+      else if (input.toLowerCase() === "n" || key.escape) pendingApproval.current?.respond("decline");
+      else if (key.ctrl && input === "c") {
+        abort.current?.abort();
+        pendingApproval.current?.respond("decline");
+      }
+      return;
+    }
     if (key.escape || (key.ctrl && input === "c")) {
       if (busy || sideBusy) {
         abort.current?.abort();
@@ -404,7 +434,17 @@ export default function App({ onClear }: { onClear: () => void }) {
     }
   });
 
-  const shell = (command: string) => {
+  const shell = async (command: string) => {
+    if (manualApprovalCommand(command)) {
+      const decision = await new Promise<ApprovalDecision>(resolveDecision => {
+        showApproval({
+          kind: "approval", id: `shell-approval-${nextId.current++}`, command,
+          reason: "This command can publish changes or rewrite Git history.",
+          respond: resolveDecision,
+        });
+      });
+      if (decision !== "accept") return;
+    }
     const id = `shell-${nextId.current++}`;
     activity({ kind: "activity", id, category: "command", title: `Running: ${command}`, completed: false });
     const executable =
@@ -735,6 +775,7 @@ export default function App({ onClear }: { onClear: () => void }) {
             activity({ ...progress, id: `turn-${turnId}-${progress.id}` });
             setStatus(progress.title);
           }
+          if (progress.kind === "approval") showApproval(progress);
           if (progress.kind === "error") add("error", progress.text);
           if (progress.kind === "message") {
             setStatus("Finishing response…");
@@ -763,6 +804,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       if (error instanceof VexUnavailableError) setVexState("failed");
       setStatus("Failed"); }
     } finally {
+      pendingApproval.current?.respond("decline");
       abort.current = undefined;
       activePrompt.current = undefined;
       setBusy(false);
@@ -778,9 +820,18 @@ export default function App({ onClear }: { onClear: () => void }) {
       {busy || shellJobs ? (
         <Box gap={1}><Text color="#59E6A7" bold>{spinner[tick % spinner.length]}</Text><Text color="#38BDF8">{status}</Text>{shellJobs ? <Text color="#FBBF24">· ⚡ {shellJobs} Bash command{shellJobs === 1 ? "" : "s"} running</Text> : null}</Box>
       ) : null}
+      {approval ? (
+        <Box flexDirection="column" borderStyle="round" borderColor="#FBBF24" paddingX={1}>
+          <Text color="#FBBF24" bold>Approval required</Text>
+          <Text>{approval.command}</Text>
+          {approval.cwd ? <Text dimColor>in {approval.cwd}</Text> : null}
+          {approval.reason ? <Text dimColor>{approval.reason}</Text> : null}
+          <Text color="#FBBF24">Y approve once Â· N or Esc decline</Text>
+        </Box>
+      ) : null}
       <Box marginTop={1}>
         <Composer value={draft} onChange={value => { setDraft(value); setSelection(0); }} onSubmit={value => { void submit(value); }} history={history}
-          disabled={!session || !config || !!modelMenu || resumeMenu || convoMenu} shellMode={shellMode}
+          disabled={!session || !config || !!approval || !!modelMenu || resumeMenu || convoMenu} shellMode={shellMode}
           completion={matches[selection] ?? matches[0]}
           onComplete={() => setDraft(matches[selection] ?? matches[0] ?? draft)}
           onHistory={direction => {
