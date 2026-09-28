@@ -47,3 +47,4 @@ Desktop.ini
 AGENTS.md
 .npm-cache/
 benchmark/results/
+benchmark/reports
