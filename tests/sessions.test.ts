@@ -1,8 +1,8 @@
 import { afterEach, expect, it } from 'vitest';
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PaceStore, newSession, projectKey } from '../src/core/sessions.js';
+import { PaceStore, newSession, normalizeProject, projectKey } from '../src/core/sessions.js';
 let dir: string;
 afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true }); });
 it('stores a session atomically under a hashed project key and reloads it', async () => {
@@ -37,4 +37,22 @@ it('loads definitive routes for an untouched legacy automatic config', async () 
   const config = await store.loadConfig();
   expect(config.defaultRoute).toEqual({ model: 'gpt-6-sol', effort: 'high' });
   expect(config.models.map(model => model.model)).toEqual(['gpt-6-luna', 'gpt-6-sol', 'gpt-6-astra']);
+});
+
+it('discovers sessions across projects and marks moved projects missing', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  const store = new PaceStore(join(dir, 'storage'));
+  const first = join(dir, 'first');
+  const second = join(dir, 'second');
+  await mkdir(first);
+  await mkdir(second);
+  await store.save(newSession(first, 'auto'));
+  await store.save(newSession(second, 'manual'));
+  expect((await store.listProjects()).map(project => project.exists)).toEqual([true, true]);
+  await rename(first, join(dir, 'moved'));
+  const projects = await store.listProjects();
+  expect(projects).toHaveLength(2);
+  expect(projects.find(project => project.projectPath === normalizeProject(first))?.exists).toBe(false);
+  expect(projects.find(project => project.projectPath === normalizeProject(first))?.sessions).toHaveLength(1);
+  expect(projects.find(project => project.projectPath === normalizeProject(second))?.exists).toBe(true);
 });

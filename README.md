@@ -38,7 +38,7 @@ For development, use `npm run dev` instead of linking. Interactive `pace` opens 
 | `/models` | Open the model menu; Space toggles a model, Enter opens its reasoning levels |
 | `/auto` | Enable Vex routing for the next turn, including in a resumed conversation |
 | `/new` | Alias for `/clear` |
-| `/resume` | Open a saved conversation picker for this project |
+| `/resume` | Open saved conversations, including turns still running in this Pace process |
 | `/usage` | Refresh Codex account usage percentages |
 | `/artifacts` | List Markdown artifacts in this project's `.pace/artifacts` directory |
 | `/trust add <folder>` | Allow Codex to edit an additional existing folder |
@@ -54,7 +54,9 @@ For development, use `npm run dev` instead of linking. Interactive `pace` opens 
 | `! <command>` | Run one Bash command in the project directory |
 | `!` | Toggle Bash input mode; type `!` again to return to Pace |
 
-Type `/` to see a command menu. Use Tab to complete and ↑/↓ to choose a match. In `/models`, use ↑/↓ or Tab to select, Space to enable or disable, Enter to open reasoning levels, and Esc to go back. Each turn has separate **You** and **Pace** sections, followed by a compact, gray model, timing, usage, and route footer. A divider separates turns. A spinner marks active work; status text comes from Codex App Server events. When an action needs approval, press Y to approve it once, N or Esc to decline. Ctrl+C cancels the current Codex turn; when idle, it exits. Input stays available during a Codex turn so Bash commands can run concurrently.
+Type `/` to see a command menu. Use Tab to complete and ↑/↓ to choose a match. In `/models`, use ↑/↓ or Tab to select, Space to enable or disable, Enter to open reasoning levels, and Esc to go back. Each turn has separate **You** and **Pace** sections, followed by a compact, gray model, timing, usage, and route footer. A divider separates turns. A spinner marks active work; status text comes from Codex App Server events. When an action needs approval, press Y to approve it once, N or Esc to decline. While a turn runs, use `/new` to start another conversation or `/resume` to switch. Background turns continue and their responses appear when you return. Ctrl+C cancels the selected conversation's turn. With background turns running, Ctrl+C keeps Pace open; `/exit` quits. When no turns run, Ctrl+C exits. Input stays available during a Codex turn so Bash commands can run concurrently.
+
+After opening a second conversation, a compact picker stays below the input. Press ↓ from the input to focus it, use ↑/↓ to select a conversation, and press Enter to switch. Esc returns to the input. Switching keeps other conversation turns running.
 
 ## Non-interactive runs
 
