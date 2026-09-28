@@ -109,6 +109,12 @@ function activityTitle(line: Line): string {
   return line.text;
 }
 
+function activityIcon(line: Line): string {
+  return line.activity?.category === "command" && /^(?:(?:Running|Ran|Failed): )?PS \(PowerShell\):/.test(line.text)
+    ? ">_"
+    : activityIcons[line.activity!.category];
+}
+
 function DiffDetail({ detail }: { detail: string }) {
   return <Box flexDirection="column">{detail.slice(-12000).split("\n").map((line, index) => (
     <Text key={index} color={line.startsWith("+") && !line.startsWith("+++") ? "#34D399" : line.startsWith("-") && !line.startsWith("---") ? "#F87171" : "#94A3B8"} wrap="wrap">{line || " "}</Text>
@@ -301,7 +307,7 @@ export function Transcript({
             <Box flexDirection="column">
               <Box gap={1} marginLeft={line.activity.category === "command" ? 0 : 1}>
                 <Text wrap={line.activity.category === "command" ? "truncate" : undefined} color={line.activity.category === "command" ? activityColors.command : line.activity.completed ? "#64748B" : activityColors[line.activity.category]} bold={line.activity.category === "command"}>
-                  {line.activity.completed ? " " : "◌"} {activityIcons[line.activity.category]} {activityTitle(line)}{line.thinkingCount ? ` · ${line.thinkingCount} thoughts` : ""}
+                  {line.activity.completed ? " " : "◌"} {activityIcon(line)} {activityTitle(line)}{line.thinkingCount ? ` · ${line.thinkingCount} thoughts` : ""}
                 </Text>
                 {line.activity.detail && line.activity.category !== "files" ? (
                   <Text dimColor>

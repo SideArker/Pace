@@ -56,7 +56,7 @@ describe("activity transcript", () => {
     expect(first).toContain("Thinking");
     expect(first).not.toContain("✔");
     expect(first).not.toContain("Ran:");
-    expect(first).toContain("</> PS (PowerShell): rg -n foo src (exit 0)");
+    expect(first).toContain(">_ PS (PowerShell): rg -n foo src (exit 0)");
     expect(first).not.toContain("Output");
     expect(render(true)).toContain("Thinking");
   });
