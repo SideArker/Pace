@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import React from "react";
 import { renderToString } from "ink";
-import { ConvoMenu, ConversationPicker } from "../src/components/Menus.js";
+import { ConvoMenu, ConversationPicker, ResumeMenu } from "../src/components/Menus.js";
 import { newSession, PaceStore, rewindConversation, deleteConversationTurn, undoConversationTurn } from "../src/core/sessions.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -9,6 +9,18 @@ import { join } from "node:path";
 import type { TurnSummary } from "../src/shared/types.js";
 
 describe("Conversation editing and undo logic", () => {
+  it("groups saved conversations by project and marks missing paths", () => {
+    const available = newSession('/available', 'auto');
+    const missing = newSession('/missing', 'auto');
+    const output = renderToString(React.createElement(ResumeMenu, {
+      choices: [available, missing], selectedIndex: 1, missingProjectPaths: [missing.projectPath],
+    }), { columns: 100 });
+    expect(output).toContain(available.projectPath);
+    expect(output).toContain(missing.projectPath);
+    expect(output).toContain('(missing; restore this folder)');
+    expect(output).toContain('(unavailable)');
+  });
+
   it("shows completed background conversations as done until opened", () => {
     const output = renderToString(React.createElement(ConversationPicker, {
       choices: [

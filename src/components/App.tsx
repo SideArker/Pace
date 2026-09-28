@@ -1112,7 +1112,7 @@ export default function App({ onClear }: { onClear: () => void }) {
           <Text>{approval.command}</Text>
           {approval.cwd ? <Text dimColor>in {approval.cwd}</Text> : null}
           {approval.reason ? <Text dimColor>{approval.reason}</Text> : null}
-          <Text color="#FBBF24">Y approve once Â· N or Esc decline</Text>
+          <Text color="#FBBF24">Y approve once · N decline · Esc cancel turn</Text>
         </Box>
       ) : null}
       <Box marginTop={1}>

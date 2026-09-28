@@ -6,7 +6,7 @@ Pace is an independent, terminal-only coding client. The official [Codex App Ser
 
 Requires Node.js 20+, a terminal, and working Codex authentication. Sign in with the [Codex CLI](https://developers.openai.com/codex/cli) (`codex login`) or use a supported Codex SDK/CLI environment credential. Pace never reads or stores a token itself. A Git project is expected by Codex.
 
-On Windows PowerShell:
+On Windows PowerShell, including the PowerShell profile in Windows Terminal:
 
 ```powershell
 npm ci
@@ -16,7 +16,7 @@ pace doctor
 pace
 ```
 
-On macOS or Linux:
+On macOS or Linux, run these commands in Bash or Zsh:
 
 ```sh
 npm ci
@@ -28,7 +28,7 @@ pace
 
 For development, use `npm run dev` instead of linking. Interactive `pace` opens a fresh conversation; use `/resume` to continue a saved one. `pace --help` and `pace --version` work without authentication. `pace doctor` checks Node, local storage, Git presence, SDK installation, Vex server installation, and configuration; only a live coding turn verifies authentication and runtime access.
 
-`pace sessions` lists saved conversations across projects. It marks moved or deleted project folders as missing. Resume from an available project with `/resume`; missing folders must be restored before Pace can run there. `pace doctor` connects to Vex MCP and checks for `vex_choose`; it exits with status 1 when Vex is unavailable.
+`pace sessions` lists saved conversations across projects. It marks moved or deleted project folders as missing. `/resume` groups conversations by project and blocks missing paths. Restore the folder at its original path, then reopen `/resume`. `pace doctor` connects to Vex MCP and checks for `vex_choose`; it exits with status 1 when Vex is unavailable. Its error names discovery, startup, connection, or tool validation. Manual routes remain available when Vex is down.
 
 ## Chat commands
 
@@ -36,6 +36,7 @@ For development, use `npm run dev` instead of linking. Interactive `pace` opens 
 | --- | --- |
 | `/help` | Show commands and Ctrl+C behavior |
 | `/models` | Open the model menu; Space toggles a model, Enter opens its reasoning levels |
+| `/model <name> [effort]` | Select an enabled model and configured effort for manual turns |
 | `/auto` | Enable Vex routing for the next turn, including in a resumed conversation |
 | `/new` | Alias for `/clear` |
 | `/resume` | Open saved conversations, including turns still running in this Pace process |
@@ -54,7 +55,7 @@ For development, use `npm run dev` instead of linking. Interactive `pace` opens 
 | `! <command>` | Run one Bash command in the project directory |
 | `!` | Toggle Bash input mode; type `!` again to return to Pace |
 
-Type `/` to see a command menu. Use Tab to complete and ↑/↓ to choose a match. In `/models`, use ↑/↓ or Tab to select, Space to enable or disable, Enter to open reasoning levels, and Esc to go back. Each turn has separate **You** and **Pace** sections, followed by a compact, gray model, timing, usage, and route footer. A divider separates turns. A spinner marks active work; status text comes from Codex App Server events. When an action needs approval, press Y to approve it once, N or Esc to decline. While a turn runs, use `/new` to start another conversation or `/resume` to switch. Background turns continue and their responses appear when you return. Ctrl+C cancels the selected conversation's turn. With background turns running, Ctrl+C keeps Pace open; `/exit` quits. When no turns run, Ctrl+C exits. Input stays available during a Codex turn so Bash commands can run concurrently.
+Type `/` to see a command menu. Use Tab to complete and ↑/↓ to choose a match. In `/models`, use ↑/↓ or Tab to select, Space to enable or disable, Enter to open reasoning levels, and Esc to go back. Each turn has separate **You** and **Pace** sections, followed by a compact, gray model, timing, usage, and route footer. A divider separates turns. A spinner marks active work; status text comes from Codex App Server events. When an action needs approval, press Y to approve it once, N to decline, or Esc to cancel the turn. While a turn runs, use `/new` to start another conversation or `/resume` to switch. Background turns continue and their responses appear when you return. Ctrl+C cancels the selected conversation's turn. With background turns running, Ctrl+C keeps Pace open; `/exit` quits. When no turns run, Ctrl+C exits. Input stays available during a Codex turn so Bash commands can run concurrently.
 
 After opening a second conversation, a compact picker stays below the input. Press ↓ from the input to focus it, use ↑/↓ to select a conversation, and press Enter to switch. Esc returns to the input. Switching keeps other conversation turns running.
 
@@ -63,7 +64,7 @@ Markdown links in the interactive transcript are clickable in terminals that sup
 
 ## Non-interactive runs
 
-Run `pace exec "your request"` from a project directory to continue its active conversation without Ink. Pace writes the final response to stdout. It returns 0 on success, 1 on provider, configuration, or execution failure, 2 for a missing prompt, and 130 after Ctrl+C. Errors go to stderr. This command uses the same routing, trusted folders, skill folder, and session storage as interactive turns.
+Run `pace exec "your request"` from a project directory to continue its active conversation without Ink. Pass the whole request as one quoted argument. PowerShell can use `$prompt = @'` followed by text and a closing `'@`, then `pace exec $prompt`. Bash and Zsh can use `pace exec $'first line\nsecond line'`. Pace preserves embedded newlines, writes only the final response to stdout, and writes progress errors and approval denials to stderr. It returns 0 on success, 1 on provider, configuration, or execution failure, 2 for a missing prompt, and 130 after Ctrl+C. It declines every noninteractive approval, keeps the saved session ID and turn metadata, and uses the same routing, trusted folders, and skill settings as interactive turns.
 
 ## Trusted folders and skills
 
@@ -112,7 +113,7 @@ On Windows, a project-local link also works without a global Vex command: build 
 
 Pace writes config and up to 20 full user prompts and final Codex responses under `~/.pace`; each project uses a SHA-256 path key and each conversation has its own atomic JSON file. Codex owns its thread history in `~/.codex/sessions`. Interactive startup opens a new conversation. Pace stores the Codex thread ID for follow-ups within that conversation; after restarting, use `/resume` to continue it. `/clear` and `/new` return to the entry screen with a fresh conversation. Auto mode routes each prompt; manual mode keeps its saved model and effort. Corrupt session files are skipped with a warning.
 
-Pace runs Codex turns through the App Server protocol so it can answer command-approval requests in the terminal UI. Approval is per command and applies only to that request. A declined command does not run. Non-interactive `pace exec` runs automatically decline approvals. Pace keeps the workspace-write sandbox and disabled network access; approval does not grant unrestricted access or bypass the sandbox.
+Pace runs Codex turns through the App Server protocol so it can answer command-approval requests in the terminal UI. Approval is per command and applies only to that request. A declined command does not run. Non-interactive `pace exec` runs automatically decline approvals. Esc or Ctrl+C cancels an active turn, including one waiting for approval; cancellation is saved with the session. Pace keeps the workspace-write sandbox and disabled network access; approval does not grant unrestricted access or bypass the sandbox.
 
 The App Server streams status and agent-message events. Pace shows model, reasoning level, elapsed time, raw input and output tokens, cache hits and writes, estimated cost, and route source. It also reads Codex account rate limits on startup and after each turn. Use `/usage` to refresh them. Some App Server messages arrive as completed items rather than token-by-token text. The App Server does not report token usage per command or message item.
 

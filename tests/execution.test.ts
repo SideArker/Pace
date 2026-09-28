@@ -205,6 +205,45 @@ it('records cancellation during routing and never starts Codex', async () => {
   expect((await store.latest('/example/project'))?.turns.at(-1)?.failed).toBe(true);
 });
 
+it('saves cancellation while Vex is connecting before routing begins', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  const controller = new AbortController();
+  let started!: () => void;
+  const connecting = new Promise<void>(resolve => { started = resolve; });
+  const session = newSession('/example/project', 'auto');
+  const store = new PaceStore(dir);
+  const runner: CodexRunner = { async run() { throw new Error('Codex must not run'); } };
+  const vex = {
+    async verify() { started(); await new Promise<void>(() => {}); },
+    async choose() { throw new Error('Routing must not start'); },
+  };
+  const turn = new Orchestrator(store, runner, vex).turn('work', session, config, () => {}, controller.signal);
+  await connecting;
+  controller.abort();
+  await expect(turn).rejects.toMatchObject({ name: 'AbortError' });
+  expect((await store.latest('/example/project'))?.turns.at(-1)).toMatchObject({
+    prompt: 'work', result: 'Turn cancelled by user', failed: true, cancelled: true,
+  });
+});
+
+it('runs a saved manual route when Vex is unavailable', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  const session = newSession('/example/project', 'manual');
+  session.route = { model: 'gpt-6-sol', effort: 'high' };
+  const routes: Route[] = [];
+  const runner: CodexRunner = { async run(_prompt, _project, route) {
+    routes.push(route);
+    return { result: 'done', completed: true };
+  } };
+  const vex = {
+    async verify() { throw new Error('Vex offline'); },
+    async choose() { throw new Error('Vex offline'); },
+  };
+  const result = await new Orchestrator(new PaceStore(dir), runner, vex).turn('work', session, config, () => {});
+  expect(result.result).toBe('done');
+  expect(routes).toEqual([session.route]);
+});
+
 it('rejects disabled models and lets manual mode keep its route', async () => {
   dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
   const routes: Route[] = [];

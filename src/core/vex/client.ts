@@ -168,7 +168,11 @@ export class VexRouter {
             }),
           ]);
         } catch (error) {
-          throw new VexDiagnosticError("connection", error);
+          const detail = String(error);
+          throw new VexDiagnosticError(
+            /\bspawn\s+(?:EPERM|EACCES|ENOENT)|Cannot find module/i.test(detail) ? "startup" : "connection",
+            error,
+          );
         }
         let tools: Awaited<ReturnType<typeof client.listTools>>;
         try {
