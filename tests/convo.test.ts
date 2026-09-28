@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import React from "react";
-import { ConvoMenu } from "../src/components/Menus.js";
+import { renderToString } from "ink";
+import { ConvoMenu, ConversationPicker } from "../src/components/Menus.js";
 import { newSession, PaceStore, rewindConversation, deleteConversationTurn, undoConversationTurn } from "../src/core/sessions.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,6 +9,21 @@ import { join } from "node:path";
 import type { TurnSummary } from "../src/shared/types.js";
 
 describe("Conversation editing and undo logic", () => {
+  it("shows completed background conversations as done until opened", () => {
+    const output = renderToString(React.createElement(ConversationPicker, {
+      choices: [
+        { id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", prompt: "Working", state: "running" },
+        { id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", prompt: "Finished", state: "done" },
+      ],
+      activeId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      selectedIndex: 0,
+      focused: false,
+    }), { columns: 80 });
+    expect(output).toContain("running");
+    expect(output).toContain("done");
+    expect(output).toContain("Finished");
+  });
+
   it("renders ConvoMenu with turn summaries without error", () => {
     const turns: TurnSummary[] = [
       { prompt: "Create server.ts", result: "Created server", at: new Date().toISOString() },
