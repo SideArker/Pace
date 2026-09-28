@@ -120,7 +120,7 @@ class AppServer {
   private requestHandler?: (message: RpcMessage) => void;
   private stderr = "";
 
-  constructor(onMessage: (message: RpcMessage) => void) {
+  constructor(onMessage: (message: RpcMessage) => void, onExit: (error: Error) => void) {
     this.child = spawn(process.execPath, [codexCommand(), "app-server", "--stdio", ...serverArgs()], {
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
@@ -140,8 +140,12 @@ class AppServer {
     });
     this.child.stderr.setEncoding("utf8");
     this.child.stderr.on("data", chunk => { this.stderr = (this.stderr + chunk).slice(-4000); });
-    this.child.on("error", error => this.rejectPending(error));
-    this.child.on("close", code => this.rejectPending(new Error(`Codex app-server exited (${code ?? "unknown"})${this.stderr ? `: ${this.stderr.trim()}` : ""}`)));
+    this.child.on("error", error => { this.rejectPending(error); onExit(error); });
+    this.child.on("close", code => {
+      const error = new Error(`Codex app-server exited (${code ?? "unknown"})${this.stderr ? `: ${this.stderr.trim()}` : ""}`);
+      this.rejectPending(error);
+      onExit(error);
+    });
   }
 
   setRequestHandler(handler: (message: RpcMessage) => void): void { this.requestHandler = handler; }
@@ -168,7 +172,7 @@ class AppServer {
   }
 }
 
-function appUsage(value: unknown): Usage | undefined {
+export function appUsage(value: unknown): Usage | undefined {
   if (!isRecord(value)) return undefined;
   const last = isRecord(value.last) ? value.last : value;
   const number = (snake: string, camel: string) => {
@@ -184,6 +188,43 @@ function appUsage(value: unknown): Usage | undefined {
     cache_write_input_tokens: number("cache_write_input_tokens", "cacheWriteInputTokens") ?? 0,
     output_tokens: output,
     reasoning_output_tokens: number("reasoning_output_tokens", "reasoningOutputTokens") ?? 0,
+  };
+}
+
+export function appServerThreadParams(
+  cwd: string,
+  route: Route,
+  threadId: string | undefined,
+  mode: "main" | "side",
+) {
+  return {
+    ...(threadId ? { threadId } : {}),
+    ...(route.model ? { model: route.model } : {}),
+    cwd,
+    approvalPolicy: mode === "side" ? "never" : "on-request",
+    sandbox: mode === "side" ? "read-only" : "workspace-write",
+    serviceName: "pace",
+  };
+}
+
+export function appServerTurnParams(
+  prompt: string,
+  cwd: string,
+  route: Route,
+  threadId: string,
+  mode: "main" | "side",
+  trustedFolders: string[],
+) {
+  return {
+    threadId,
+    input: [{ type: "text", text: mode === "side" ? prompt : artifactPrompt(prompt) }],
+    cwd,
+    approvalPolicy: mode === "side" ? "never" : "on-request",
+    sandboxPolicy: mode === "side"
+      ? { type: "readOnly", networkAccess: false }
+      : { type: "workspaceWrite", writableRoots: [cwd, ...trustedFolders], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false },
+    ...(route.model ? { model: route.model } : {}),
+    ...(route.effort ? { effort: route.effort } : {}),
   };
 }
 
@@ -212,7 +253,16 @@ function appItemProgress(item: JsonRecord, event: string): Progress | undefined 
   }
 }
 
+type AppServerConnection = Pick<AppServer, "setRequestHandler" | "request" | "notify" | "respond" | "kill">;
+
 export class AppServerRunner implements CodexRunner {
+  constructor(
+    private readonly createServer: (
+      onMessage: (message: RpcMessage) => void,
+      onExit: (error: Error) => void,
+    ) => AppServerConnection = (onMessage, onExit) => new AppServer(onMessage, onExit),
+  ) {}
+
   async run(
     prompt: string,
     project: string,
@@ -226,6 +276,7 @@ export class AppServerRunner implements CodexRunner {
     if (signal?.aborted) throw new Error("Turn cancelled");
     const { realpath } = await import("node:fs/promises");
     const cwd = await realpath(project);
+    signal?.throwIfAborted();
     let result = "";
     let usage: Usage | undefined;
     let thread: JsonRecord | undefined;
@@ -233,7 +284,7 @@ export class AppServerRunner implements CodexRunner {
     let completed = false;
     let turnResolve!: () => void;
     const turnDone = new Promise<void>(resolve => { turnResolve = resolve; });
-    const server = new AppServer(message => {
+    const server = this.createServer(message => {
       const params = isRecord(message.params) ? message.params : {};
       if (message.method === "turn/completed") {
         const turn = isRecord(params.turn) ? params.turn : {};
@@ -256,7 +307,22 @@ export class AppServerRunner implements CodexRunner {
       if (progress) {
         void onProgress(progress);
       }
+    }, error => {
+      failure = error.message;
+      turnResolve();
     });
+    const awaitAbort = <T,>(pending: Promise<T>): Promise<T> => {
+      if (!signal) return pending;
+      if (signal.aborted) return Promise.reject(signal.reason);
+      return new Promise<T>((resolve, reject) => {
+        const onAbort = () => reject(signal.reason);
+        signal.addEventListener("abort", onAbort, { once: true });
+        pending.then(
+          value => { signal.removeEventListener("abort", onAbort); resolve(value); },
+          error => { signal.removeEventListener("abort", onAbort); reject(error); },
+        );
+      });
+    };
     const approvals = new Map<string, (decision: ApprovalDecision) => void>();
     server.setRequestHandler(message => {
       if (message.id === undefined) return;
@@ -291,42 +357,32 @@ export class AppServerRunner implements CodexRunner {
       });
     });
     try {
-      const init = await server.request("initialize", {
+      const init = await awaitAbort(server.request("initialize", {
         clientInfo: { name: "pace", title: "Pace", version: "0.1.0" },
         capabilities: { experimentalApi: true },
-      });
+      }));
       void init;
       server.notify("initialized", {});
-      const threadResult = await server.request(threadId ? "thread/resume" : "thread/start", {
-        ...(threadId ? { threadId } : {}),
-        ...(route.model ? { model: route.model } : {}),
-        cwd,
-        approvalPolicy: mode === "side" ? "never" : "on-request",
-        sandbox: mode === "side" ? "read-only" : "workspace-write",
-        serviceName: "pace",
-      });
+      const threadResult = await awaitAbort(server.request(
+        threadId ? "thread/resume" : "thread/start",
+        appServerThreadParams(cwd, route, threadId, mode),
+      ));
       thread = isRecord(threadResult) && isRecord(threadResult.thread) ? threadResult.thread : undefined;
       const id = typeof thread?.id === "string" ? thread.id : threadId;
       if (!id) throw new Error("Codex app-server did not return a thread id");
+      signal?.throwIfAborted();
       await onProgress({ kind: "thread", text: id });
-      const writableRoots = [cwd, ...(mode === "main" ? trustedFolders : [])];
       const abortTurn = () => {
         for (const resolve of approvals.values()) resolve("decline");
         void server.request("turn/interrupt", { threadId: id }).catch(() => {});
       };
       signal?.addEventListener("abort", abortTurn, { once: true });
       try {
+        signal?.throwIfAborted();
         await onProgress({ kind: "status", text: "Working…" });
-        await server.request("turn/start", {
-          threadId: id,
-          input: [{ type: "text", text: mode === "side" ? prompt : artifactPrompt(prompt) }],
-          cwd,
-          approvalPolicy: mode === "side" ? "never" : "on-request",
-          sandboxPolicy: mode === "side" ? { type: "readOnly", networkAccess: false } : { type: "workspaceWrite", writableRoots, networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false },
-          ...(route.model ? { model: route.model } : {}),
-          ...(route.effort ? { effort: route.effort } : {}),
-        });
-        await turnDone;
+        signal?.throwIfAborted();
+        await awaitAbort(server.request("turn/start", appServerTurnParams(prompt, cwd, route, id, mode, trustedFolders)));
+        await awaitAbort(turnDone);
       } finally { signal?.removeEventListener("abort", abortTurn); }
       if (failure) throw new Error(failure);
       if (!completed) throw new Error("Codex stream ended without turn.completed");
@@ -339,7 +395,10 @@ export class AppServerRunner implements CodexRunner {
 export class SdkRunner implements CodexRunner {
   private codex: Codex;
 
-  constructor(options: CodexOptions = codexOptions(vexServerPath())) {
+  constructor(
+    options: CodexOptions = codexOptions(vexServerPath()),
+    private readonly onEvent?: (event: ThreadEvent) => void | Promise<void>,
+  ) {
     this.codex = new Codex(options);
   }
 
@@ -369,6 +428,7 @@ export class SdkRunner implements CodexRunner {
     let failure: string | undefined;
     let usage: Usage | undefined;
     for await (const event of events) {
+      await this.onEvent?.(event);
       const progress = eventProgress(event);
       if (event.type === "thread.started") await onProgress({ kind: "thread", text: event.thread_id });
       if (progress) await onProgress(progress);

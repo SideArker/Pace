@@ -1,10 +1,10 @@
 import { afterEach, expect, it } from 'vitest';
-import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Orchestrator } from '../src/core/orchestrator.js';
-import { PaceStore, newSession } from '../src/core/sessions.js';
-import { codexOptions, eventProgress, SdkRunner, type CodexRunner } from '../src/integrations/codex.js';
+import { PaceStore, newSession, undoConversationTurn } from '../src/core/sessions.js';
+import { AppServerRunner, appServerThreadParams, appServerTurnParams, appUsage, codexOptions, eventProgress, SdkRunner, type CodexRunner } from '../src/integrations/codex.js';
 import type { Config, Route } from '../src/shared/types.js';
 import type { VexRequest } from '../src/core/vex/client.js';
 import { decision } from './routing-fixture.js';
@@ -31,6 +31,33 @@ it('reroutes each follow-up and resumes its saved main thread', async () => {
   await orchestrator.turn('second', session, config, () => {});
   expect(calls).toEqual([{ id: undefined, route: { model: 'gpt-6-sol', effort: 'high' } }, { id: 'thread-1', route: { model: 'gpt-6-luna', effort: 'low' } }]);
   expect((await store.latest('/example/project'))?.turns).toHaveLength(2);
+});
+
+it('replays only retained turns after undo starts a new Codex thread', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  const session = newSession('/example/project', 'auto');
+  session.threadId = 'old-thread';
+  session.turns = [
+    { prompt: 'Keep this request', result: 'Kept answer', at: '2026-01-01' },
+    { prompt: 'Remove this request', result: 'Removed answer', at: '2026-01-02' },
+  ];
+  undoConversationTurn(session);
+  let sentPrompt = '';
+  let sentThread: string | undefined;
+  const runner: CodexRunner = { async run(prompt, _project, _route, threadId) {
+    sentPrompt = prompt;
+    sentThread = threadId;
+    return { threadId: 'new-thread', result: 'done', completed: true };
+  } };
+  const vex = { choose: async (request: VexRequest) => decision(request, request.options[0]?.id === 'single' ? 'single' : '1:high') };
+  await new Orchestrator(new PaceStore(dir), runner, vex).turn('Current request', session, config, () => {});
+  expect(sentThread).toBeUndefined();
+  expect(sentPrompt).toContain('Keep this request');
+  expect(sentPrompt).toContain('Kept answer');
+  expect(sentPrompt).not.toContain('Remove this request');
+  expect(sentPrompt).not.toContain('Removed answer');
+  expect(sentPrompt).toContain('Current request');
+  expect(session.threadId).toBe('new-thread');
 });
 
 it('runs a read-only scout, reroutes after handoff, and sums stage costs', async () => {
@@ -82,8 +109,12 @@ it('asks for clarification without starting Codex', async () => {
 it('stops before completion when scout report lacks verifiable findings schema', async () => {
   dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
   let mainRuns = 0;
-  const runner: CodexRunner = { async run(_prompt, _project, _route, _id, _progress, _signal, mode) {
-    if (mode === 'side') return { result: JSON.stringify({ summary: 'Found code', files: ['src/a.ts'], checks: [], risks: [] }), completed: true };
+  const sidePrompts: string[] = [];
+  const runner: CodexRunner = { async run(prompt, _project, _route, _id, _progress, _signal, mode) {
+    if (mode === 'side') {
+      sidePrompts.push(prompt);
+      return { result: JSON.stringify({ summary: 'Found code', files: ['src/a.ts'], checks: [], risks: [] }), completed: true };
+    }
     mainRuns++;
     return { result: 'unexpected', completed: true };
   } };
@@ -91,8 +122,30 @@ it('stops before completion when scout report lacks verifiable findings schema',
   const session = newSession('/example/project', 'auto');
   await expect(new Orchestrator(new PaceStore(dir), runner, vex).turn('Implement feature', session, config, () => {})).rejects.toThrow('Invalid stage handoff');
   expect(mainRuns).toBe(0);
+  expect(sidePrompts).toHaveLength(2);
+  expect(sidePrompts[1]).toContain('Your previous report was rejected');
   expect(session.turns.at(-1)?.failed).toBe(true);
   expect(session.turns.at(-1)?.stages).toHaveLength(2);
+});
+
+it('uses a corrected scout report for the completion stage', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  let sideRuns = 0;
+  const runner: CodexRunner = { async run(prompt, _project, _route, _id, _progress, _signal, mode) {
+    if (mode === 'side') {
+      sideRuns++;
+      return { result: sideRuns === 1
+        ? JSON.stringify({ summary: 'Found code', files: ['src/a.ts'] })
+        : JSON.stringify({ summary: 'Found code', findings: [{ path: 'src/a.ts', finding: 'Parser lives here', relevance: 'Edit target' }], nextSteps: ['Edit parser'], checks: [], risks: [] }), completed: true };
+    }
+    expect(prompt).toContain('Parser lives here');
+    return { result: 'done', completed: true };
+  } };
+  const vex = { choose: async (request: VexRequest) => decision(request, request.options[0]?.id === 'single' ? 'scout' : '0:low') };
+  const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('Implement feature', newSession('/example/project', 'auto'), config, () => {});
+  expect(sideRuns).toBe(2);
+  expect(outcome.stages).toHaveLength(3);
+  expect(outcome.stages[1]?.handoff).toContain('Parser lives here');
 });
 
 it('passes an actionable read-only plan into the execution stage', async () => {
@@ -120,6 +173,28 @@ it('retries invalid decisions once, then exposes error without model fallback', 
   expect(calls).toBe(2);
 });
 
+it('records cancellation during routing and never starts Codex', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  const controller = new AbortController();
+  let started!: () => void;
+  const routingStarted = new Promise<void>(resolve => { started = resolve; });
+  const routingReleased = new Promise<void>(() => {});
+  const runner: CodexRunner = { async run() { throw new Error('Codex must not run'); } };
+  const session = newSession('/example/project', 'auto');
+  const store = new PaceStore(dir);
+  const vex = { choose: async (request: VexRequest) => {
+    started();
+    await routingReleased;
+    return decision(request, 'single');
+  } };
+  const turn = new Orchestrator(store, runner, vex).turn('work', session, config, () => {}, controller.signal);
+  await routingStarted;
+  controller.abort();
+  await expect(turn).rejects.toMatchObject({ name: 'AbortError' });
+  expect(session.turns.at(-1)).toMatchObject({ prompt: 'work', failed: true });
+  expect((await store.latest('/example/project'))?.turns.at(-1)?.failed).toBe(true);
+});
+
 it('rejects disabled models and lets manual mode keep its route', async () => {
   dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
   const routes: Route[] = [];
@@ -137,23 +212,51 @@ it('exposes SDK activity with stable IDs and the available reasoning summary', (
   expect(eventProgress({ type: 'item.completed', item: { id: 'thought', type: 'reasoning', text: 'Checking files' } })).toMatchObject({ category: 'thinking', detail: 'Checking files' });
 });
 
-it('reads usage from SDK completed event and preserves side read-only mode', async () => {
+it('uses Codex app-server sandbox values for threads and turns', () => {
   const usage = { input_tokens: 20, cached_input_tokens: 4, cache_write_input_tokens: 0, output_tokens: 8, reasoning_output_tokens: 2 };
-  const thread = { id: 'thread-1', async runStreamed() { return { events: (async function* () {
-    yield { type: 'item.completed', item: { type: 'agent_message', id: 'msg-1', text: 'done' } };
-    yield { type: 'turn.completed', usage };
-  })() }; } };
-  const runner = new SdkRunner();
-  let options: unknown;
-  (runner as unknown as { codex: { startThread: (value: unknown) => typeof thread; resumeThread: (id: string, value: unknown) => typeof thread } }).codex = {
-    startThread: value => { options = value; return thread; }, resumeThread: (_id, value) => { options = value; return thread; },
+  expect(appUsage({ last: { inputTokens: 20, cachedInputTokens: 4, outputTokens: 8, reasoningOutputTokens: 2 } })).toEqual(usage);
+  expect(appServerThreadParams('/project', { model: 'gpt-6-luna', effort: 'low' }, undefined, 'side')).toMatchObject({ approvalPolicy: 'never', sandbox: 'read-only' });
+  expect(appServerThreadParams('/project', { model: 'gpt-6-sol', effort: 'high' }, 'thread-1', 'main')).toMatchObject({ threadId: 'thread-1', approvalPolicy: 'on-request', sandbox: 'workspace-write' });
+  const side = appServerTurnParams('scout', '/project', { model: 'gpt-6-luna', effort: 'low' }, 'thread-1', 'side', ['/trusted']);
+  expect(side).toMatchObject({ approvalPolicy: 'never', sandboxPolicy: { type: 'readOnly', networkAccess: false }, input: [{ type: 'text', text: 'scout' }] });
+  expect(JSON.stringify(side)).not.toContain('/trusted');
+  const main = appServerTurnParams('work', '/project', { model: 'gpt-6-sol', effort: 'high' }, 'thread-1', 'main', ['/trusted']);
+  expect(main).toMatchObject({ approvalPolicy: 'on-request', sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['/project', '/trusted'], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false } });
+});
+
+it('ends an active turn when Codex app-server exits', async () => {
+  let exit!: (error: Error) => void;
+  const server = {
+    setRequestHandler() {},
+    notify() {},
+    respond() {},
+    kill() {},
+    async request(method: string) {
+      if (method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (method === 'turn/start') queueMicrotask(() => exit(new Error('App Server exited')));
+      return {};
+    },
   };
-  const path = await realpath(process.cwd());
-  expect((await runner.run('work', path, { model: 'gpt-6-sol', effort: 'high' }, undefined, () => {})).usage).toEqual(usage);
-  await runner.run('scout', path, { model: 'gpt-6-luna', effort: 'low' }, undefined, () => {}, undefined, 'side');
-  expect(options).toMatchObject({ sandboxMode: 'read-only', approvalPolicy: 'never', additionalDirectories: [] });
+  const runner = new AppServerRunner((_message, onExit) => {
+    exit = onExit;
+    return server;
+  });
+  await expect(runner.run('work', process.cwd(), { model: 'gpt-6-sol', effort: 'high' }, undefined, () => {}))
+    .rejects.toThrow('App Server exited');
 });
 
 it('gives Codex independent Vex MCP access without key in command arguments', () => {
   expect(codexOptions('/installed/vex/dist/index.js')).toEqual({ config: { mcp_servers: { vex: { command: process.execPath, args: ['/installed/vex/dist/index.js', 'mcp', 'serve'], env_vars: ['OPENROUTER_API_KEY'] } } } });
+});
+
+it('delivers every streamed SDK event to benchmark observer', async () => {
+  const seen: string[] = [];
+  const runner = new SdkRunner({}, async event => { seen.push(event.type); });
+  const thread = { id: 'thread-1', async runStreamed() { return { events: (async function* () {
+    yield { type: 'item.completed', item: { type: 'agent_message', id: 'message-1', text: 'done' } };
+    yield { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 } };
+  })() }; } };
+  (runner as unknown as { codex: { startThread: () => typeof thread } }).codex = { startThread: () => thread };
+  await runner.run('work', process.cwd(), { model: 'gpt-6-sol', effort: 'high' }, undefined, () => {});
+  expect(seen).toEqual(['item.completed', 'turn.completed']);
 });

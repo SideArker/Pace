@@ -7,10 +7,11 @@ import {
   readdir,
   rename,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { DEFAULT_CONFIG, EFFORTS, isRecord, parseConfig } from "../shared/config.js";
-import type { Config, Notice, Session } from "../shared/types.js";
+import type { Config, Notice, Session, TurnSummary } from "../shared/types.js";
 import type { Usage } from "@openai/codex-sdk";
 
 function isUsage(value: unknown): value is Usage {
@@ -58,6 +59,23 @@ export function newSession(
     turns: [],
   };
 }
+export function rewindConversation(session: Session, index: number): TurnSummary | undefined {
+  const turn = session.turns[index];
+  if (!turn) return undefined;
+  session.turns = session.turns.slice(0, index);
+  session.threadId = undefined;
+  return turn;
+}
+export function deleteConversationTurn(session: Session, index: number): void {
+  if (index < 0 || index >= session.turns.length) return;
+  session.turns.splice(index, 1);
+  session.threadId = undefined;
+}
+export function undoConversationTurn(session: Session): TurnSummary | undefined {
+  const turn = session.turns.pop();
+  if (turn) session.threadId = undefined;
+  return turn;
+}
 export async function atomicJson(path: string, value: unknown): Promise<void> {
   const temp = `${path}.${randomUUID()}.tmp`;
   await mkdir(resolve(path, ".."), { recursive: true });
@@ -77,6 +95,7 @@ function parseSession(value: unknown, project: string): Session | undefined {
     !isRecord(value) ||
     typeof value.id !== "string" ||
     !/^[0-9a-f-]{36}$/.test(value.id) ||
+    (value.title !== undefined && (typeof value.title !== "string" || value.title.length > 120)) ||
     value.projectPath !== project ||
     typeof value.createdAt !== "string" ||
     typeof value.updatedAt !== "string" ||
@@ -113,6 +132,7 @@ function parseSession(value: unknown, project: string): Session | undefined {
   return value as Session;
 }
 export class PaceStore {
+  private activationQueue: Promise<void> = Promise.resolve();
   constructor(
     readonly baseDir = join(homedir(), ".pace"),
     readonly notice: Notice = () => {},
@@ -166,6 +186,44 @@ export class PaceStore {
     }
     return sessions.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
+  async listProjects(): Promise<{ projectPath: string; exists: boolean; sessions: Session[] }[]> {
+    const root = join(this.baseDir, "sessions");
+    let entries;
+    try {
+      entries = await readdir(root, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+        this.notice(`Projects unavailable: ${String(error)}`);
+      return [];
+    }
+    const projects: { projectPath: string; exists: boolean; sessions: Session[] }[] = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !/^[a-f0-9]{64}$/.test(entry.name)) continue;
+      let files: string[];
+      try {
+        files = await readdir(join(root, entry.name));
+      } catch {
+        continue;
+      }
+      for (const file of files.filter(name => /^[0-9a-f-]{36}\.json$/.test(name))) {
+        try {
+          const value: unknown = JSON.parse(await readFile(join(root, entry.name, file), "utf8"));
+          if (!isRecord(value) || typeof value.projectPath !== "string" ||
+              projectKey(value.projectPath) !== entry.name ||
+              !parseSession(value, normalizeProject(value.projectPath))) continue;
+          const projectPath = normalizeProject(value.projectPath);
+          const sessions = await this.list(projectPath);
+          const exists = await stat(projectPath).then(info => info.isDirectory()).catch(() => false);
+          projects.push({ projectPath, exists, sessions });
+          break;
+        } catch {
+          /* Another session in the directory may still be valid. */
+        }
+      }
+    }
+    return projects.sort((a, b) =>
+      (b.sessions[0]?.updatedAt ?? "").localeCompare(a.sessions[0]?.updatedAt ?? ""));
+  }
   async latest(project: string): Promise<Session | undefined> {
     const sessions = await this.list(project);
     try {
@@ -180,12 +238,15 @@ export class PaceStore {
     return sessions[0];
   }
   async activate(session: Session): Promise<void> {
-    await atomicJson(
+    const write = () => atomicJson(
       join(this.sessionDir(session.projectPath), "active.json"),
       { id: session.id },
     );
+    const pending = this.activationQueue.then(write, write);
+    this.activationQueue = pending.catch(() => {});
+    await pending;
   }
-  async save(session: Session): Promise<void> {
+  async save(session: Session, activate: boolean | (() => boolean) = true): Promise<void> {
     if (!/^[0-9a-f-]{36}$/.test(session.id))
       throw new Error("Invalid Pace session ID");
     session.updatedAt = new Date().toISOString();
@@ -193,6 +254,6 @@ export class PaceStore {
       join(this.sessionDir(session.projectPath), `${session.id}.json`),
       session,
     );
-    await this.activate(session);
+    if (typeof activate === "function" ? activate() : activate) await this.activate(session);
   }
 }

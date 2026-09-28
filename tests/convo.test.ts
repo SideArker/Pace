@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import React from "react";
 import { ConvoMenu } from "../src/components/Menus.js";
-import { newSession, PaceStore } from "../src/core/sessions.js";
+import { newSession, PaceStore, rewindConversation, deleteConversationTurn, undoConversationTurn } from "../src/core/sessions.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -43,24 +43,25 @@ describe("Conversation editing and undo logic", () => {
       });
       await store.save(session);
 
-      // Undo last turn
-      const popped = session.turns.pop();
+      // Undo last turn; next request must start a new Codex thread.
+      const popped = undoConversationTurn(session);
       expect(popped?.prompt).toBe("Third turn (bad prompt)");
       expect(session.turns).toHaveLength(2);
-      expect(session.threadId).toBe("test-thread-xyz");
+      expect(session.threadId).toBeUndefined();
 
       // Rewind to turn index 1 (meaning keep turns 0..0, edit turn 1)
       const target = session.turns[1];
       expect(target?.prompt).toBe("Second turn");
-      session.turns = session.turns.slice(0, 1);
+      session.threadId = "another-thread";
+      rewindConversation(session, 1);
       expect(session.turns).toHaveLength(1);
       expect(session.turns[0]?.prompt).toBe("First turn");
+      expect(session.threadId).toBeUndefined();
 
       // Rewind to turn index 0 (drop all turns, threadId resets)
       const initial = session.turns[0];
       expect(initial?.prompt).toBe("First turn");
-      session.turns = [];
-      if (session.turns.length === 0) session.threadId = undefined;
+      rewindConversation(session, 0);
       expect(session.threadId).toBeUndefined();
 
       await store.save(session);
@@ -70,6 +71,19 @@ describe("Conversation editing and undo logic", () => {
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it("deleting one turn invalidates thread while retaining other turns", () => {
+    const session = newSession("/my/project", "auto");
+    session.threadId = "thread-with-deleted-turn";
+    session.turns = [
+      { prompt: "Keep first", result: "First", at: "2026-01-01" },
+      { prompt: "Remove", result: "Removed", at: "2026-01-02" },
+      { prompt: "Keep last", result: "Last", at: "2026-01-03" },
+    ];
+    deleteConversationTurn(session, 1);
+    expect(session.turns.map(turn => turn.prompt)).toEqual(["Keep first", "Keep last"]);
+    expect(session.threadId).toBeUndefined();
   });
 
   it("aborts execution controller on cancellation signal", () => {

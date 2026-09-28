@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 import type { ApprovalDecision, Progress } from "../integrations/codex.js";
 import type { Config, Session, Route } from "../shared/types.js";
-import { PaceStore, newSession } from "../core/sessions.js";
+import { PaceStore, newSession, rewindConversation, deleteConversationTurn, undoConversationTurn } from "../core/sessions.js";
 import { Orchestrator, VexUnavailableError } from "../core/orchestrator.js";
 import { AppServerRunner } from "../integrations/codex.js";
 import { VexRouter } from "../core/vex/client.js";
@@ -127,6 +127,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const [resumeMenu, setResumeMenu] = useState(false);
   const [convoMenu, setConvoMenu] = useState(false);
   const [resumeChoices, setResumeChoices] = useState<Session[]>([]);
+  const [resumeProcessIds, setResumeProcessIds] = useState<string[]>([]);
   const [menuModel, setMenuModel] = useState("");
   const [menuIndex, setMenuIndex] = useState(0);
   const nextId = useRef(0);
@@ -558,8 +559,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         if (!session) return;
         const targetTurn = turns[menuIndex];
         if (!targetTurn) return;
-        session.turns = session.turns.slice(0, menuIndex);
-        if (session.turns.length === 0) session.threadId = undefined;
+        rewindConversation(session, menuIndex);
         session.updatedAt = new Date().toISOString();
         void store.save(session);
         setSession({ ...session });
@@ -570,8 +570,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         add("info", `Rewound to turn ${menuIndex + 1}. Prompt loaded into composer.`);
       } else if (key.delete || key.backspace || input === "d") {
         if (!session) return;
-        session.turns.splice(menuIndex, 1);
-        if (session.turns.length === 0) session.threadId = undefined;
+        deleteConversationTurn(session, menuIndex);
         session.updatedAt = new Date().toISOString();
         void store.save(session);
         setSession({ ...session });
@@ -585,8 +584,7 @@ export default function App({ onClear }: { onClear: () => void }) {
     }
     if (key.ctrl && input === "z") {
       if (!jobs.current.has(session?.id ?? "") && session?.turns.length) {
-        const popped = session.turns.pop()!;
-        if (session.turns.length === 0) session.threadId = undefined;
+        const popped = undoConversationTurn(session)!;
         session.updatedAt = new Date().toISOString();
         void store.save(session);
         setSession({ ...session });
@@ -902,17 +900,19 @@ export default function App({ onClear }: { onClear: () => void }) {
           add("error", "Type /resume to open the conversation picker.");
           return;
         }
-        const saved = await store.list(project);
-        if (!saved.length && !jobs.current.size) {
-          add("info", "No saved conversations.");
-          return;
-        }
-        const choices = [...saved];
+        const projects = await store.listProjects();
+        const processIds = [...jobs.current.keys()];
+        const choices = projects.flatMap(item => item.sessions);
         for (const job of jobs.current.values()) {
           const index = choices.findIndex(choice => choice.id === job.session.id);
           if (index >= 0) choices[index] = job.session;
-          else choices.push(job.session);
+          else choices.unshift(job.session);
         }
+        if (!choices.length) {
+          add("info", "No saved conversations.");
+          return;
+        }
+        setResumeProcessIds(processIds);
         setResumeChoices(choices);
         setResumeMenu(true);
         setMenuIndex(0);
@@ -923,8 +923,7 @@ export default function App({ onClear }: { onClear: () => void }) {
           add("info", "No messages in conversation to undo.");
           return;
         }
-        const popped = session.turns.pop()!;
-        if (session.turns.length === 0) session.threadId = undefined;
+        const popped = undoConversationTurn(session)!;
         session.updatedAt = new Date().toISOString();
         try {
           await store.save(session);
@@ -1061,7 +1060,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       {showHeader ? <Header project={project} vexState={vexState} width={stdout.columns ?? 80} /> : null}
       <Transcript lines={lines} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} rows={stdout.rows ?? 24} scrollBack={scrollBack} width={stdout.columns ?? 80} />
       {modelMenu ? <ModelMenu mode={modelMenu} models={menuModels} selectedModel={menuModel} selectedIndex={menuIndex} config={config} /> : null}
-      {resumeMenu ? <ResumeMenu choices={resumeChoices} selectedIndex={menuIndex} runningIds={runningIds} /> : null}
+      {resumeMenu ? <ResumeMenu choices={resumeChoices} selectedIndex={menuIndex} runningIds={runningIds} processIds={resumeProcessIds} /> : null}
       {convoMenu && session ? <ConvoMenu turns={session.turns} selectedIndex={menuIndex} /> : null}
       {runningIds.length || shellJobs ? (
       <Box gap={1}><Text color="#59E6A7" bold>{spinner[tick % spinner.length]}</Text><Text color="#38BDF8">{busy ? status === "Thinking" ? thinkingWords[Math.floor(tick / 30) % thinkingWords.length] : status : "Ready"}</Text>{shellJobs ? <Text color="#FBBF24">· ⚡ {shellJobs} Bash command{shellJobs === 1 ? "" : "s"} running</Text> : null}</Box>
