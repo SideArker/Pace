@@ -12,22 +12,28 @@ export async function execTurn(prompt: string, project = process.cwd()): Promise
   const vex = new VexRouter();
   const controller = new AbortController();
   const cancel = () => controller.abort();
+  let lastProgressError: string | undefined;
   process.once("SIGINT", cancel);
   try {
     const config = await store.loadConfig();
     const session = await store.latest(project) ?? newSession(project, config.routingMode);
     const outcome = await new Orchestrator(store, new AppServerRunner(), vex).turn(prompt, session, config, progress => {
-      if (progress.kind === "error") console.error(progress.text);
+      if (progress.kind === "error") {
+        lastProgressError = progress.text;
+        console.error(progress.text);
+      }
       if (progress.kind === "system") console.error(`System: ${progress.text}`);
       if (progress.kind === "approval") {
         console.error(`Denied command approval in non-interactive mode: ${progress.command}`);
         progress.respond("decline");
       }
     }, controller.signal);
+    controller.signal.throwIfAborted();
     console.log(outcome.result);
     return 0;
   } catch (error) {
-    console.error(String(error));
+    if (controller.signal.aborted) console.error("Turn cancelled by user");
+    else if (String(error) !== lastProgressError) console.error(String(error));
     return controller.signal.aborted ? 130 : 1;
   } finally {
     process.removeListener("SIGINT", cancel);

@@ -223,21 +223,7 @@ export class Orchestrator {
       const previousSkill = skillCommand(turn.prompt, skills);
       return previousSkill ? { ...turn, prompt: skillRequest(turn.prompt, previousSkill) } : turn;
     });
-    try {
-      await awaitRouting(Promise.resolve(this.vex.verify?.()), signal);
-    } catch (error) {
-      signal?.throwIfAborted();
-      throw new VexUnavailableError(error, "connection");
-    }
     const enabled = config.models.filter((model) => model.enabled !== false);
-    if (!enabled.length)
-      throw new Error(
-        "No models enabled. Open /models and enable one before running a turn.",
-      );
-    if (session.routingMode === "manual" && !validRoute(session.route, enabled))
-      throw new Error(
-        "Saved manual route is no longer enabled. Use /models or /auto.",
-      );
     const save = async () => {
       try {
         await this.store.save(session, activateOnSave);
@@ -293,6 +279,22 @@ export class Orchestrator {
     let handoff: string | undefined;
     const auto = session.routingMode === "auto";
     try {
+    if (auto) {
+      try {
+        await awaitRouting(Promise.resolve(this.vex.verify?.()), signal);
+      } catch (error) {
+        signal?.throwIfAborted();
+        throw new VexUnavailableError(error, "connection");
+      }
+    }
+    if (!enabled.length)
+      throw new Error(
+        "No models enabled. Open /models and enable one before running a turn.",
+      );
+    if (session.routingMode === "manual" && !validRoute(session.route, enabled))
+      throw new Error(
+        "Saved manual route is no longer enabled. Use /models or /auto.",
+      );
     if (auto) {
       pricedModels(enabled);
       const choices = enabled.reduce(
@@ -525,17 +527,19 @@ export class Orchestrator {
         estimatedCostUsd,
       };
     } catch (error) {
+      const cancelled = !!signal?.aborted;
       session.turns = [
         ...session.turns,
         {
           prompt,
-          result: String(error),
+          result: cancelled ? "Turn cancelled by user" : String(error),
           at: new Date().toISOString(),
           route,
           routeNote: note,
           systemMessages,
           durationMs: Math.round(performance.now() - startedAt),
           failed: true,
+          cancelled,
           stages,
           routing,
         },

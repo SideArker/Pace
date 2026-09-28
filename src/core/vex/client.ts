@@ -43,6 +43,11 @@ export type VexRequest = {
   constraints: string;
   decisionType: "routing";
 };
+export class VexDiagnosticError extends Error {
+  constructor(readonly stage: "discovery" | "startup" | "connection" | "tool validation", cause: unknown) {
+    super(`${stage}: ${String(cause)}`, { cause });
+  }
+}
 function taskContext(
   prompt: string,
   turns: TurnSummary[],
@@ -130,13 +135,13 @@ export class VexRouter {
   ) {}
   async start(): Promise<void> {
     if (this.connecting) return this.connecting;
-    if (!this.serverPath && !this.transportFactory)
-      throw new Error("Vex MCP server was not found");
+    if (!this.transportFactory && (!this.serverPath || !existsSync(this.serverPath)))
+      throw new VexDiagnosticError("discovery", "Vex MCP server was not found");
     this.connecting = (async () => {
       const client = new Client({ name: "pace", version: "0.1.0" });
-      const transport =
-        this.transportFactory?.() ??
-        new StdioClientTransport({
+      let transport: Transport;
+      try {
+        transport = this.transportFactory?.() ?? new StdioClientTransport({
           command: process.execPath,
           args: [this.serverPath!, "mcp", "serve"],
           stderr: "ignore",
@@ -150,24 +155,33 @@ export class VexRouter {
               : {}),
           },
         });
+      } catch (error) {
+        throw new VexDiagnosticError("startup", error);
+      }
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
-        await Promise.race([
-          client.connect(transport),
-          new Promise<never>((_, reject) => {
-            timer = setTimeout(
-              () => reject(new Error("Vex MCP connection timed out")),
-              8000,
-            );
-          }),
-        ]);
-        const tools = await client.listTools(undefined, { timeout: 8000 });
+        try {
+          await Promise.race([
+            client.connect(transport),
+            new Promise<never>((_, reject) => {
+              timer = setTimeout(() => reject(new Error("Vex MCP connection timed out")), 8000);
+            }),
+          ]);
+        } catch (error) {
+          throw new VexDiagnosticError("connection", error);
+        }
+        let tools: Awaited<ReturnType<typeof client.listTools>>;
+        try {
+          tools = await client.listTools(undefined, { timeout: 8000 });
+        } catch (error) {
+          throw new VexDiagnosticError("tool validation", error);
+        }
         if (!tools.tools.some((tool) => tool.name === "vex_choose"))
-          throw new Error("Vex MCP does not offer vex_choose");
+          throw new VexDiagnosticError("tool validation", "Vex MCP does not offer vex_choose");
         this.client = client;
         this.transport = transport;
       } catch (error) {
-        await transport.close();
+        await transport.close().catch(() => {});
         this.connecting = undefined;
         throw error;
       } finally {

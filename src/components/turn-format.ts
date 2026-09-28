@@ -81,5 +81,5 @@ export function formatTurnFooter(
     usage ? `Cache: ${compact(usage.cached_input_tokens)} hit, ${compact(usage.cache_write_input_tokens)} write` : undefined,
     `Route: ${routeSource(note)} → ${model}`,
   ].filter(Boolean);
-  return `↳ ${first.join(" · ")}\n${second.join(" · ")}`;
+  return `Completed · ${first.join(" · ")}\n${second.join(" · ")}`;
 }

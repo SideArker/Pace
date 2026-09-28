@@ -128,6 +128,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const [convoMenu, setConvoMenu] = useState(false);
   const [resumeChoices, setResumeChoices] = useState<Session[]>([]);
   const [resumeProcessIds, setResumeProcessIds] = useState<string[]>([]);
+  const [missingProjectPaths, setMissingProjectPaths] = useState<string[]>([]);
   const [menuModel, setMenuModel] = useState("");
   const [menuIndex, setMenuIndex] = useState(0);
   const nextId = useRef(0);
@@ -256,7 +257,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         setVexState("failed");
         add(
           "error",
-          `Vex MCP connection failed: ${String(error)}. Coding is blocked until Pace restarts with Vex available.`,
+          `Vex MCP connection failed: ${String(error)}. Auto routing is unavailable; manual turns remain available.`,
         );
       });
     return () => {
@@ -382,7 +383,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       });
       newLines.push({
         id: id++,
-        role: turn.failed ? "error" : "codex",
+        role: turn.cancelled ? "meta" : turn.failed ? "error" : "codex",
         text: turn.result,
         spaceBefore: false,
       });
@@ -500,7 +501,8 @@ export default function App({ onClear }: { onClear: () => void }) {
       if (key.downArrow && focusPicker()) return;
       const pending = activeSessionId.current ? pendingApprovals.current.get(activeSessionId.current) : undefined;
       if (input.toLowerCase() === "y") pending?.respond("accept");
-      else if (input.toLowerCase() === "n" || key.escape) pending?.respond("decline");
+      else if (input.toLowerCase() === "n") pending?.respond("decline");
+      else if (key.escape) interrupt();
       return;
     }
     if (key.escape && !modelMenu && !resumeMenu && !convoMenu && !pickerFocused) {
@@ -546,7 +548,12 @@ export default function App({ onClear }: { onClear: () => void }) {
             (value + (key.upArrow ? -1 : 1) + resumeChoices.length) %
             resumeChoices.length,
         );
-      else if (key.return) void activateSession(resumeChoices[menuIndex]!);
+      else if (key.return) {
+        const chosen = resumeChoices[menuIndex];
+        if (chosen && missingProjectPaths.includes(chosen.projectPath))
+          add("error", `Project folder is missing: ${chosen.projectPath}. Restore it at this path, then reopen /resume.`);
+        else if (chosen) void activateSession(chosen);
+      }
       return;
     }
     if (convoMenu) {
@@ -916,6 +923,7 @@ export default function App({ onClear }: { onClear: () => void }) {
           return;
         }
         setResumeProcessIds(processIds);
+        setMissingProjectPaths(projects.filter(item => !item.exists).map(item => item.projectPath));
         setResumeChoices(choices);
         setResumeMenu(true);
         setMenuIndex(0);
@@ -958,10 +966,10 @@ export default function App({ onClear }: { onClear: () => void }) {
     const skillArgument = invokedSkill ? skillRequest(text, invokedSkill) : undefined;
     const localSkillCommand = invokedSkill && (!skillArgument || skillArgument === "off" || !!skillOption(invokedSkill, skillArgument));
     const stopCaveman = /^(?:stop caveman|normal mode)$/i.test(text) && session.activeSkills?.includes("caveman");
-    if (vexState !== "connected" && !localSkillCommand && !stopCaveman) {
+    if (vexState !== "connected" && session.routingMode === "auto" && !localSkillCommand && !stopCaveman) {
       add(
         "error",
-        "Vex MCP is unavailable. Coding turns are blocked until it reconnects; restart Pace after fixing Vex.",
+        "Vex MCP is unavailable. Auto routing is blocked. Choose a model in /models for manual turns, or restart Pace after fixing Vex.",
       );
       return;
     }
@@ -1064,7 +1072,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       {showHeader ? <Header project={project} vexState={vexState} width={stdout.columns ?? 80} /> : null}
       <Transcript lines={lines} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} rows={stdout.rows ?? 24} scrollBack={scrollBack} width={stdout.columns ?? 80} />
       {modelMenu ? <ModelMenu mode={modelMenu} models={menuModels} selectedModel={menuModel} selectedIndex={menuIndex} config={config} /> : null}
-      {resumeMenu ? <ResumeMenu choices={resumeChoices} selectedIndex={menuIndex} runningIds={runningIds} processIds={resumeProcessIds} /> : null}
+      {resumeMenu ? <ResumeMenu choices={resumeChoices} selectedIndex={menuIndex} runningIds={runningIds} processIds={resumeProcessIds} missingProjectPaths={missingProjectPaths} /> : null}
       {convoMenu && session ? <ConvoMenu turns={session.turns} selectedIndex={menuIndex} /> : null}
       {runningIds.length || shellJobs ? (
       <Box gap={1}><Text color="#59E6A7" bold>{spinner[tick % spinner.length]}</Text><Text color="#38BDF8">{busy ? status === "Thinking" ? thinkingWords[Math.floor(tick / 30) % thinkingWords.length] : status : "Ready"}</Text>{shellJobs ? <Text color="#FBBF24">· ⚡ {shellJobs} Bash command{shellJobs === 1 ? "" : "s"} running</Text> : null}</Box>
@@ -1089,7 +1097,7 @@ export default function App({ onClear }: { onClear: () => void }) {
             return true;
           }}
           onMoveDown={focusPicker}
-          placeholder={modelMenu || resumeMenu || convoMenu ? "Close menu to type" : shellMode ? "Bash command; ! returns to Pace" : vexState !== "connected" ? "Vex unavailable; commands still work" : busy ? "Pace is working · /new or /resume to switch · Esc or Ctrl+C to cancel" : "Ask Pace or type /"}
+          placeholder={modelMenu || resumeMenu || convoMenu ? "Close menu to type" : shellMode ? "Bash command; ! returns to Pace" : vexState !== "connected" ? "Vex unavailable; manual turns work" : busy ? "Pace is working · /new or /resume to switch · Esc or Ctrl+C to cancel" : "Ask Pace or type /"}
         />
       </Box>
       {runningIds.length > 0 && openSessions.length > 1 ? <ConversationPicker choices={pickerChoices} activeId={activeSessionId.current} selectedIndex={pickerIndex} focused={pickerFocused} /> : null}

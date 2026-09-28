@@ -115,7 +115,8 @@ function parseSession(value: unknown, project: string): Session | undefined {
         (turn.stages === undefined || (Array.isArray(turn.stages) && turn.stages.every(isStage))) &&
         (turn.routing === undefined || (Array.isArray(turn.routing) && turn.routing.every(isRouting))) &&
         (turn.artifacts === undefined || (Array.isArray(turn.artifacts) && turn.artifacts.every((artifact: unknown) => typeof artifact === "string" && /^\.pace\/artifacts\/[^/\\]+\.md$/.test(artifact)))) &&
-        (turn.failed === undefined || typeof turn.failed === "boolean"),
+        (turn.failed === undefined || typeof turn.failed === "boolean") &&
+        (turn.cancelled === undefined || typeof turn.cancelled === "boolean"),
     ) ||
     !isRecord(value.route) ||
     (value.route.model !== undefined &&

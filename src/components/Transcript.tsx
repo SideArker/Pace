@@ -299,8 +299,8 @@ export function Transcript({
             </Box>
           ) : line.role === "activity" && line.activity ? (
             <Box flexDirection="column">
-              <Box gap={1} marginLeft={1}>
-                <Text color={line.activity.category === "command" ? activityColors.command : line.activity.completed ? "#64748B" : activityColors[line.activity.category]} bold={line.activity.category === "command"}>
+              <Box gap={1} marginLeft={line.activity.category === "command" ? 0 : 1}>
+                <Text wrap={line.activity.category === "command" ? "truncate" : undefined} color={line.activity.category === "command" ? activityColors.command : line.activity.completed ? "#64748B" : activityColors[line.activity.category]} bold={line.activity.category === "command"}>
                   {line.activity.completed ? " " : "◌"} {activityIcons[line.activity.category]} {activityTitle(line)}{line.thinkingCount ? ` · ${line.thinkingCount} thoughts` : ""}
                 </Text>
                 {line.activity.detail && line.activity.category !== "files" ? (

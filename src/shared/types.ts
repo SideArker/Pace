@@ -30,6 +30,7 @@ export type TurnSummary = {
   routing?: RoutingRecord[];
   estimatedCostUsd?: number;
   failed?: boolean;
+  cancelled?: boolean;
 };
 export type Session = {
   id: string;
