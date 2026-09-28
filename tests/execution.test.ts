@@ -79,7 +79,17 @@ it('runs a read-only scout, reroutes after handoff, and sums stage costs', async
   const session = newSession('/example/project', 'auto');
   session.threadId = 'existing-main-thread';
   session.turns.push({ prompt: 'We discussed the parser in src/a.ts', result: 'The parser needs an update.', at: new Date().toISOString() });
-  const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('Implement feature', session, config, () => {});
+  const notices: string[] = [];
+  const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('Implement feature', session, config, progress => {
+    if (progress.kind === 'system') notices.push(progress.text);
+  });
+  expect(notices).toEqual([
+    'Vex routed the scout to GPT-6 Luna Low.',
+    'This task will split into two stages: a read-only scout, then completion.',
+    'Vex routed completion to GPT-6 Sol High.',
+    'No skills are active for this conversation.',
+  ]);
+  expect(session.turns.at(-1)?.systemMessages).toEqual(notices);
   expect(calls.map(call => call.mode)).toEqual(['side', 'main']);
   expect(calls.map(call => call.id)).toEqual([undefined, 'existing-main-thread']);
   expect(calls[0]?.prompt).toContain('We discussed the parser in src/a.ts');

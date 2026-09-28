@@ -15,7 +15,7 @@ import { artifactPrompt } from "../core/system/artifacts.js";
 import { vexServerPath } from '../core/vex/client.js';
 export type ApprovalDecision = "accept" | "decline";
 export type Progress =
-  | { kind: "status" | "message" | "error" | "thread"; text: string }
+  | { kind: "status" | "message" | "error" | "thread" | "system"; text: string }
   | { kind: "route"; route: Route }
   | { kind: "activity"; id: string; category: "thinking" | "command" | "files" | "tool" | "search" | "plan"; title: string; detail?: string; completed: boolean }
   | { kind: "approval"; id: string; command: string; cwd?: string; reason?: string; network?: boolean; respond: (decision: ApprovalDecision) => void };

@@ -18,7 +18,7 @@ import { PaceStore } from "./sessions.js";
 import { artifactSnapshot, changedArtifacts } from "./system/artifacts.js";
 import { validRoute } from "../shared/config.js";
 import { existingFolder } from "./system/folders.js";
-import { configuredSkills, enabledSkills, skillCommand, skillOption, skillPrompt, skillRequest } from "./system/skills.js";
+import { configuredSkills, enabledSkills, skillCommand, skillMention, skillOption, skillPrompt, skillRequest } from "./system/skills.js";
 import { DEFAULT_ROUTING_PROMPTS, loadRoutingPrompts, type RoutingPrompts } from "./routing/routing-prompts.js";
 
 export type StageRecord = {
@@ -250,6 +250,15 @@ export class Orchestrator {
     };
     const stages: StageRecord[] = [];
     const routing: RoutingRecord[] = [];
+    const systemMessages: string[] = [];
+    const systemMessage = (text: string) => {
+      systemMessages.push(text);
+      onProgress({ kind: "system", text });
+    };
+    const routeMessage = (selected: Route, stage?: string) => {
+      const model = selected.model?.replace(/^gpt-(\d+)-(.+)$/, (_match, version: string, name: string) => `GPT-${version} ${name[0]!.toUpperCase()}${name.slice(1)}`) ?? "Codex default";
+      systemMessage(`${session.routingMode === "auto" ? "Vex routed" : "Manual route"}${stage ? ` ${stage}` : ""} to ${model}${selected.effort ? ` ${selected.effort[0]!.toUpperCase()}${selected.effort.slice(1)}` : ""}.`);
+    };
     const choose = async (
       request: VexRequest,
       objective: string,
@@ -309,6 +318,7 @@ export class Orchestrator {
             result,
             at: new Date().toISOString(),
             routeNote: "Vex requested clarification",
+            systemMessages,
             durationMs,
           },
         ].slice(-20);
@@ -363,6 +373,8 @@ export class Orchestrator {
         );
         signal?.throwIfAborted();
         onProgress({ kind: "route", route: sideRoute });
+        routeMessage(sideRoute, shape === "scout" ? "the scout" : "planning");
+        systemMessage(`This task will split into two stages: ${shape === "scout" ? "a read-only scout" : "planning"}, then completion.`);
         onProgress({
           kind: "status",
           text: `${objective}: ${sideRoute.model} · ${sideRoute.effort}`,
@@ -430,6 +442,12 @@ export class Orchestrator {
       session.route = route;
       await save();
       onProgress({ kind: "route", route });
+      routeMessage(route, shape === "single" ? undefined : "completion");
+      const mentioned = skillMention(prompt, skills);
+      const turnSkills = skills.filter(skill => session.activeSkills?.includes(skill.name) || skill.name === invoked?.name || skill.name === mentioned?.name);
+      systemMessage(turnSkills.length
+        ? `Active skills: ${turnSkills.map(skill => `/${skill.name}`).join(", ")}.`
+        : "No skills are active for this conversation.");
       onProgress({
         kind: "status",
         text: `${note}: ${route.model ?? "Codex default"} · ${route.effort ?? "default"}`,
@@ -484,6 +502,7 @@ export class Orchestrator {
           at: new Date().toISOString(),
           route,
           routeNote: note,
+          systemMessages,
           durationMs,
           artifacts,
           usage,
@@ -514,6 +533,7 @@ export class Orchestrator {
           at: new Date().toISOString(),
           route,
           routeNote: note,
+          systemMessages,
           durationMs: Math.round(performance.now() - startedAt),
           failed: true,
           stages,
