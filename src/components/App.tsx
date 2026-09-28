@@ -41,6 +41,38 @@ const modelCatalog = ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra"];
 const spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const folderArgument = (value: string) => value.trim().replace(/^(?:"(.*)"|'(.*)')$/, (_match, double: string | undefined, single: string | undefined) => double ?? single ?? value);
 const manualApprovalCommand = (command: string) => /\bgit\b[^;&|()\n]*\s(?:push|reset)\b/i.test(command);
+function displayShellCommand(command: string): string | undefined {
+  const invocation = /^(?:&\s*)?(?:"([^"]+)"|'([^']+)'|(\S+))\s+([\s\S]*)$/.exec(command.trim());
+  if (!invocation) return undefined;
+  const executable = invocation[1] ?? invocation[2] ?? invocation[3] ?? "";
+  const args = invocation[4] ?? "";
+  const basename = executable.split(/[\\/]+/).at(-1) ?? "";
+  const shell = /^(?:powershell|pwsh)(?:\.exe)?$/i.test(basename)
+    ? "PS (PowerShell)"
+    : /^bash(?:\.exe)?$/i.test(basename)
+      ? "Bash"
+      : undefined;
+  if (!shell) return undefined;
+  const commandFlag = shell === "Bash"
+    ? /(?:^|\s)-(?:c|lc)\s+/i
+    : /(?:^|\s)-(?:command|c)\s+/i;
+  const flag = commandFlag.exec(args);
+  const body = flag ? args.slice(flag.index + flag[0].length).trim() : args.trim();
+  const script = body.length >= 2 && body[0] === body.at(-1) && (body[0] === "'" || body[0] === '"')
+    ? body.slice(1, -1)
+    : body;
+  return `${shell}: ${script || args.trim()}`;
+}
+function formatCommandActivity(title: string, detail?: string): { title: string; detail?: string } {
+  const match = /^(Running|Ran|Failed): ([\s\S]*?)( \(exit [^)]+\))?$/.exec(title);
+  if (!match) return { title, detail };
+  const display = displayShellCommand(match[2]!);
+  if (!display) return { title, detail };
+  return {
+    title: `${match[1]}: ${display}${match[3] ?? ""}`,
+    detail: [`Command line: ${match[2]}`, detail ? `Output:\n${detail}` : undefined].filter(Boolean).join("\n\n"),
+  };
+}
 const project = process.cwd();
 const store = new PaceStore();
 const vex = new VexRouter();
@@ -106,7 +138,8 @@ export default function App({ onClear }: { onClear: () => void }) {
     ]);
   const activity = (event: Extract<Progress, { kind: "activity" }>) => setLines(old => {
     const sourceId = event.id;
-    const update = { text: event.title, activity: { category: event.category, detail: event.detail, completed: event.completed } };
+    const display = event.category === "command" ? formatCommandActivity(event.title, event.detail) : { title: event.title, detail: event.detail };
+    const update = { text: display.title, activity: { category: event.category, detail: display.detail, completed: event.completed } };
     const index = old.findIndex(line => line.sourceId === sourceId);
     if (index < 0) return [...old, { id: nextId.current++, role: "activity", sourceId, spaceBefore: false, ...update }];
     return old.map((line, at) => at === index ? { ...line, ...update } : line);
@@ -446,7 +479,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       if (decision !== "accept") return;
     }
     const id = `shell-${nextId.current++}`;
-    activity({ kind: "activity", id, category: "command", title: `Running: ${command}`, completed: false });
+    activity({ kind: "activity", id, category: "command", title: `Running: Bash: ${command}`, completed: false });
     const executable =
       process.platform === "win32"
         ? "C:\\Program Files\\Git\\bin\\bash.exe"
@@ -472,12 +505,12 @@ export default function App({ onClear }: { onClear: () => void }) {
       child.stderr.on("data", append);
       child.on("error", (error) => {
         failed = true;
-        activity({ kind: "activity", id, category: "command", title: `Failed: ${command}`, detail: String(error), completed: true });
+        activity({ kind: "activity", id, category: "command", title: `Failed: Bash: ${command}`, detail: String(error), completed: true });
       });
       child.on("close", (code) => {
         shells.current.delete(child);
         setShellJobs((value) => Math.max(0, value - 1));
-        if (!failed) activity({ kind: "activity", id, category: "command", title: `${code === 0 ? "Ran" : "Failed"}: ${command} (exit ${code ?? "unknown"})`, detail: `${output.trimEnd() || "(no output)"}${clipped ? "\n[output truncated]" : ""}`, completed: true });
+        if (!failed) activity({ kind: "activity", id, category: "command", title: `${code === 0 ? "Ran" : "Failed"}: Bash: ${command} (exit ${code ?? "unknown"})`, detail: `${output.trimEnd() || "(no output)"}${clipped ? "\n[output truncated]" : ""}`, completed: true });
       });
     } catch (error) {
       add("error", `Shell error: ${String(error)}`);
