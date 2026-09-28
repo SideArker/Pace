@@ -9,6 +9,7 @@ import { PaceStore } from "../core/sessions.js";
 import { VexRouter } from "../core/vex/client.js";
 import App from "../components/App.js";
 import { execTurn } from "../core/exec.js";
+import { getGitBranch } from "../core/system/git.js";
 const require = createRequire(import.meta.url);
 const version = (require("../../package.json") as { version: string }).version;
 const args = process.argv.slice(2);
@@ -54,7 +55,7 @@ else if (args[0] === "doctor") {
     await vex.close();
   }
   try {
-    await access(join(process.cwd(), ".git"));
+    if (!getGitBranch(process.cwd())) throw new Error("Git metadata not found");
     console.log("Project: Git repository");
   } catch {
     console.log(

@@ -23,6 +23,15 @@ it("detects short commit hash when HEAD is detached", async () => {
   expect(getGitBranch(dir)).toBe("a2e83f0");
 });
 
+it("detects a linked worktree through its .git pointer file", async () => {
+  dir = await mkdtemp(join(tmpdir(), "pace-git-test-"));
+  const metadata = join(dir, "worktree-metadata");
+  await mkdir(metadata);
+  await writeFile(join(dir, ".git"), `gitdir: ${metadata}\n`, "utf8");
+  await writeFile(join(metadata, "HEAD"), "ref: refs/heads/feat/worktree\n", "utf8");
+  expect(getGitBranch(dir)).toBe("feat/worktree");
+});
+
 it("returns undefined when not a git repository", async () => {
   dir = await mkdtemp(join(tmpdir(), "pace-git-test-"));
   expect(getGitBranch(dir)).toBeUndefined();
