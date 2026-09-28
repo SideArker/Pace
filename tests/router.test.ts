@@ -39,8 +39,10 @@ it('prices ordinary, cached, cache writes, and output once at the stage model ra
   expect(chosenRoute('1:high', DEFAULT_CONFIG.models)).toEqual({ model: 'gpt-6-sol', effort: 'high' });
 });
 
-it('rejects configured model efforts unsupported by Codex', () => {
-  expect(() => parseConfig({ ...DEFAULT_CONFIG, models: [{ model: 'gpt-6-luna', efforts: ['ultra'] }] })).toThrow('Unsupported effort');
+it('accepts SDK-supported effort levels for user-selected models', () => {
+  const config = parseConfig({ ...DEFAULT_CONFIG, models: [{ model: 'gpt-6-luna', efforts: ['ultra'] }], defaultRoute: { model: 'gpt-6-luna', effort: 'ultra' } });
+  expect(config.models[0]?.efforts).toEqual(['ultra']);
+  expect(() => parseConfig({ ...DEFAULT_CONFIG, models: [{ model: 'gpt-6-luna', efforts: ['max'] }] })).toThrow('max');
 });
 
 it('validates routing benchmark labels and counts failed calls separately', () => {

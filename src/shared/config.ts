@@ -8,11 +8,6 @@ export const EFFORTS: readonly Effort[] = [
   "ultra",
   "persistent",
 ];
-const MODEL_EFFORTS: Record<string, readonly Effort[]> = {
-  "gpt-6-luna": ["low", "medium", "high", "xhigh"],
-  "gpt-6-sol": ["low", "medium", "high", "xhigh", "ultra"],
-  "gpt-6-astra": ["low", "medium", "high", "xhigh", "ultra"],
-};
 export const DEFAULT_CONFIG: Config = {
   models: [
     {
@@ -88,14 +83,9 @@ export function parseConfig(value: unknown): Config {
       !item.efforts.includes(item.defaultEffort)
     )
       throw new Error(`Invalid default effort for ${item.model}`);
-    const supported = MODEL_EFFORTS[item.model];
-    if (
-      supported &&
-      !item.efforts.every((effort: Effort) => supported.includes(effort))
-    )
-      throw new Error(
-        `Unsupported effort for ${item.model}; choose from ${supported.join(", ")}`,
-      );
+    // Model IDs and supported reasoning efforts can vary by account and SDK
+    // release. Keep the SDK's effort enum as the boundary; the provider can
+    // report model-specific incompatibilities when a route is used.
     if (item.enabled !== undefined && typeof item.enabled !== "boolean")
       throw new Error(`Invalid enabled flag for ${item.model}`);
     return {
