@@ -32,6 +32,7 @@ export type TurnSummary = {
 };
 export type Session = {
   id: string;
+  title?: string;
   projectPath: string;
   threadId?: string;
   createdAt: string;

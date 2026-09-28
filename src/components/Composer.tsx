@@ -28,6 +28,22 @@ export function inputColumns(value: string, width: number, shellMode: boolean): 
   return columns;
 }
 
+export function verticalCursor(value: string, cursor: number, direction: "up" | "down"): number | undefined {
+  const lineStart = value.lastIndexOf("\n", cursor - 1) + 1;
+  const column = cursor - lineStart;
+  if (direction === "up") {
+    if (lineStart === 0) return undefined;
+    const end = lineStart - 1;
+    const start = value.lastIndexOf("\n", end - 1) + 1;
+    return Math.min(start + column, end);
+  }
+  const breakAt = value.indexOf("\n", cursor);
+  if (breakAt < 0) return undefined;
+  const start = breakAt + 1;
+  const nextBreak = value.indexOf("\n", start);
+  return Math.min(start + column, nextBreak < 0 ? value.length : nextBreak);
+}
+
 export function isNewlineKey(input: string, key: { return: boolean; shift: boolean; ctrl: boolean; meta: boolean }): boolean {
   return (key.return && (key.shift || key.ctrl || key.meta)) || (key.ctrl && input === "j") || input === "\n"
     || /^\[(?:27;2;13|13;2)~$/.test(input);
@@ -38,6 +54,13 @@ export function commandToken(value: string): { start: number; prefix: string } |
   return match ? { start: value.length - match[1]!.length, prefix: match[1]! } : undefined;
 }
 
+export function commandRanges(value: string): { start: number; end: number }[] {
+  return [...value.matchAll(/(?:^|\s)(\/[^\s]*)/g)].map(match => {
+    const start = match.index + match[0].length - match[1]!.length;
+    return { start, end: start + match[1]!.length };
+  });
+}
+
 type Props = {
   value: string;
   onChange: (value: string) => void;
@@ -46,13 +69,14 @@ type Props = {
   disabled: boolean;
   shellMode: boolean;
   placeholder: string;
-  completionStart?: number;
   completion?: string;
+  completionStart?: number;
   onComplete: () => void;
   onHistory?: (direction: "up" | "down") => boolean;
+  onMoveDown?: () => boolean;
 };
 
-export function Composer({ value, onChange, onSubmit, history, disabled, shellMode, placeholder, completion, completionStart, onComplete, onHistory }: Props) {
+export function Composer({ value, onChange, onSubmit, history, disabled, shellMode, placeholder, completion, completionStart, onComplete, onHistory, onMoveDown }: Props) {
   const { stdout } = useStdout();
   const terminalWidth = stdout.columns ?? 80;
   const [cursor, setCursor] = useState(0);
@@ -68,7 +92,10 @@ export function Composer({ value, onChange, onSubmit, history, disabled, shellMo
     if (key.ctrl && input === "c") return;
     if (isNewlineKey(input, key)) { insert("\n"); return; }
     if (key.upArrow || key.downArrow) {
+      const nextCursor = verticalCursor(value, cursor, key.upArrow ? "up" : "down");
+      if (nextCursor !== undefined) { setCursor(nextCursor); return; }
       if (onHistory?.(key.upArrow ? "up" : "down")) return;
+      if (key.downArrow && historyIndex === undefined && onMoveDown?.()) return;
       if (!history.length) return;
       const next = key.upArrow ? Math.min((historyIndex ?? history.length) - 1, history.length - 1) : Math.min((historyIndex ?? history.length) + 1, history.length);
       if (next < 0) return;
@@ -81,9 +108,9 @@ export function Composer({ value, onChange, onSubmit, history, disabled, shellMo
     }
     if (key.tab) { if (completion && completionStart !== undefined) { onComplete(); setCursor(completionStart + completion.length); } return; }
     if (key.return) {
-        setCursor(completion.length);
       if (completion && completionStart === 0 && value.trim() !== completion && value.startsWith("/")) {
         onComplete();
+        setCursor(completion.length);
         return;
       }
       if (value.trim()) onSubmit(value);
@@ -105,13 +132,16 @@ export function Composer({ value, onChange, onSubmit, history, disabled, shellMo
   const before = value.slice(0, cursor);
   const at = value[cursor] ?? " ";
   const after = value.slice(cursor + (cursor < value.length ? 1 : 0));
+  const ranges = shellMode ? [] : commandRanges(value);
+  const isCommand = (index: number) => shellMode || value.startsWith("!") || ranges.some(range => index >= range.start && index < range.end);
+  const colorAt = (index: number) => isCommand(index) ? "#38BDF8" : paceGradient(columns[index]!, terminalWidth);
   const columns = inputColumns(value, terminalWidth, shellMode);
   const renderText = (text: string, start: number) => {
     let position = start;
     return [...text].map((character) => {
       const index = position;
       position += character.length;
-      return <Text key={index} color={paceGradient(columns[index]!, terminalWidth)} >{character}</Text>;
+      return <Text key={index} color={colorAt(index)} bold={isCommand(index)}>{character}</Text>;
     });
   };
   const prefix = completionStart === undefined ? "" : value.slice(completionStart);
@@ -119,8 +149,8 @@ export function Composer({ value, onChange, onSubmit, history, disabled, shellMo
   const ghostText = hasGhost ? completion.slice(prefix.length) : "";
 
   return (
-    <Box flexDirection="column">
-      <Box>
+    <Box flexDirection="column" width="100%">
+      <Box width="100%">
         {shellMode ? (
           <Box marginRight={1}>
             <Text backgroundColor="#D97706" color="#000000" bold> BASH </Text>
@@ -131,19 +161,23 @@ export function Composer({ value, onChange, onSubmit, history, disabled, shellMo
             <Text color="#59E6A7" bold>❯</Text>
           </Box>
         )}
-        {value ? renderText(before, 0) : null}
-        <Text inverse color={value ? paceGradient(columns[cursor]!, terminalWidth) : "gray"}>
-          {value ? at : placeholder[0] ?? " "}
-        </Text>
-        {value ? renderText(after, cursor + (cursor < value.length ? 1 : 0)) : <Text color="gray">{placeholder.slice(1)}</Text>}
-        {hasGhost ? (
-          <Text color="#64748B" italic>
-            {ghostText}
-            <Text color="#475569" dimColor> (Tab)</Text>
+        <Box flexGrow={1} flexShrink={1} minWidth={1}>
+          <Text wrap="wrap">
+            {value ? renderText(before, 0) : null}
+            <Text inverse color={value ? colorAt(cursor) : "gray"}>
+              {value ? <Text bold={isCommand(cursor)}>{at}</Text> : placeholder[0] ?? " "}
+            </Text>
+            {value ? renderText(after, cursor + (cursor < value.length ? 1 : 0)) : <Text color="gray">{placeholder.slice(1)}</Text>}
+            {hasGhost ? (
+              <Text color="#64748B" italic>
+                {ghostText}
+                <Text color="#475569" dimColor> (Tab)</Text>
+              </Text>
+            ) : null}
           </Text>
-        ) : null}
+        </Box>
       </Box>
-      <Text color="#64748B">Shift/Ctrl/Alt+Enter or Ctrl+J newline · Enter send</Text>
+      <Text color="#64748B" wrap="truncate">Shift/Ctrl/Alt+Enter or Ctrl+J newline · Enter send · Ctrl+O toggle reasoning and command output</Text>
     </Box>
   );
 }
