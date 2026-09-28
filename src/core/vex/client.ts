@@ -94,7 +94,7 @@ export function shapeRequest(
     context: taskContext(prompt, turns, models, prompts),
     options,
     decisionType: "routing",
-    constraints: prompts.workflow.constraints,
+    constraints: `${prompts.workflow.constraints}\n\nPace routing rule: when the user names a concrete command and target, treat it as actionable and choose single rather than clarify.`,
   };
 }
 export function stageRequest(
