@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import type { Config } from "../../shared/types.js";
 import { existingFolder } from "./folders.js";
 
-export type Skill = { name: string; description: string; path: string };
+export type Skill = { name: string; description: string; path: string; workflowPrompt?: string };
 
 export const defaultSkillFolder = () => join(homedir(), ".agents", "skills");
 
@@ -27,7 +27,7 @@ export function skillCommand(prompt: string, skills: Skill[]): Skill | undefined
 }
 
 export function skillRequest(prompt: string, skill: Skill): string {
-  return prompt.slice(skill.name.length + 1).trim();
+  return prompt.slice(skill.name.length + 1).trim() || skill.workflowPrompt || "";
 }
 
 export function skillOption(skill: Skill, request: string): string | undefined {
@@ -55,7 +55,9 @@ export async function discoverSkills(input: string): Promise<Skill[]> {
       ? /^description:[^\n]*\n((?:[ \t]+[^\n]*\n?)*)/m.exec(frontmatter)?.[1]?.trim().replace(/\s*\r?\n\s*/g, " ")
       : rawDescription?.replace(/^['"]|['"]$/g, "");
     if (!name || !description) continue;
-    skills.push({ name: name.slice(0, 80), description: description.slice(0, 300), path: actual });
+    const metadata = /^metadata:\s*\r?\n((?:[ \t]+[^\r\n]*\r?\n?)*)/m.exec(frontmatter)?.[1];
+    const workflowPrompt = /^  workflow:\s*(.+)$/m.exec(metadata ?? "")?.[1]?.trim().replace(/^['"]|['"]$/g, "");
+    skills.push({ name: name.slice(0, 80), description: description.slice(0, 300), path: actual, ...(workflowPrompt ? { workflowPrompt } : {}) });
     if (skills.length === 32) break;
   }
   return skills.sort((a, b) => a.name.localeCompare(b.name));
@@ -67,7 +69,7 @@ export function skillPrompt(prompt: string, skills: Skill[], activeSkills: strin
   const request = invoked ? skillRequest(prompt, invoked) : prompt;
   const active = skills.filter(skill => activeSkills.includes(skill.name) || skill.name === invoked?.name);
   const instruction = active.length
-    ? `Active skills for this conversation: ${active.map(skill => `/${skill.name}${skillOptions[skill.name] ? ` ${skillOptions[skill.name]}` : ""} (${skill.path})`).join(", ")}. Read each SKILL.md and follow its instructions.`
+    ? `Skills for this turn: ${active.map(skill => `/${skill.name}${skillOptions[skill.name] ? ` ${skillOptions[skill.name]}` : ""} (${skill.path})`).join(", ")}. Read each SKILL.md and follow its instructions. Workflows apply only to this turn.`
     : "No skills are active for this conversation.";
   return `${request}\n\n${instruction} Previous slash-command activations not listed here no longer apply. The user's request is the text above.\n\nAvailable skills (read SKILL.md before using a relevant skill):\n${skills.map(skill => `- ${skill.name}: ${skill.description} (${skill.path})`).join("\n")}`;
 }

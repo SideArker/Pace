@@ -953,7 +953,7 @@ export default function App({ onClear }: { onClear: () => void }) {
     }
     const invokedSkill = skillCommand(text, enabledSkills(skills, config));
     const skillArgument = invokedSkill ? skillRequest(text, invokedSkill) : undefined;
-    const localSkillCommand = invokedSkill && (!skillArgument || skillArgument === "off" || !!skillOption(invokedSkill, skillArgument));
+    const localSkillCommand = invokedSkill && !invokedSkill.workflowPrompt && (!skillArgument || skillArgument === "off" || !!skillOption(invokedSkill, skillArgument));
     const stopCaveman = /^(?:stop caveman|normal mode)$/i.test(text) && session.activeSkills?.includes("caveman");
     if (vexState !== "connected" && !localSkillCommand && !stopCaveman) {
       add(

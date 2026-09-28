@@ -205,7 +205,8 @@ export class Orchestrator {
     const invoked = skillCommand(prompt, skills);
     const request = invoked ? skillRequest(prompt, invoked) : prompt;
     const option = invoked ? skillOption(invoked, request) : undefined;
-    if (invoked) {
+    session.activeSkills = session.activeSkills?.filter(name => !skills.some(skill => skill.name === name && skill.workflowPrompt));
+    if (invoked && !invoked.workflowPrompt) {
       const active = session.activeSkills ?? [];
       session.activeSkills = request === "off"
         ? active.filter(name => name !== invoked.name)
