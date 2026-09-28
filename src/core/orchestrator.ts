@@ -15,7 +15,7 @@ export type StageRecord = { objective: string; route: Route; durationMs: number;
 export type RoutingRecord = { objective: string; choice: string; confidence: number; probabilities: Record<string, number>; attempts: number };
 export type TurnOutcome = { session: Session; result: string; note: string; route: Route; durationMs: number; artifacts: string[]; usage?: Usage; stages: StageRecord[]; routing: RoutingRecord[]; estimatedCostUsd?: number };
 export class VexUnavailableError extends Error {
-  constructor(cause: unknown) { super(`Vex routing failed: ${String(cause)}`); }
+  constructor(cause: unknown, readonly source: "connection" | "decision") { super(`Vex routing failed: ${String(cause)}`); }
 }
 function addUsage(stages: StageRecord[]): Usage | undefined {
   const values = stages.map(stage => stage.usage);
@@ -64,7 +64,7 @@ export class Orchestrator {
   async turn(prompt: string, session: Session, config: Config, onProgress: (progress: Progress) => void, signal?: AbortSignal): Promise<TurnOutcome> {
     const startedAt = performance.now();
     const prompts = session.routingMode === 'auto' ? loadRoutingPrompts(this.store.baseDir) : DEFAULT_ROUTING_PROMPTS;
-    try { await this.vex.verify?.(); } catch (error) { throw new VexUnavailableError(error); }
+    try { await this.vex.verify?.(); } catch (error) { throw new VexUnavailableError(error, "connection"); }
     const enabled = config.models.filter(model => model.enabled !== false);
     if (!enabled.length) throw new Error('No models enabled. Open /models and enable one before running a turn.');
     if (session.routingMode === 'manual' && !validRoute(session.route, enabled))
@@ -84,7 +84,7 @@ export class Orchestrator {
           return decision;
         } catch (error) { failure = error; }
       }
-      throw new VexUnavailableError(failure);
+      throw new VexUnavailableError(failure, "decision");
     };
     let route: Route = session.route;
     let note = 'Manual route';

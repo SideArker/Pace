@@ -49,7 +49,7 @@ it('blocks a coding turn when the Vex tool fails', async () => {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const server = new Server({ name: 'mock-vex', version: '1' }, { capabilities: { tools: {} } });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [{ name: 'vex_choose', inputSchema: { type: 'object' } }] }));
-  server.setRequestHandler(CallToolRequestSchema, async () => ({ isError: true, content: [{ type: 'text', text: JSON.stringify({ error: true, http_status: 401, error_detail: 'secret' }) }] }));
+  server.setRequestHandler(CallToolRequestSchema, async () => ({ isError: true, content: [{ type: 'text', text: JSON.stringify({ error: true, http_status: 503, error_detail: 'upstream unavailable' }) }] }));
   await server.connect(serverTransport);
   const vex = new VexRouter('', () => clientTransport);
   const config: Config = { routingMode: 'auto', defaultRoute: { model: 'gpt-6-luna', effort: 'medium' }, models: [{ model: 'gpt-6-luna', efforts: ['medium'] }, { model: 'gpt-6-sol', efforts: ['high'] }] };
@@ -57,9 +57,20 @@ it('blocks a coding turn when the Vex tool fails', async () => {
   const runner: CodexRunner = { async run(_prompt, _project, route) { seen.push(route); return { result: 'done', completed: true }; } };
   const orchestrator = new Orchestrator(new PaceStore(directory), runner, vex);
   try {
-    await expect(orchestrator.turn('first', newSession('/project', 'auto'), config, () => {})).rejects.toThrow('HTTP 401');
+    await expect(orchestrator.turn('first', newSession('/project', 'auto'), config, () => {})).rejects.toMatchObject({ source: 'decision', message: expect.stringContaining('HTTP 503') });
     expect(seen).toEqual([]);
   } finally { await vex.close(); await server.close(); }
+});
+
+it('distinguishes an MCP connection failure from a provider decision failure', async () => {
+  directory = await mkdtemp(join(tmpdir(), 'pace-vex-'));
+  const config: Config = { routingMode: 'auto', defaultRoute: { model: 'gpt-6-sol', effort: 'high' }, models: [{ model: 'gpt-6-sol', efforts: ['high'] }] };
+  const runner: CodexRunner = { async run() { throw new Error('Codex should not run'); } };
+  const orchestrator = new Orchestrator(new PaceStore(directory), runner, {
+    async verify() { throw new Error('MCP disconnected'); },
+    async choose() { throw new Error('Vex should not be called'); },
+  });
+  await expect(orchestrator.turn('first', newSession('/project', 'auto'), config, () => {})).rejects.toMatchObject({ source: 'connection', message: expect.stringContaining('MCP disconnected') });
 });
 
 it('resolves the installed @sidearker/vex-mcp server path', () => {

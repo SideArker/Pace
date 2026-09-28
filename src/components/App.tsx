@@ -856,7 +856,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       refreshUsage();
     } catch (error) {
       if (controller.signal.aborted) { add("meta", "Turn cancelled by user"); setStatus("Cancelled"); } else { add("error", String(error));
-      if (error instanceof VexUnavailableError) setVexState("failed");
+      if (error instanceof VexUnavailableError && error.source === "connection") setVexState("failed");
       setStatus("Failed"); }
     } finally {
       pendingApproval.current?.respond("decline");
