@@ -2,7 +2,13 @@ import React, { useState } from "react";
 import { Box, Text, useInput, usePaste } from "ink";
 
 export function isNewlineKey(input: string, key: { return: boolean; shift: boolean; ctrl: boolean; meta: boolean }): boolean {
-  return (key.return && (key.shift || key.ctrl || key.meta)) || (key.ctrl && input === "j") || input === "\n";
+  return (key.return && (key.shift || key.ctrl || key.meta)) || (key.ctrl && input === "j") || input === "\n"
+    || /^\[(?:27;2;13|13;2)~$/.test(input);
+}
+
+export function commandToken(value: string): { start: number; prefix: string } | undefined {
+  const match = /(?:^|\s)(\/[^\s]*)$/.exec(value);
+  return match ? { start: value.length - match[1]!.length, prefix: match[1]! } : undefined;
 }
 
 type Props = {
@@ -13,12 +19,13 @@ type Props = {
   disabled: boolean;
   shellMode: boolean;
   placeholder: string;
+  completionStart?: number;
   completion?: string;
   onComplete: () => void;
   onHistory?: (direction: "up" | "down") => boolean;
 };
 
-export function Composer({ value, onChange, onSubmit, history, disabled, shellMode, placeholder, completion, onComplete, onHistory }: Props) {
+export function Composer({ value, onChange, onSubmit, history, disabled, shellMode, placeholder, completion, completionStart, onComplete, onHistory }: Props) {
   const [cursor, setCursor] = useState(0);
   const [historyIndex, setHistoryIndex] = useState<number>();
   const [savedDraft, setSavedDraft] = useState("");
@@ -43,11 +50,10 @@ export function Composer({ value, onChange, onSubmit, history, disabled, shellMo
       setHistoryIndex(next === history.length ? undefined : next);
       return;
     }
-    if (key.tab) { if (completion) { onComplete(); setCursor(completion.length); } return; }
+    if (key.tab) { if (completion && completionStart !== undefined) { onComplete(); setCursor(completionStart + completion.length); } return; }
     if (key.return) {
-      if (completion && value.trim() !== completion && value.startsWith("/")) {
-        onChange(completion);
         setCursor(completion.length);
+      if (completion && completionStart === 0 && value.trim() !== completion && value.startsWith("/")) {
         onComplete();
         return;
       }
@@ -70,8 +76,9 @@ export function Composer({ value, onChange, onSubmit, history, disabled, shellMo
   const before = value.slice(0, cursor);
   const at = value[cursor] ?? " ";
   const after = value.slice(cursor + (cursor < value.length ? 1 : 0));
-  const hasGhost = !!(completion && value && completion.startsWith(value) && cursor === value.length);
-  const ghostText = hasGhost ? completion.slice(value.length) : "";
+  const prefix = completionStart === undefined ? "" : value.slice(completionStart);
+  const hasGhost = !!(completion && prefix && completion.startsWith(prefix) && cursor === value.length);
+  const ghostText = hasGhost ? completion.slice(prefix.length) : "";
 
   return (
     <Box flexDirection="column">
@@ -100,9 +107,7 @@ export function Composer({ value, onChange, onSubmit, history, disabled, shellMo
           </Text>
         ) : null}
       </Box>
-      {value.includes("\n") ? (
-        <Text color="#64748B">Shift/Ctrl/Alt+Enter or Ctrl+J newline · Enter send</Text>
-      ) : null}
+      <Text color="#64748B">Shift/Ctrl/Alt+Enter or Ctrl+J newline · Enter send</Text>
     </Box>
   );
 }

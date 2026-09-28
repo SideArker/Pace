@@ -13,7 +13,7 @@ import { configuredSkills, defaultSkillFolder, enabledSkills, skillCommand, type
 import { formatTurnFooter, modelName } from "./turn-format.js";
 import { readUsageLimits } from "../integrations/usage.js";
 import type { UsageLimits } from "../integrations/usage.js";
-import { Composer } from "./Composer.js";
+import { Composer, commandToken } from "./Composer.js";
 import { Header, Transcript, type Line } from "./Transcript.js";
 import { UsageBar } from "./UsageBar.js";
 import { CommandMenu, ConvoMenu, ModelMenu, ResumeMenu } from "./Menus.js";
@@ -165,10 +165,10 @@ export default function App({ onClear }: { onClear: () => void }) {
   const skillCommands = (config ? enabledSkills(skills, config) : [])
     .map(skill => `/${skill.name}`)
     .filter(command => !commands.includes(command));
-  const matches =
-    !shellMode && draft.startsWith("/") && !draft.includes(" ")
-      ? [...commands, ...skillCommands].filter((command) => command.startsWith(draft))
-      : [];
+  const token = shellMode ? undefined : commandToken(draft);
+  const matches = token
+    ? [...commands, ...skillCommands].filter((command) => command.startsWith(token.prefix))
+    : [];
   const refreshUsage = () => {
     void readUsageLimits()
       .then((limits) => { setUsageLimits(limits); setUsageError(limits ? undefined : "Usage unavailable"); })
@@ -887,8 +887,8 @@ export default function App({ onClear }: { onClear: () => void }) {
       <Box marginTop={1}>
         <Composer value={draft} onChange={value => { setDraft(value); setSelection(0); }} onSubmit={value => { void submit(value); }} history={history}
           disabled={!session || !config || !!approval || !!modelMenu || resumeMenu || convoMenu} shellMode={shellMode}
-          completion={matches[selection] ?? matches[0]}
-          onComplete={() => setDraft(matches[selection] ?? matches[0] ?? draft)}
+          completion={matches[selection] ?? matches[0]} completionStart={token?.start}
+          onComplete={() => setDraft(token ? draft.slice(0, token.start) + (matches[selection] ?? matches[0] ?? token.prefix) : draft)}
           onHistory={direction => {
             if (!matches.length) return false;
             setSelection(value => (value + (direction === "up" ? -1 : 1) + matches.length) % matches.length);
