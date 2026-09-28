@@ -101,7 +101,7 @@ export function Composer({ value, onChange, onSubmit, history, disabled, shellMo
         ) : null}
       </Box>
       {value.includes("\n") ? (
-        <Text color="#64748B">Shift+Enter / Ctrl+Enter newline · Enter send</Text>
+        <Text color="#64748B">Shift/Ctrl/Alt+Enter or Ctrl+J newline · Enter send</Text>
       ) : null}
     </Box>
   );

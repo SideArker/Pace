@@ -15,7 +15,7 @@ const args = process.argv.slice(2);
 if (args.includes("--version")) console.log(`pace ${version}`);
 else if (args.includes("--help"))
   console.log(
-    `Pace ${version} · independent Codex SDK terminal client\n\nUsage: pace [doctor|exec "prompt"|--help|--version]\n\nInteractive commands: /help /models /auto /new /resume /usage /btw <question> /artifacts /trust /skills /<skill> /route /stats /clear /exit\nSkills: /skills refreshes the default ~/.agents/skills folder; /skills enable|disable <name>; /skills <folder>|default|off\nBash: ! <command> or ! to toggle Bash mode\nInput: Shift+Enter or Ctrl+Enter for newline, arrows for history, Ctrl+O outputs, Ctrl+E details`,
+    `Pace ${version} · independent Codex SDK terminal client\n\nUsage: pace [doctor|exec "prompt"|--help|--version]\n\nInteractive commands: /help /models /auto /new /resume /usage /btw <question> /artifacts /trust /skills /<skill> /route /stats /clear /exit\nSkills: /skills refreshes the default ~/.agents/skills folder; /skills enable|disable <name>; /skills <folder>|default|off\nBash: ! <command> or ! to toggle Bash mode\nInput: Shift/Ctrl/Alt+Enter or Ctrl+J for newline, arrows for history, Ctrl+O outputs, Ctrl+E details`,
   );
 else if (args[0] === "doctor") {
   const notices: string[] = [];
