@@ -60,7 +60,7 @@ function displayShellCommand(command: string): string | undefined {
   const args = invocation[4] ?? "";
   const basename = executable.split(/[\\/]+/).at(-1) ?? "";
   const shell = /^(?:powershell|pwsh)(?:\.exe)?$/i.test(basename)
-    ? "PS (PowerShell)"
+    ? "PS"
     : /^bash(?:\.exe)?$/i.test(basename)
       ? "Bash"
       : undefined;

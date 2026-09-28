@@ -18,8 +18,20 @@ import { PaceStore } from "./sessions.js";
 import { artifactSnapshot, changedArtifacts } from "./system/artifacts.js";
 import { validRoute } from "../shared/config.js";
 import { existingFolder } from "./system/folders.js";
-import { configuredSkills, enabledSkills, skillCommand, skillMention, skillOption, skillPrompt, skillRequest } from "./system/skills.js";
-import { DEFAULT_ROUTING_PROMPTS, loadRoutingPrompts, type RoutingPrompts } from "./routing/routing-prompts.js";
+import {
+  configuredSkills,
+  enabledSkills,
+  skillCommand,
+  skillMention,
+  skillOption,
+  skillPrompt,
+  skillRequest,
+} from "./system/skills.js";
+import {
+  DEFAULT_ROUTING_PROMPTS,
+  loadRoutingPrompts,
+  type RoutingPrompts,
+} from "./routing/routing-prompts.js";
 
 export type StageRecord = {
   objective: string;
@@ -49,16 +61,26 @@ export type TurnOutcome = {
   estimatedCostUsd?: number;
 };
 export class VexUnavailableError extends Error {
-  constructor(cause: unknown, readonly source: "connection" | "decision") {
+  constructor(
+    cause: unknown,
+    readonly source: "connection" | "decision",
+  ) {
     super(`Vex routing failed: ${String(cause)}`);
   }
 }
-async function awaitRouting<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
+async function awaitRouting<T>(
+  work: Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
   signal?.throwIfAborted();
   if (!signal) return work;
   let onAbort!: () => void;
   const cancelled = new Promise<never>((_resolve, reject) => {
-    onAbort = () => reject(signal.reason ?? new DOMException("This operation was aborted", "AbortError"));
+    onAbort = () =>
+      reject(
+        signal.reason ??
+          new DOMException("This operation was aborted", "AbortError"),
+      );
     signal.addEventListener("abort", onAbort, { once: true });
     if (signal.aborted) onAbort();
   });
@@ -107,8 +129,9 @@ function handoffPrompt(
 }
 function retainedConversationPrompt(prompt: string, session: Session): string {
   if (session.threadId) return prompt;
-  const turns = session.turns.filter(turn => !turn.failed)
-    .map(turn => ({ user: turn.prompt, assistant: turn.result }));
+  const turns = session.turns
+    .filter((turn) => !turn.failed)
+    .map((turn) => ({ user: turn.prompt, assistant: turn.result }));
   if (!turns.length) return prompt;
   return `Continue this conversation using only the retained exchanges below. The current user request follows the history.\n\nRetained conversation:\n${JSON.stringify(turns)}\n\nCurrent user request:\n${prompt}`;
 }
@@ -192,14 +215,29 @@ export class Orchestrator {
     activateOnSave: boolean | (() => boolean) = true,
   ): Promise<TurnOutcome> {
     const startedAt = performance.now();
-    const prompts = session.routingMode === "auto"
-      ? loadRoutingPrompts(this.store.baseDir)
-      : DEFAULT_ROUTING_PROMPTS;
-    if (/^(?:stop caveman|normal mode)$/i.test(prompt.trim()) && session.activeSkills?.includes("caveman")) {
-      session.activeSkills = session.activeSkills.filter(name => name !== "caveman");
+    const prompts =
+      session.routingMode === "auto"
+        ? loadRoutingPrompts(this.store.baseDir)
+        : DEFAULT_ROUTING_PROMPTS;
+    if (
+      /^(?:stop caveman|normal mode)$/i.test(prompt.trim()) &&
+      session.activeSkills?.includes("caveman")
+    ) {
+      session.activeSkills = session.activeSkills.filter(
+        (name) => name !== "caveman",
+      );
       if (session.skillOptions) delete session.skillOptions.caveman;
       await this.store.save(session, activateOnSave);
-      return { session, result: "/caveman disabled for this conversation.", note: "Skill command", route: session.route, durationMs: Math.round(performance.now() - startedAt), artifacts: [], stages: [], routing: [] };
+      return {
+        session,
+        result: "/caveman disabled for this conversation.",
+        note: "Skill command",
+        route: session.route,
+        durationMs: Math.round(performance.now() - startedAt),
+        artifacts: [],
+        stages: [],
+        routing: [],
+      };
     }
     const skills = enabledSkills(await configuredSkills(config), config);
     const invoked = skillCommand(prompt, skills);
@@ -207,21 +245,40 @@ export class Orchestrator {
     const option = invoked ? skillOption(invoked, request) : undefined;
     if (invoked) {
       const active = session.activeSkills ?? [];
-      session.activeSkills = request === "off"
-        ? active.filter(name => name !== invoked.name)
-        : [...new Set([...active, invoked.name])];
+      session.activeSkills =
+        request === "off"
+          ? active.filter((name) => name !== invoked.name)
+          : [...new Set([...active, invoked.name])];
       session.skillOptions ??= {};
-      if (!request || request === "off") delete session.skillOptions[invoked.name];
+      if (!request || request === "off")
+        delete session.skillOptions[invoked.name];
       else if (option) session.skillOptions[invoked.name] = option;
       if (!request || request === "off" || option) {
         await this.store.save(session, activateOnSave);
-        const result = "/" + invoked.name + (option ? " " + option : "") + " " + (request === "off" ? "disabled" : "active") + " for this conversation.";
-        return { session, result, note: "Skill command", route: session.route, durationMs: Math.round(performance.now() - startedAt), artifacts: [], stages: [], routing: [] };
+        const result =
+          "/" +
+          invoked.name +
+          (option ? " " + option : "") +
+          " " +
+          (request === "off" ? "disabled" : "active") +
+          " for this conversation.";
+        return {
+          session,
+          result,
+          note: "Skill command",
+          route: session.route,
+          durationMs: Math.round(performance.now() - startedAt),
+          artifacts: [],
+          stages: [],
+          routing: [],
+        };
       }
     }
-    const routingTurns = session.turns.map(turn => {
+    const routingTurns = session.turns.map((turn) => {
       const previousSkill = skillCommand(turn.prompt, skills);
-      return previousSkill ? { ...turn, prompt: skillRequest(turn.prompt, previousSkill) } : turn;
+      return previousSkill
+        ? { ...turn, prompt: skillRequest(turn.prompt, previousSkill) }
+        : turn;
     });
     const enabled = config.models.filter((model) => model.enabled !== false);
     const save = async () => {
@@ -242,8 +299,15 @@ export class Orchestrator {
       onProgress({ kind: "system", text });
     };
     const routeMessage = (selected: Route, stage?: string) => {
-      const model = selected.model?.replace(/^gpt-(\d+)-(.+)$/, (_match, version: string, name: string) => `GPT-${version} ${name[0]!.toUpperCase()}${name.slice(1)}`) ?? "Codex default";
-      systemMessage(`${session.routingMode === "auto" ? "Vex routed" : "Manual route"}${stage ? ` ${stage}` : ""} to ${model}${selected.effort ? ` ${selected.effort[0]!.toUpperCase()}${selected.effort.slice(1)}` : ""}.`);
+      const model =
+        selected.model?.replace(
+          /^gpt-(\d+)-(.+)$/,
+          (_match, version: string, name: string) =>
+            `GPT-${version} ${name[0]!.toUpperCase()}${name.slice(1)}`,
+        ) ?? "Codex default";
+      systemMessage(
+        `${session.routingMode === "auto" ? "Vex routed" : "Manual route"}${stage ? ` ${stage}` : ""} to ${model}${selected.effort ? ` ${selected.effort[0]!.toUpperCase()}${selected.effort.slice(1)}` : ""}.`,
+      );
     };
     const choose = async (
       request: VexRequest,
@@ -279,64 +343,70 @@ export class Orchestrator {
     let handoff: string | undefined;
     const auto = session.routingMode === "auto";
     try {
-    if (auto) {
-      try {
-        await awaitRouting(Promise.resolve(this.vex.verify?.()), signal);
-      } catch (error) {
-        signal?.throwIfAborted();
-        throw new VexUnavailableError(error, "connection");
+      if (auto) {
+        try {
+          await awaitRouting(Promise.resolve(this.vex.verify?.()), signal);
+        } catch (error) {
+          signal?.throwIfAborted();
+          throw new VexUnavailableError(error, "connection");
+        }
       }
-    }
-    if (!enabled.length)
-      throw new Error(
-        "No models enabled. Open /models and enable one before running a turn.",
-      );
-    if (session.routingMode === "manual" && !validRoute(session.route, enabled))
-      throw new Error(
-        "Saved manual route is no longer enabled. Use /models or /auto.",
-      );
-    if (auto) {
-      pricedModels(enabled);
-      const choices = enabled.reduce(
-        (count, model) => count + model.efforts.length,
-        0,
-      );
-      if (choices > 12)
+      if (!enabled.length)
         throw new Error(
-          "Auto routing supports at most 12 model and effort pairs. Narrow /models.",
+          "No models enabled. Open /models and enable one before running a turn.",
         );
-      onProgress({ kind: "status", text: "Choosing workflow..." });
-      shape = (
-        await choose(shapeRequest(request, routingTurns, enabled, prompts), "workflow")
-      ).choice;
-      if (shape === "clarify") {
-        const result =
-          "What outcome would you like from this request? Please describe the deliverable.";
-        const durationMs = Math.round(performance.now() - startedAt);
-        session.turns = [
-          ...session.turns,
-          {
-            prompt,
+      if (
+        session.routingMode === "manual" &&
+        !validRoute(session.route, enabled)
+      )
+        throw new Error(
+          "Saved manual route is no longer enabled. Use /models or /auto.",
+        );
+      if (auto) {
+        pricedModels(enabled);
+        const choices = enabled.reduce(
+          (count, model) => count + model.efforts.length,
+          0,
+        );
+        if (choices > 12)
+          throw new Error(
+            "Auto routing supports at most 12 model and effort pairs. Narrow /models.",
+          );
+        onProgress({ kind: "status", text: "Choosing workflow..." });
+        shape = (
+          await choose(
+            shapeRequest(request, routingTurns, enabled, prompts),
+            "workflow",
+          )
+        ).choice;
+        if (shape === "clarify") {
+          const result =
+            "What outcome would you like from this request? Please describe the deliverable.";
+          const durationMs = Math.round(performance.now() - startedAt);
+          session.turns = [
+            ...session.turns,
+            {
+              prompt,
+              result,
+              at: new Date().toISOString(),
+              routeNote: "Vex requested clarification",
+              systemMessages,
+              durationMs,
+            },
+          ].slice(-20);
+          await save();
+          return {
+            session,
             result,
-            at: new Date().toISOString(),
-            routeNote: "Vex requested clarification",
-            systemMessages,
+            note: "Vex requested clarification",
+            route: {},
             durationMs,
-          },
-        ].slice(-20);
-        await save();
-        return {
-          session,
-          result,
-          note: "Vex requested clarification",
-          route: {},
-          durationMs,
-          artifacts: [],
-          stages,
-          routing,
-        };
+            artifacts: [],
+            stages,
+            routing,
+          };
+        }
       }
-    }
       signal?.throwIfAborted();
       const artifactsBefore = await artifactSnapshot(session.projectPath).catch(
         () => new Map<string, number>(),
@@ -376,7 +446,9 @@ export class Orchestrator {
         signal?.throwIfAborted();
         onProgress({ kind: "route", route: sideRoute });
         routeMessage(sideRoute, shape === "scout" ? "the scout" : "planning");
-        systemMessage(`This task will split into two stages: ${shape === "scout" ? "a read-only scout" : "planning"}, then completion.`);
+        systemMessage(
+          `This task will split into two stages: ${shape === "scout" ? "a read-only scout" : "planning"}, then completion.`,
+        );
         onProgress({
           kind: "status",
           text: `${objective}: ${sideRoute.model} · ${sideRoute.effort}`,
@@ -432,7 +504,15 @@ export class Orchestrator {
         route = chosenRoute(
           (
             await choose(
-              stageRequest(request, routingTurns, enabled, objective, handoff, enabled, prompts),
+              stageRequest(
+                request,
+                routingTurns,
+                enabled,
+                objective,
+                handoff,
+                enabled,
+                prompts,
+              ),
               objective,
             )
           ).choice,
@@ -450,18 +530,33 @@ export class Orchestrator {
       onProgress({ kind: "route", route });
       routeMessage(route, shape === "single" ? undefined : "completion");
       const mentioned = skillMention(prompt, skills);
-      const turnSkills = skills.filter(skill => session.activeSkills?.includes(skill.name) || skill.name === invoked?.name || skill.name === mentioned?.name);
-      systemMessage(turnSkills.length
-        ? `Active skills: ${turnSkills.map(skill => `/${skill.name}`).join(", ")}.`
-        : "No skills are active for this conversation.");
+      const turnSkills = skills.filter(
+        (skill) =>
+          session.activeSkills?.includes(skill.name) ||
+          skill.name === invoked?.name ||
+          skill.name === mentioned?.name,
+      );
+      systemMessage(
+        turnSkills.length
+          ? `Active skills: ${turnSkills.map((skill) => `/${skill.name}`).join(", ")}.`
+          : "No skills are active for this conversation.",
+      );
       onProgress({
         kind: "status",
         text: `${note}: ${route.model ?? "Codex default"} · ${route.effort ?? "default"}`,
       });
       const executionPrompt = handoff
         ? `${skillPrompt(prompt, skills, session.activeSkills, session.skillOptions)}\n\n${prompts.handoff.reportInstruction}\n${handoff}`
-        : skillPrompt(prompt, skills, session.activeSkills, session.skillOptions);
-      const promptWithHistory = retainedConversationPrompt(executionPrompt, session);
+        : skillPrompt(
+            prompt,
+            skills,
+            session.activeSkills,
+            session.skillOptions,
+          );
+      const promptWithHistory = retainedConversationPrompt(
+        executionPrompt,
+        session,
+      );
       const stageStart = performance.now();
       const execution = await this.runner.run(
         promptWithHistory,
