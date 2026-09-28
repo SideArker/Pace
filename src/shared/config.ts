@@ -92,9 +92,14 @@ export function parseConfig(value: unknown): Config {
     throw new Error("routingMode must be auto or manual");
   if (value.trustedFolders !== undefined && (!Array.isArray(value.trustedFolders) || !value.trustedFolders.every((path: unknown) => typeof path === "string" && path.length > 0)))
     throw new Error("trustedFolders must be a list of folder paths");
-  if (value.skillFolder !== undefined && (typeof value.skillFolder !== "string" || !value.skillFolder.length))
-    throw new Error("skillFolder must be a folder path");
+  if (value.skillFolder !== undefined && (value.skillFolder !== null && (typeof value.skillFolder !== "string" || !value.skillFolder.length)))
+    throw new Error("skillFolder must be a folder path or null");
+  if (value.disabledSkills !== undefined &&
+      (!Array.isArray(value.disabledSkills) || !value.disabledSkills.every((name: unknown) =>
+        typeof name === "string" && /^[a-z0-9][a-z0-9_-]*$/i.test(name))))
+    throw new Error("disabledSkills must be a list of skill names");
   return { models, defaultRoute, routingMode: value.routingMode,
     trustedFolders: value.trustedFolders as string[] | undefined,
-    skillFolder: value.skillFolder as string | undefined };
+    skillFolder: value.skillFolder as string | null | undefined,
+    disabledSkills: value.disabledSkills as string[] | undefined };
 }

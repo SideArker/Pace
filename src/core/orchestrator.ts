@@ -8,7 +8,7 @@ import { PaceStore } from './sessions.js';
 import { artifactSnapshot, changedArtifacts } from './system/artifacts.js';
 import { validRoute } from '../shared/config.js';
 import { existingFolder } from './system/folders.js';
-import { discoverSkills, skillPrompt } from './system/skills.js';
+import { configuredSkills, enabledSkills, skillPrompt } from './system/skills.js';
 import { DEFAULT_ROUTING_PROMPTS, loadRoutingPrompts, type RoutingPrompts } from './routing/routing-prompts.js';
 
 export type StageRecord = { objective: string; route: Route; durationMs: number; usage?: Usage; estimatedCostUsd?: number; handoff?: string };
@@ -108,7 +108,7 @@ export class Orchestrator {
     try {
       const artifactsBefore = await artifactSnapshot(session.projectPath).catch(() => new Map<string, number>());
       const trustedFolders = await Promise.all((config.trustedFolders ?? []).map(existingFolder));
-      const skills = config.skillFolder ? await discoverSkills(config.skillFolder) : [];
+      const skills = enabledSkills(await configuredSkills(config), config);
       if (auto && (shape === 'scout' || shape === 'plan_execute')) {
         const objective = shape === 'scout' ? prompts.objectives.scout : prompts.objectives.plan;
         const stageModels = shape === 'scout' ? enabled.filter(model => model.model === 'gpt-6-luna') : enabled;

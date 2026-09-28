@@ -9,7 +9,7 @@ import { VexRouter } from "../core/vex/client.js";
 import { EFFORTS, withModels } from "../shared/config.js";
 import { artifactSnapshot } from "../core/system/artifacts.js";
 import { existingFolder, sameFolder } from "../core/system/folders.js";
-import { discoverSkills } from "../core/system/skills.js";
+import { configuredSkills, defaultSkillFolder, enabledSkills, skillCommand, type Skill } from "../core/system/skills.js";
 import { formatTurnFooter, modelName } from "./turn-format.js";
 import { readUsageLimits } from "../integrations/usage.js";
 import type { UsageLimits } from "../integrations/usage.js";
@@ -83,6 +83,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const { exit } = useApp();
   const { stdout } = useStdout();
   const [config, setConfig] = useState<Config>();
+  const [skills, setSkills] = useState<Skill[]>([]);
   const [session, setSession] = useState<Session>();
   const [lines, setLines] = useState<Line[]>([]);
   const [status, setStatus] = useState("Loading…");
@@ -161,9 +162,12 @@ export default function App({ onClear }: { onClear: () => void }) {
     setApproval(pending);
     setStatus("Waiting for approval");
   };
+  const skillCommands = (config ? enabledSkills(skills, config) : [])
+    .map(skill => `/${skill.name}`)
+    .filter(command => !commands.includes(command));
   const matches =
     !shellMode && draft.startsWith("/") && !draft.includes(" ")
-      ? commands.filter((command) => command.startsWith(draft))
+      ? [...commands, ...skillCommands].filter((command) => command.startsWith(draft))
       : [];
   const refreshUsage = () => {
     void readUsageLimits()
@@ -216,6 +220,8 @@ export default function App({ onClear }: { onClear: () => void }) {
       const loaded = await localStore.loadConfig();
       if (!active) return;
       setConfig(loaded);
+      try { setSkills(await configuredSkills(loaded)); }
+      catch (error) { add("error", `Could not discover skills: ${String(error)}`); }
       setSession(newSession(project, loaded.routingMode));
       for (const notice of notices) add("error", notice);
       setStatus("Ready · /help for commands");
@@ -619,7 +625,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       if (command === "/help") {
         add(
           "info",
-          "/models · /auto · /new · /resume · /convo · /undo · /usage · /btw <q> · /artifacts · /trust · /skills · /route · /stats · /clear · /exit · Esc/Ctrl+C cancel · Ctrl+Z undo · ! Bash · Shift+Enter newline · ↑/↓ history",
+          "/models · /auto · /new · /resume · /convo · /undo · /usage · /btw <q> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /route · /stats · /clear · /exit · Esc/Ctrl+C cancel · Ctrl+Z undo · ! Bash · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
         );
         return;
       }
@@ -713,21 +719,35 @@ export default function App({ onClear }: { onClear: () => void }) {
       if (command === "/skills") {
         try {
           if (parts.join(" ") === "off") {
-            const updated = { ...config, skillFolder: undefined };
+            const updated = { ...config, skillFolder: null };
             await store.saveConfig(updated);
             setConfig(updated);
+            setSkills([]);
             add("info", "Skill folder disabled.");
             return;
           }
-          const folder = parts.length ? await existingFolder(folderArgument(parts.join(" "))) : config.skillFolder;
-          if (!folder) { add("error", "Use /skills <folder> to select a skills folder."); return; }
-          const skills = await discoverSkills(folder);
-          if (parts.length) {
-            const updated = { ...config, skillFolder: folder };
+          if (parts[0] === "enable" || parts[0] === "disable") {
+            const name = parts[1];
+            const found = skills.find(skill => skill.name === name);
+            if (!found || parts.length !== 2) { add("error", "Use /skills enable <name> or /skills disable <name> with a discovered skill."); return; }
+            const disabledSkills = parts[0] === "disable"
+              ? [...new Set([...(config.disabledSkills ?? []), name!])]
+              : (config.disabledSkills ?? []).filter(item => item !== name);
+            const updated = { ...config, disabledSkills };
             await store.saveConfig(updated);
             setConfig(updated);
+            add("info", `${name} ${parts[0] === "disable" ? "disabled" : "enabled"}.`);
+            return;
           }
-          add("info", skills.length ? skills.map(skill => `${skill.name} · ${skill.description}`).join("\n") : `No skills found in ${folder}.`);
+          const folder = parts.join(" ") === "default" ? undefined
+            : parts.length ? await existingFolder(folderArgument(parts.join(" "))) : config.skillFolder;
+          const updated = parts.length ? { ...config, skillFolder: folder } : config;
+          const found = await configuredSkills(updated);
+          if (parts.length) { await store.saveConfig(updated); setConfig(updated); }
+          setSkills(found);
+          add("info", found.length
+            ? found.map(skill => `/${skill.name} ${updated.disabledSkills?.includes(skill.name) ? "(disabled)" : "(enabled)"} · ${skill.description}`).join("\n")
+            : `No skills found in ${folder === null ? "the disabled skill folder" : folder ?? defaultSkillFolder()}.`);
         } catch (error) { add("error", `Could not discover skills: ${String(error)}`); }
         return;
       }
@@ -775,8 +795,10 @@ export default function App({ onClear }: { onClear: () => void }) {
         setMenuIndex(session.turns.length - 1);
         return;
       }
-      add("error", `Unknown command ${command}. Use /help.`);
-      return;
+      if (!skillCommand(text, enabledSkills(skills, config)) || commands.includes(command)) {
+        add("error", `Unknown command ${command}. Use /help.`);
+        return;
+      }
     }
     if (vexState !== "connected") {
       add(
