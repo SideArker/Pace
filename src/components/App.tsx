@@ -4,6 +4,7 @@ import type { ApprovalDecision, Progress } from "../integrations/codex.js";
 import type { Config, Session, Route } from "../shared/types.js";
 import { PaceStore, newSession, rewindConversation, deleteConversationTurn, undoConversationTurn } from "../core/sessions.js";
 import { Orchestrator, VexUnavailableError } from "../core/orchestrator.js";
+import { PromptQueue } from "../core/prompt-queue.js";
 import { AppServerRunner } from "../integrations/codex.js";
 import { VexRouter } from "../core/vex/client.js";
 import { EFFORTS, withModels } from "../shared/config.js";
@@ -36,6 +37,7 @@ const commands = [
   "/route",
   "/stats",
   "/clear",
+  "/queue",
   "/exit",
 ];
 const modelCatalog = ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra"];
@@ -135,6 +137,8 @@ export default function App({ onClear }: { onClear: () => void }) {
   const nextId = useRef(0);
   const turnSequence = useRef(0);
   const jobs = useRef(new Map<string, TurnJob>());
+  const promptQueue = useRef(new PromptQueue());
+  const [, setQueueVersion] = useState(0);
   const activeSessionId = useRef<string | undefined>(undefined);
   const sessionLines = useRef(new Map<string, Line[]>());
   const sessionDrafts = useRef(new Map<string, string>());
@@ -148,6 +152,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const lastInterruptAt = useRef(0);
   const switchingSession = useRef(false);
   const busy = !!session && runningIds.includes(session.id);
+  const queued = session ? promptQueue.current.list(session.id) : [];
   const rememberSession = (target: Session) => setOpenSessions(old => {
     const index = old.findIndex(item => item.id === target.id);
     if (index < 0) return [...old, target];
@@ -249,7 +254,10 @@ export default function App({ onClear }: { onClear: () => void }) {
   useEffect(
     () => () => {
       for (const pending of pendingApprovals.current.values()) pending.respond("decline");
-      for (const job of jobs.current.values()) job.controller.abort();
+      for (const [sessionId, job] of jobs.current) {
+        promptQueue.current.clear(sessionId);
+        job.controller.abort();
+      }
       for (const controller of titleAborts.current.values()) controller.abort();
       for (const child of shells.current) child.kill();
     },
@@ -469,6 +477,13 @@ export default function App({ onClear }: { onClear: () => void }) {
     pending?.respond("decline");
     const job = id ? jobs.current.get(id) : undefined;
     if (job || sideAbort.current) {
+      if (id && job) {
+        const cleared = promptQueue.current.clear(id);
+        if (cleared) {
+          setQueueVersion(value => value + 1);
+          addFor(id, "info", `Cleared ${cleared} queued prompt${cleared === 1 ? "" : "s"}.`);
+        }
+      }
       job?.controller.abort();
       sideAbort.current?.abort();
       if (id) setStatusFor(id, "Cancelling…");
@@ -516,6 +531,13 @@ export default function App({ onClear }: { onClear: () => void }) {
     if (key.escape && !modelMenu && !resumeMenu && !convoMenu && !pickerFocused) {
       const job = activeSessionId.current ? jobs.current.get(activeSessionId.current) : undefined;
       if (job || sideAbort.current) {
+        if (job && activeSessionId.current) {
+          const cleared = promptQueue.current.clear(activeSessionId.current);
+          if (cleared) {
+            setQueueVersion(value => value + 1);
+            addFor(activeSessionId.current, "info", `Cleared ${cleared} queued prompt${cleared === 1 ? "" : "s"}.`);
+          }
+        }
         job?.controller.abort();
         sideAbort.current?.abort();
         setStatus("Cancelling…");
@@ -729,17 +751,33 @@ export default function App({ onClear }: { onClear: () => void }) {
       void askBtw(text.slice(4).trim());
       return;
     }
-    if (jobs.current.has(session.id) && !/^\/(?:new|clear|resume|help|exit|usage|stats|route|artifacts|models|trust|skills)(?:\s|$)/.test(text)) {
-      add(
-        "info",
-        "This conversation is working. Use /new or /resume to switch conversations.",
-      );
+    if (jobs.current.has(session.id) && !/^\/(?:new|clear|resume|help|exit|usage|stats|route|artifacts|models|trust|skills|queue)(?:\s|$)/.test(text)) {
+      if (text.startsWith("/") && !skillCommand(text, enabledSkills(skills, config))) {
+        add("info", "This conversation is working. Use /new or /resume to switch conversations.");
+        return;
+      }
+      const position = promptQueue.current.add(session.id, text);
+      setQueueVersion(value => value + 1);
+      setDraft("");
+      add("info", `Queued prompt ${position}: ${text.replace(/\s+/g, " ").slice(0, 100)}`);
       return;
     }
     setDraft("");
     setSelection(0);
     if (text.startsWith("/")) {
       const [command, ...parts] = text.split(/\s+/);
+      if (command === "/queue") {
+        if (parts.length === 1 && parts[0] === "clear") {
+          const count = promptQueue.current.clear(session.id);
+          setQueueVersion(value => value + 1);
+          add("info", `Cleared ${count} queued prompt${count === 1 ? "" : "s"}.`);
+        } else if (parts.length) add("error", "Use /queue or /queue clear.");
+        else {
+          const pending = promptQueue.current.list(session.id);
+          add("info", pending.length ? pending.map((prompt, index) => `${index + 1}. ${prompt.replace(/\s+/g, " ")}`).join("\n") : "No queued prompts.");
+        }
+        return;
+      }
       if (command === "/clear" || command === "/new") {
         if (parts.length) {
           add("error", `Type ${command} without arguments.`);
@@ -786,7 +824,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       if (command === "/help") {
         add(
           "info",
-          "/models · /model <name> [effort] · /auto · /new · /resume · /convo · /undo · /usage · /btw <q> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /route · /stats · /clear · /exit · Esc/Ctrl+C cancel · Ctrl+Z undo · ! Bash · Ctrl+O toggle reasoning and command output · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
+          "/models · /model <name> [effort] · /auto · /new · /resume · /convo · /undo · /usage · /btw <q> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /queue [clear] · /route · /stats · /clear · /exit · Esc/Ctrl+C cancel · Ctrl+Z undo · ! Bash · Ctrl+O toggle reasoning and command output · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
         );
         add("info", "With multiple open conversations, press Down from the input to focus the picker. Use arrows and Enter to switch; Esc returns to input. Ctrl+C cancels the selected turn. /exit quits.");
         return;
@@ -1002,9 +1040,11 @@ export default function App({ onClear }: { onClear: () => void }) {
       );
       return;
     }
+    void runTurn(text, session, config);
+  };
+  const runTurn = async (text: string, turnSession: Session, turnConfig: Config) => {
     const controller = new AbortController();
     const turnId = ++turnSequence.current;
-    const turnSession = session;
     const sessionId = turnSession.id;
     rememberSession(turnSession);
     jobs.current.set(sessionId, { session: turnSession, controller, prompt: text });
@@ -1012,7 +1052,7 @@ export default function App({ onClear }: { onClear: () => void }) {
     addFor(sessionId, "you", text);
     setStatusFor(sessionId, "Starting…");
     if (!turnSession.turns.length && !turnSession.title) {
-      const luna = config.models.find(model => model.enabled !== false && model.model === "gpt-6-luna");
+      const luna = turnConfig.models.find(model => model.enabled !== false && model.model === "gpt-6-luna");
       if (luna) {
         const titleController = new AbortController();
         titleAborts.current.set(sessionId, titleController);
@@ -1041,7 +1081,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       const outcome = await orchestrator.turn(
         text,
         turnSession,
-        config,
+        turnConfig,
         (progress) => {
           if (progress.kind === "status") {
             setStatusFor(sessionId, progress.text);
@@ -1095,6 +1135,11 @@ export default function App({ onClear }: { onClear: () => void }) {
       if (activeSessionId.current !== sessionId) unreadCompletions.current.add(sessionId);
       rememberSession(turnSession);
       setRunningIds([...jobs.current.keys()]);
+      const next = promptQueue.current.take(sessionId);
+      if (next !== undefined) {
+        setQueueVersion(value => value + 1);
+        void runTurn(next, turnSession, turnConfig);
+      }
     }
   };
   return (
@@ -1127,9 +1172,10 @@ export default function App({ onClear }: { onClear: () => void }) {
             return true;
           }}
           onMoveDown={focusPicker}
-          placeholder={modelMenu || resumeMenu || convoMenu ? "Close menu to type" : shellMode ? "Bash command; ! returns to Pace" : vexState !== "connected" ? "Vex unavailable; manual turns work" : busy ? "Pace is working · /new or /resume to switch · Esc or Ctrl+C to cancel" : "Ask Pace or type /"}
+          placeholder={modelMenu || resumeMenu || convoMenu ? "Close menu to type" : shellMode ? "Bash command; ! returns to Pace" : vexState !== "connected" ? "Vex unavailable; manual turns work" : busy ? "Type next prompt to queue it; /queue to view" : "Ask Pace or type /"}
         />
       </Box>
+      {queued.length > 0 ? <Text color="#FBBF24" wrap="truncate">{queued.length} queued · next: {queued[0]!.replace(/\s+/g, " ").slice(0, 80)} · /queue clear to remove</Text> : null}
       {runningIds.length > 0 && openSessions.length > 1 ? <ConversationPicker choices={pickerChoices} activeId={activeSessionId.current} selectedIndex={pickerIndex} focused={pickerFocused} /> : null}
       {showUsage ? <UsageBar limits={usageLimits} error={usageError} /> : null}
       {!modelMenu && !resumeMenu && !convoMenu && matches.length > 0 ? <CommandMenu matches={matches} selectedIndex={selection} /> : null}
