@@ -53,6 +53,8 @@ export function newSession(
     updatedAt: now,
     routingMode: mode,
     route: {},
+    activeSkills: [],
+    skillOptions: {},
     turns: [],
   };
 }
@@ -101,6 +103,10 @@ function parseSession(value: unknown, project: string): Session | undefined {
       typeof value.route.model !== "string") ||
     (value.route.effort !== undefined &&
       !EFFORTS.includes(value.route.effort as (typeof EFFORTS)[number])) ||
+    (value.activeSkills !== undefined && (!Array.isArray(value.activeSkills) ||
+      !value.activeSkills.every((name: unknown) => typeof name === "string" && /^[a-z0-9][a-z0-9_-]*$/i.test(name)))) ||
+    (value.skillOptions !== undefined && (!isRecord(value.skillOptions) ||
+      !Object.entries(value.skillOptions).every(([name, option]) => /^[a-z0-9][a-z0-9_-]*$/i.test(name) && typeof option === "string" && option.length <= 80))) ||
     (value.routingMode !== "auto" && value.routingMode !== "manual")
   )
     return undefined;

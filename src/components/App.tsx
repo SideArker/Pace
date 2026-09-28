@@ -9,7 +9,7 @@ import { VexRouter } from "../core/vex/client.js";
 import { EFFORTS, withModels } from "../shared/config.js";
 import { artifactSnapshot } from "../core/system/artifacts.js";
 import { existingFolder, sameFolder } from "../core/system/folders.js";
-import { configuredSkills, defaultSkillFolder, enabledSkills, skillCommand, type Skill } from "../core/system/skills.js";
+import { configuredSkills, defaultSkillFolder, enabledSkills, skillCommand, skillOption, skillRequest, type Skill } from "../core/system/skills.js";
 import { formatTurnFooter, modelName } from "./turn-format.js";
 import { readUsageLimits } from "../integrations/usage.js";
 import type { UsageLimits } from "../integrations/usage.js";
@@ -800,7 +800,11 @@ export default function App({ onClear }: { onClear: () => void }) {
         return;
       }
     }
-    if (vexState !== "connected") {
+    const invokedSkill = skillCommand(text, enabledSkills(skills, config));
+    const skillArgument = invokedSkill ? skillRequest(text, invokedSkill) : undefined;
+    const localSkillCommand = invokedSkill && (!skillArgument || skillArgument === "off" || !!skillOption(invokedSkill, skillArgument));
+    const stopCaveman = /^(?:stop caveman|normal mode)$/i.test(text) && session.activeSkills?.includes("caveman");
+    if (vexState !== "connected" && !localSkillCommand && !stopCaveman) {
       add(
         "error",
         "Vex MCP is unavailable. Coding turns are blocked until it reconnects; restart Pace after fixing Vex.",

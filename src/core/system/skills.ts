@@ -26,6 +26,15 @@ export function skillCommand(prompt: string, skills: Skill[]): Skill | undefined
   return skills.find(skill => skill.name.toLowerCase() === command && /^[a-z0-9][a-z0-9_-]*$/i.test(skill.name));
 }
 
+export function skillRequest(prompt: string, skill: Skill): string {
+  return prompt.slice(skill.name.length + 1).trim();
+}
+
+export function skillOption(skill: Skill, request: string): string | undefined {
+  return skill.name === "caveman" && /^(?:lite|full|ultra|wenyan-lite|wenyan-full|wenyan-ultra)$/.test(request)
+    ? request : undefined;
+}
+
 export async function discoverSkills(input: string): Promise<Skill[]> {
   const folder = await existingFolder(input);
   const entries = await readdir(folder, { withFileTypes: true });
@@ -52,9 +61,13 @@ export async function discoverSkills(input: string): Promise<Skill[]> {
   return skills.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export function skillPrompt(prompt: string, skills: Skill[]): string {
+export function skillPrompt(prompt: string, skills: Skill[], activeSkills: string[] = [], skillOptions: Record<string, string> = {}): string {
   if (!skills.length) return prompt;
   const invoked = skillCommand(prompt, skills);
-  const instruction = invoked ? `The user invoked /${invoked.name}. Read ${invoked.path} and follow that skill for this turn. The text after the command is the user's request.` : undefined;
-  return `${prompt}\n\n${instruction ? `${instruction}\n\n` : ""}Available skills (read SKILL.md before using a relevant skill):\n${skills.map(skill => `- ${skill.name}: ${skill.description} (${skill.path})`).join("\n")}`;
+  const request = invoked ? skillRequest(prompt, invoked) : prompt;
+  const active = skills.filter(skill => activeSkills.includes(skill.name) || skill.name === invoked?.name);
+  const instruction = active.length
+    ? `Active skills for this conversation: ${active.map(skill => `/${skill.name}${skillOptions[skill.name] ? ` ${skillOptions[skill.name]}` : ""} (${skill.path})`).join(", ")}. Read each SKILL.md and follow its instructions.`
+    : "No skills are active for this conversation.";
+  return `${request}\n\n${instruction} Previous slash-command activations not listed here no longer apply. The user's request is the text above.\n\nAvailable skills (read SKILL.md before using a relevant skill):\n${skills.map(skill => `- ${skill.name}: ${skill.description} (${skill.path})`).join("\n")}`;
 }

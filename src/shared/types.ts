@@ -38,6 +38,8 @@ export type Session = {
   updatedAt: string;
   routingMode: "auto" | "manual";
   route: Route;
+  activeSkills?: string[];
+  skillOptions?: Record<string, string>;
   turns: TurnSummary[];
 };
 export type Notice = (message: string) => void;

@@ -9,6 +9,7 @@ import { Orchestrator } from '../src/core/orchestrator.js';
 import { PaceStore, newSession } from '../src/core/sessions.js';
 import type { CodexRunner } from '../src/integrations/codex.js';
 import { singleVex } from './routing-fixture.js';
+import type { VexRequest } from '../src/core/vex/client.js';
 
 let dir: string;
 afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true }); });
@@ -43,7 +44,7 @@ it('validates trusted folders before execution and passes skill names to the run
   expect(folders).toEqual([trusted]);
   expect(received).toContain('review: Review code changes.');
   await orchestrator.turn('/review inspect this', newSession(dir, 'auto'), config, () => {});
-  expect(received).toContain(`Read ${join(skillFolder, 'review', 'SKILL.md')}`);
+  expect(received).toContain(`/review (${join(skillFolder, 'review', 'SKILL.md')})`);
   await orchestrator.turn('Check this', newSession(dir, 'auto'), { ...config, disabledSkills: ['review'] }, () => {});
   expect(received).not.toContain('review: Review code changes.');
   await expect(orchestrator.turn('Check this', newSession(dir, 'auto'), { ...config, trustedFolders: [join(dir, 'missing')] }, () => {})).rejects.toThrow();
@@ -68,8 +69,41 @@ it('invokes enabled skill commands with their file path and user arguments', asy
   const config = parseConfig({ ...DEFAULT_CONFIG, skillFolder: dir });
   const skills = enabledSkills(await configuredSkills(config), config);
   expect(skillCommand('/caveman explain this', skills)?.name).toBe('caveman');
-  expect(skillPrompt('/caveman explain this', skills)).toContain(`Read ${skills[0]!.path} and follow that skill for this turn`);
-  expect(skillPrompt('/caveman explain this', skills)).toContain('The text after the command is the user\'s request.');
+  expect(skillPrompt('/caveman explain this', skills)).toContain(`/${skills[0]!.name} (${skills[0]!.path})`);
+  expect(skillPrompt('/caveman explain this', skills)).toMatch(/^explain this\n/);
   expect(enabledSkills(skills, { ...config, disabledSkills: ['caveman'] })).toEqual([]);
   expect(skillCommand('/caveman', enabledSkills(skills, { ...config, disabledSkills: ['caveman'] }))).toBeUndefined();
+});
+
+it('keeps a skill active across turns and routes only user requests', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-skills-'));
+  await mkdir(join(dir, 'caveman'));
+  await writeFile(join(dir, 'caveman', 'SKILL.md'), '---\nname: caveman\ndescription: Respond briefly.\n---\nInstructions');
+  const config = parseConfig({ ...DEFAULT_CONFIG, skillFolder: dir });
+  const store = new PaceStore(join(dir, 'store'));
+  const session = newSession(dir, 'auto');
+  const requests: string[] = [];
+  const prompts: string[] = [];
+  const baseVex = singleVex('0:medium');
+  const vex = { verify: async () => {}, choose: async (request: VexRequest) => {
+    requests.push(String(request.context.originalRequest));
+    return baseVex.choose(request);
+  } };
+  const runner: CodexRunner = { async run(prompt) { prompts.push(prompt); return { result: 'done', completed: true }; } };
+  const orchestrator = new Orchestrator(store, runner, vex);
+  await orchestrator.turn('/caveman lite', session, config, () => {});
+  expect(requests).toEqual([]);
+  expect(prompts).toEqual([]);
+  expect(session.activeSkills).toEqual(['caveman']);
+  expect(session.skillOptions).toEqual({ caveman: 'lite' });
+  await orchestrator.turn('/caveman explain this', session, config, () => {});
+  expect(requests).toEqual(['explain this', 'explain this']);
+  expect(prompts[0]).toContain('/caveman lite');
+  expect(prompts[0]).toMatch(/^explain this\n/);
+  const restored = (await store.latest(dir))!;
+  await orchestrator.turn('Another question', restored, config, () => {});
+  expect(prompts[1]).toContain('/caveman lite');
+  await orchestrator.turn('/caveman off', restored, config, () => {});
+  await orchestrator.turn('Normal question', restored, config, () => {});
+  expect(prompts[2]).toContain('No skills are active for this conversation');
 });

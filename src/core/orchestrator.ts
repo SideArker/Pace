@@ -8,7 +8,7 @@ import { PaceStore } from './sessions.js';
 import { artifactSnapshot, changedArtifacts } from './system/artifacts.js';
 import { validRoute } from '../shared/config.js';
 import { existingFolder } from './system/folders.js';
-import { configuredSkills, enabledSkills, skillPrompt } from './system/skills.js';
+import { configuredSkills, enabledSkills, skillCommand, skillOption, skillPrompt, skillRequest } from './system/skills.js';
 import { DEFAULT_ROUTING_PROMPTS, loadRoutingPrompts, type RoutingPrompts } from './routing/routing-prompts.js';
 
 export type StageRecord = { objective: string; route: Route; durationMs: number; usage?: Usage; estimatedCostUsd?: number; handoff?: string };
@@ -64,6 +64,34 @@ export class Orchestrator {
   async turn(prompt: string, session: Session, config: Config, onProgress: (progress: Progress) => void, signal?: AbortSignal): Promise<TurnOutcome> {
     const startedAt = performance.now();
     const prompts = session.routingMode === 'auto' ? loadRoutingPrompts(this.store.baseDir) : DEFAULT_ROUTING_PROMPTS;
+    if (/^(?:stop caveman|normal mode)$/i.test(prompt.trim()) && session.activeSkills?.includes("caveman")) {
+      session.activeSkills = session.activeSkills.filter(name => name !== "caveman");
+      if (session.skillOptions) delete session.skillOptions.caveman;
+      await this.store.save(session);
+      return { session, result: "/caveman disabled for this conversation.", note: "Skill command", route: session.route, durationMs: Math.round(performance.now() - startedAt), artifacts: [], stages: [], routing: [] };
+    }
+    const skills = enabledSkills(await configuredSkills(config), config);
+    const invoked = skillCommand(prompt, skills);
+    const request = invoked ? skillRequest(prompt, invoked) : prompt;
+    const option = invoked ? skillOption(invoked, request) : undefined;
+    if (invoked) {
+      const active = session.activeSkills ?? [];
+      session.activeSkills = request === "off"
+        ? active.filter(name => name !== invoked.name)
+        : [...new Set([...active, invoked.name])];
+      session.skillOptions ??= {};
+      if (!request || request === "off") delete session.skillOptions[invoked.name];
+      else if (option) session.skillOptions[invoked.name] = option;
+      if (!request || request === "off" || option) {
+        await this.store.save(session);
+        const result = "/" + invoked.name + (option ? " " + option : "") + " " + (request === "off" ? "disabled" : "active") + " for this conversation.";
+        return { session, result, note: "Skill command", route: session.route, durationMs: Math.round(performance.now() - startedAt), artifacts: [], stages: [], routing: [] };
+      }
+    }
+    const routingTurns = session.turns.map(turn => {
+      const previousSkill = skillCommand(turn.prompt, skills);
+      return previousSkill ? { ...turn, prompt: skillRequest(turn.prompt, previousSkill) } : turn;
+    });
     try { await this.vex.verify?.(); } catch (error) { throw new VexUnavailableError(error, "connection"); }
     const enabled = config.models.filter(model => model.enabled !== false);
     if (!enabled.length) throw new Error('No models enabled. Open /models and enable one before running a turn.');
@@ -96,7 +124,7 @@ export class Orchestrator {
       const choices = enabled.reduce((count, model) => count + model.efforts.length, 0);
       if (choices > 12) throw new Error('Auto routing supports at most 12 model and effort pairs. Narrow /models.');
       onProgress({ kind: 'status', text: 'Choosing workflow...' });
-      shape = (await choose(shapeRequest(prompt, session.turns, enabled, prompts), 'workflow')).choice;
+      shape = (await choose(shapeRequest(request, routingTurns, enabled, prompts), 'workflow')).choice;
       if (shape === 'clarify') {
         const result = 'What outcome would you like from this request? Please describe the deliverable.';
         const durationMs = Math.round(performance.now() - startedAt);
@@ -108,15 +136,14 @@ export class Orchestrator {
     try {
       const artifactsBefore = await artifactSnapshot(session.projectPath).catch(() => new Map<string, number>());
       const trustedFolders = await Promise.all((config.trustedFolders ?? []).map(existingFolder));
-      const skills = enabledSkills(await configuredSkills(config), config);
       if (auto && (shape === 'scout' || shape === 'plan_execute')) {
         const objective = shape === 'scout' ? prompts.objectives.scout : prompts.objectives.plan;
         const stageModels = shape === 'scout' ? enabled.filter(model => model.model === 'gpt-6-luna') : enabled;
         if (!stageModels.length) throw new Error('Vex chose a Luna scout, but Luna is not enabled');
-        const sideRoute = chosenRoute((await choose(stageRequest(prompt, session.turns, stageModels, objective, undefined, enabled, prompts), objective)).choice, stageModels);
+        const sideRoute = chosenRoute((await choose(stageRequest(request, routingTurns, stageModels, objective, undefined, enabled, prompts), objective)).choice, stageModels);
         onProgress({ kind: 'route', route: sideRoute });
         onProgress({ kind: 'status', text: `${objective}: ${sideRoute.model} · ${sideRoute.effort}` });
-        const basePrompt = handoffPrompt(shape, prompt, session.turns, prompts);
+        const basePrompt = handoffPrompt(shape, request, routingTurns, prompts);
         let previousResult: string | undefined;
         let handoffError: unknown;
         for (let attempt = 0; attempt < 2; attempt++) {
@@ -161,7 +188,7 @@ export class Orchestrator {
       }
       if (auto) {
         const objective = shape === 'single' ? prompts.objectives.single : prompts.objectives.afterHandoff;
-        route = chosenRoute((await choose(stageRequest(prompt, session.turns, enabled, objective, handoff, enabled, prompts), objective)).choice, enabled);
+        route = chosenRoute((await choose(stageRequest(request, routingTurns, enabled, objective, handoff, enabled, prompts), objective)).choice, enabled);
         note = `Vex chose ${shape} workflow`;
       }
       session.route = route;
@@ -169,8 +196,8 @@ export class Orchestrator {
       onProgress({ kind: 'route', route });
       onProgress({ kind: 'status', text: `${note}: ${route.model ?? 'Codex default'} · ${route.effort ?? 'default'}` });
       const executionPrompt = handoff
-        ? `${skillPrompt(prompt, skills)}\n\n${prompts.handoff.reportInstruction}\n${handoff}`
-        : skillPrompt(prompt, skills);
+        ? `${skillPrompt(prompt, skills, session.activeSkills, session.skillOptions)}\n\n${prompts.handoff.reportInstruction}\n${handoff}`
+        : skillPrompt(prompt, skills, session.activeSkills, session.skillOptions);
       const stageStart = performance.now();
       const execution = await this.runner.run(executionPrompt, session.projectPath, route, session.threadId,
         async progress => { if (progress.kind === 'thread') { session.threadId = progress.text; await save(); } else onProgress(progress); },
