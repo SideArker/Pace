@@ -1,6 +1,10 @@
 import React, { useState } from "react";
 import { Box, Text, useInput, usePaste } from "ink";
 
+export function isNewlineKey(input: string, key: { return: boolean; shift: boolean; ctrl: boolean; meta: boolean }): boolean {
+  return (key.return && (key.shift || key.ctrl || key.meta)) || (key.ctrl && input === "j") || input === "\n";
+}
+
 type Props = {
   value: string;
   onChange: (value: string) => void;
@@ -26,6 +30,7 @@ export function Composer({ value, onChange, onSubmit, history, disabled, shellMo
   usePaste((text) => { if (!disabled) insert(text.replace(/\r\n?/g, "\n")); }, { isActive: !disabled });
   useInput((input, key) => {
     if (key.ctrl && input === "c") return;
+    if (isNewlineKey(input, key)) { insert("\n"); return; }
     if (key.upArrow || key.downArrow) {
       if (onHistory?.(key.upArrow ? "up" : "down")) return;
       if (!history.length) return;
@@ -40,7 +45,6 @@ export function Composer({ value, onChange, onSubmit, history, disabled, shellMo
     }
     if (key.tab) { if (completion) { onComplete(); setCursor(completion.length); } return; }
     if (key.return) {
-      if (key.shift || key.ctrl) { insert("\n"); return; }
       if (completion && value.trim() !== completion && value.startsWith("/")) {
         onChange(completion);
         setCursor(completion.length);
