@@ -1,8 +1,9 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import type { Usage } from "@openai/codex-sdk";
 import { AppServerRunner } from "../src/integrations/codex.js";
@@ -177,12 +178,19 @@ async function runArm(task: Case, repetition: number, arm: Arm, route: Route, ou
 
 async function main() {
   const opts = options();
-  const suite = JSON.parse(await readFile(opts.suite, "utf8")) as { cases: Case[] };
+  const suiteText = await readFile(opts.suite, "utf8");
+  const suite = JSON.parse(suiteText) as { cases: Case[] };
   if (!Array.isArray(suite.cases) || !suite.cases.length) throw new Error("Suite has no cases");
   const cases = suite.cases.filter(item => !opts.selected || item.id === opts.selected);
   if (!cases.length) throw new Error("No matching case");
   await mkdir(opts.out, { recursive: false });
+  const sourceFiles = [fileURLToPath(import.meta.url), resolve("src/integrations/app-server-runner.ts"), resolve("src/core/checkpoint.ts")];
+  const source = Buffer.concat(await Promise.all(sourceFiles.map(file => readFile(file))));
+  const commit = await command("git", ["rev-parse", "HEAD"], process.cwd());
   await writeFile(join(opts.out, "manifest.json"), JSON.stringify({ suite: opts.suite, route: opts.route,
+    suiteSha256: createHash("sha256").update(suiteText).digest("hex"),
+    sourceSha256: createHash("sha256").update(source).digest("hex"),
+    paceCommit: commit.passed ? commit.output.trim() : undefined,
     repeat: opts.repeat, turnTimeoutMinutes: opts.turnTimeoutMinutes, priceSnapshot: PRICE_SNAPSHOT, runId: randomUUID() }, null, 2) + "\n");
   const runs: Run[] = [];
   for (const task of cases) for (let repetition = 1; repetition <= opts.repeat; repetition++) {
