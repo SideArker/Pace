@@ -3,7 +3,7 @@ import { realpath } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import type { Usage } from "@openai/codex-sdk";
 import { artifactPrompt } from "../core/system/artifacts.js";
-import type { ApprovalDecision, CodexRunner, Execution, Progress } from "./codex-types.js";
+import { CodexRunError, type ApprovalDecision, type CodexRunner, type Execution, type Progress } from "./codex-types.js";
 import { AppServer, isRecord, type AppServerConnection, type JsonRecord } from "./app-server-process.js";
 import { appServerThreadParams, appServerTurnParams, appUsage } from "./app-server-protocol.js";
 import { appItemProgress, fileChangeProgress } from "./codex-events.js";
@@ -276,6 +276,8 @@ export class AppServerRunner implements CodexRunner {
       if (failure) throw new Error(failure);
       if (!completed) throw new Error("Codex stream ended without turn.completed");
       return { threadId: id, result: result || "Codex completed without a final message.", completed, usage: usageKnown ? usage : undefined, context };
+    } catch (error) {
+      throw new CodexRunError(error instanceof Error ? error.message : String(error), usageKnown ? usage : undefined, context);
     } finally { server.kill(); }
   }
 }

@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import type { Usage } from "@openai/codex-sdk";
 import { AppServerRunner } from "../src/integrations/codex.js";
+import { CodexRunError } from "../src/integrations/codex-types.js";
 import { checkpointHandoff, checkpointPrompt, parseCheckpoint } from "../src/core/checkpoint.js";
 import { costForUsage, PRICE_SNAPSHOT } from "../src/core/routing/pricing.js";
 import type { Route } from "../src/shared/types.js";
@@ -119,6 +120,10 @@ async function runArm(task: Case, repetition: number, arm: Arm, route: Route, ou
       stage.estimatedCostUsd = costForUsage(route, result.usage);
       return result.result;
     } catch (error) {
+      if (error instanceof CodexRunError) {
+        stage.usage = error.usage;
+        stage.estimatedCostUsd = costForUsage(route, error.usage);
+      }
       stage.error = String(error);
       throw error;
     } finally {

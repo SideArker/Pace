@@ -15,6 +15,12 @@ export type Execution = {
   usage?: Usage;
   context?: ContextMeasurement;
 };
+export class CodexRunError extends Error {
+  constructor(message: string, readonly usage?: Usage, readonly context?: ContextMeasurement) {
+    super(message);
+    this.name = "Error";
+  }
+}
 export interface CodexRunner {
   run(
     prompt: string,

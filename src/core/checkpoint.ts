@@ -1,6 +1,7 @@
 import type { Usage } from "@openai/codex-sdk";
 import type { CheckpointNote, Session, CheckpointRecord, CheckpointGeneration } from "../shared/types.js";
 import type { CodexRunner, Progress } from "../integrations/codex.js";
+import { CodexRunError } from "../integrations/codex-types.js";
 import { costForUsage } from "./routing/pricing.js";
 export type { CheckpointNote } from "../shared/types.js";
 
@@ -100,9 +101,16 @@ export async function createCheckpointIfDue(
       note = parseCheckpoint(answer);
       outcome = "valid";
     } catch (cause) {
+      if (cause instanceof CodexRunError) {
+        usage = cause.usage;
+        if (cause.context) {
+          session.contextByThread ??= {};
+          session.contextByThread[threadId] = cause.context;
+        }
+      }
       error = String(cause);
       outcome = signal?.aborted ? "cancelled" : answer !== undefined ? "invalid" : "failed";
-      if (session.contextByThread && answer === undefined) delete session.contextByThread[threadId];
+      if (session.contextByThread && answer === undefined && !(cause instanceof CodexRunError && cause.context)) delete session.contextByThread[threadId];
     }
     const durationMs = Math.round(performance.now() - started);
     totalDurationMs += durationMs;

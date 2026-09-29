@@ -372,6 +372,25 @@ it('sums distinct model requests without counting resumed history or duplicate u
   expect(execution.context).toEqual({ tokens: 100, windowTokens: 1000, model: 'gpt-6-sol' });
 });
 
+it('retains observed usage when a turn fails after model work', async () => {
+  const runner = new AppServerRunner(onMessage => ({
+    setRequestHandler() {}, notify() {}, respond() {}, kill() {},
+    async request(method: string) {
+      if (method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (method === 'turn/start') queueMicrotask(() => {
+        onMessage({ method: 'thread/tokenUsage/updated', params: { tokenUsage: {
+          total: { totalTokens: 120 }, last: { totalTokens: 120, inputTokens: 100, outputTokens: 20 },
+          modelContextWindow: 1000,
+        } } });
+        onMessage({ method: 'turn/completed', params: { turn: { status: 'failed', error: { message: 'limit' } } } });
+      });
+      return {};
+    },
+  }));
+  await expect(runner.run('work', process.cwd(), { model: 'gpt-6-sol' }, undefined, () => {}))
+    .rejects.toMatchObject({ message: 'limit', usage: { input_tokens: 100, output_tokens: 20 } });
+});
+
 it('gives Codex independent Vex MCP access without key in command arguments', () => {
   expect(codexOptions('/installed/vex/dist/index.js')).toEqual({ config: { mcp_servers: { vex: { command: process.execPath, args: ['/installed/vex/dist/index.js', 'mcp', 'serve'], env_vars: ['OPENROUTER_API_KEY'] } } } });
 });
