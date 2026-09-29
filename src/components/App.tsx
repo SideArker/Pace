@@ -19,7 +19,7 @@ import { Header, Transcript, type Line } from "./Transcript.js";
 import { UsageBar } from "./UsageBar.js";
 import { CommandMenu, ConversationPicker, ConvoMenu, ModelMenu, ResumeMenu, type ConversationChoice } from "./Menus.js";
 import { resolve } from "node:path";
-import { createShellRunner, formatCommandActivity } from "./shell-runner.js";
+import { createShellRunner, formatCommandActivity, oneOffShellCommand } from "./shell-runner.js";
 import { createTurnRunner, type PendingApproval, type TurnJob } from "./turn-runner.js";
 import { costForUsage } from "../core/routing/pricing.js";
 const commands = [
@@ -670,9 +670,10 @@ const shell = createShellRunner({
       );
       return;
     }
-    if (text.startsWith("! ")) {
+    const shellCommand = oneOffShellCommand(text);
+    if (shellCommand !== undefined) {
       setDraft("");
-      shell(text.slice(2));
+      shell(shellCommand);
       return;
     }
     if (shellMode) {

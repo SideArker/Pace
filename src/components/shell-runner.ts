@@ -14,6 +14,10 @@ type ShellRunnerOptions = {
   add: (role: Line["role"], text: string) => void;
 };
 
+export function oneOffShellCommand(text: string): string | undefined {
+  return text.startsWith("!") && text !== "!" ? text.slice(1).trimStart() : undefined;
+}
+
 export function manualApprovalCommand(command: string): boolean {
   return /\bgit\b[^;&|()\n]*\s(?:push|reset)\b/i.test(command);
 }
