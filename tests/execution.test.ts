@@ -320,6 +320,29 @@ it('shows file path and diff as soon as app-server updates the patch', async () 
   expect(edits[1]).toMatchObject({ title: `Edited ${join('src', 'example.ts')}`, completed: true });
 });
 
+it('reads current context from the raw App Server usage event', async () => {
+  const runner = new AppServerRunner(onMessage => ({
+    setRequestHandler() {}, notify() {}, respond() {}, kill() {},
+    async request(method: string) {
+      if (method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (method === 'turn/start') queueMicrotask(() => {
+        onMessage({ method: 'thread/tokenUsage/updated', params: {
+          threadId: 'thread-1', tokenUsage: {
+            total: { totalTokens: 600_000 },
+            last: { totalTokens: 130_000, inputTokens: 120_000, cachedInputTokens: 50_000, outputTokens: 10_000 },
+            modelContextWindow: 250_000,
+          },
+        } });
+        onMessage({ method: 'turn/completed', params: { turn: { status: 'completed' } } });
+      });
+      return {};
+    },
+  }));
+  const execution = await runner.run('work', process.cwd(), { model: 'gpt-6-sol', effort: 'high' }, undefined, () => {});
+  expect(execution.context).toEqual({ tokens: 130_000, windowTokens: 250_000, model: 'gpt-6-sol' });
+  expect(execution.usage).toMatchObject({ input_tokens: 120_000, output_tokens: 10_000 });
+});
+
 it('gives Codex independent Vex MCP access without key in command arguments', () => {
   expect(codexOptions('/installed/vex/dist/index.js')).toEqual({ config: { mcp_servers: { vex: { command: process.execPath, args: ['/installed/vex/dist/index.js', 'mcp', 'serve'], env_vars: ['OPENROUTER_API_KEY'] } } } });
 });

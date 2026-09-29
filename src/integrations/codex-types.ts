@@ -1,5 +1,6 @@
 import type { Usage } from "@openai/codex-sdk";
 import type { Route } from "../shared/types.js";
+import type { ContextMeasurement } from "../shared/types.js";
 
 export type ApprovalDecision = "accept" | "decline";
 export type Progress =
@@ -12,6 +13,7 @@ export type Execution = {
   result: string;
   completed: boolean;
   usage?: Usage;
+  context?: ContextMeasurement;
 };
 export interface CodexRunner {
   run(

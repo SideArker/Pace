@@ -6,6 +6,7 @@ import type { ApprovalDecision, CodexRunner, Execution, Progress } from "./codex
 import { AppServer, isRecord, type AppServerConnection, type JsonRecord } from "./app-server-process.js";
 import { appServerThreadParams, appServerTurnParams, appUsage } from "./app-server-protocol.js";
 import { appItemProgress, fileChangeProgress } from "./codex-events.js";
+import { contextMeasurement } from "../core/context.js";
 
 type RpcMessage = { id?: number | string; method?: string; params?: unknown; result?: unknown; error?: { message?: string } };
 export class AppServerRunner implements CodexRunner {
@@ -32,6 +33,7 @@ export class AppServerRunner implements CodexRunner {
     signal?.throwIfAborted();
     let result = "";
     let usage: Usage | undefined;
+    let context: Execution["context"];
     let thread: JsonRecord | undefined;
     let failure: string | undefined;
     let completed = false;
@@ -51,7 +53,10 @@ export class AppServerRunner implements CodexRunner {
         turnResolve();
         return;
       }
-      if (message.method === "thread/tokenUsage/updated") usage = appUsage(params.tokenUsage) ?? usage;
+      if (message.method === "thread/tokenUsage/updated") {
+        usage = appUsage(params.tokenUsage) ?? usage;
+        context = contextMeasurement(params.tokenUsage, route.model);
+      }
       if (message.method === "error") {
         failure = isRecord(params.error) && typeof params.error.message === "string" ? params.error.message : "Codex app-server error";
         turnResolve();
@@ -143,7 +148,7 @@ export class AppServerRunner implements CodexRunner {
       } finally { signal?.removeEventListener("abort", abortTurn); }
       if (failure) throw new Error(failure);
       if (!completed) throw new Error("Codex stream ended without turn.completed");
-      return { threadId: id, result: result || "Codex completed without a final message.", completed, usage };
+      return { threadId: id, result: result || "Codex completed without a final message.", completed, usage, context };
     } finally { server.kill(); }
   }
 }
