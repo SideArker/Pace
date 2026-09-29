@@ -44,7 +44,13 @@ export function checkpointHandoff(note: CheckpointNote, recent: { user: string; 
 export function checkpointDue(session: Session): boolean {
   if (!session.threadId || session.turns.length < 16) return false;
   const checkpoint = session.checkpoint;
-  if (!checkpoint || checkpoint.threadId !== session.threadId) return true;
+  if (!checkpoint || checkpoint.threadId !== session.threadId) {
+    const lastAttempt = [...(session.checkpointGenerations ?? [])].reverse()
+      .find(item => item.threadId === session.threadId);
+    if (!lastAttempt) return true;
+    const source = session.turns.findIndex(turn => turn.at === lastAttempt.sourceTurnAt);
+    return source < 0 || session.turns.length - source - 1 >= 4;
+  }
   const source = session.turns.findIndex(turn => turn.at === checkpoint.sourceTurnAt);
   return source < 0 || session.turns.length - source - 1 >= 4;
 }

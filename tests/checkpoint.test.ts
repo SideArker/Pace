@@ -64,3 +64,14 @@ it("creates a checkpoint in the current thread and records both validation attem
   expect(session.contextByThread?.["thread-1"]?.tokens).toBe(120);
   expect(checkpointDue(session)).toBe(false);
 });
+
+it("waits four turns after a failed generation before retrying", () => {
+  const session = newSession(process.cwd(), "manual");
+  session.threadId = "thread-1";
+  session.turns = Array.from({ length: 16 }, (_, index) => ({ prompt: `p${index}`, result: `r${index}`, at: `turn-${index}` }));
+  session.checkpointGenerations = [{ at: "now", sourceTurnAt: "turn-15", threadId: "thread-1",
+    route: {}, durationMs: 100, outcome: "invalid" }];
+  expect(checkpointDue(session)).toBe(false);
+  session.turns.push(...Array.from({ length: 4 }, (_, index) => ({ prompt: `next-${index}`, result: "r", at: `next-${index}` })));
+  expect(checkpointDue(session)).toBe(true);
+});
