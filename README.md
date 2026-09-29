@@ -40,6 +40,7 @@ For development, use `npm run dev` instead of linking. Interactive `pace` opens 
 | `/auto` | Enable Vex routing for the next turn, including in a resumed conversation |
 | `/new` | Alias for `/clear` |
 | `/resume` | Open saved conversations, including turns still running in this Pace process |
+| `/compact` | Compact the selected idle Codex thread while keeping its thread ID |
 | `/usage` | Refresh Codex account usage percentages |
 | `/artifacts` | List Markdown artifacts in this project's `.pace/artifacts` directory |
 | `/trust add <folder>` | Allow Codex to edit an additional existing folder |
@@ -49,7 +50,7 @@ For development, use `npm run dev` instead of linking. Interactive `pace` opens 
 | `/skills default` / `/skills off` | Use the default skill folder or turn skill discovery off |
 | `/<skill> [request]` | Invoke an enabled skill, such as `/caveman` or `/caveman explain this` |
 | `/route` | Show the last recorded model, effort, and route explanation |
-| `/stats` | Show observed time, tokens, and failures for the current conversation's last 20 turns |
+| `/stats` | Show observed time, tokens, and failures for the current conversation's last 20 turns, plus compactions |
 | `/clear` | Clear the terminal, show the entry screen, and start a new conversation |
 | `/exit` | Quit |
 | `! <command>` | Run one Bash command in the project directory |
@@ -60,6 +61,7 @@ Type `/` to see a command menu. Use Tab to complete and ↑/↓ to choose a matc
 After opening a second conversation, a compact picker stays below the input. Press ↓ from the input to focus it, use ↑/↓ to select a conversation, and press Enter to switch. Esc returns to the input. Switching keeps other conversation turns running.
 
 Pace shows System notices for Vex's selected route, split stages, and active skill status as the turn starts. These notices are saved with the conversation and appear again after `/resume`.
+The header's Context gauge uses the last measured Codex model request and its context-window limit. `Context ?` means Pace has no valid measurement for the selected thread and model. It is separate from `/usage`, which shows account limits. `/compact` works only when that conversation has an idle Codex thread; Esc or Ctrl+C cancels it. Pace records compaction usage, estimated API-equivalent cost, duration, and outcome separately from user turns in `/stats`. The gauge becomes unknown after compaction until another model request reports context usage.
 Markdown links in the interactive transcript are clickable in terminals that support OSC 8 hyperlinks; their destinations remain visible in other terminals.
 
 ## Non-interactive runs
