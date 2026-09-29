@@ -50,7 +50,7 @@ For development, use `npm run dev` instead of linking. Interactive `pace` opens 
 | `/skills default` / `/skills off` | Use the default skill folder or turn skill discovery off |
 | `/<skill> [request]` | Invoke an enabled skill, such as `/caveman` or `/caveman explain this` |
 | `/route` | Show the last recorded model, effort, and route explanation |
-| `/stats` | Show observed time, tokens, and failures for the current conversation's last 20 turns, plus compactions |
+| `/stats` | Show observed time, tokens, and failures for the last 20 turns, plus compactions and checkpoints |
 | `/clear` | Clear the terminal, show the entry screen, and start a new conversation |
 | `/exit` | Quit |
 | `! <command>` | Run one Bash command in the project directory |
@@ -62,6 +62,8 @@ After opening a second conversation, a compact picker stays below the input. Pre
 
 Pace shows System notices for Vex's selected route, split stages, and active skill status as the turn starts. These notices are saved with the conversation and appear again after `/resume`.
 The header's Context gauge uses the last measured Codex model request and its context-window limit. `Context ?` means Pace has no valid measurement for the selected thread and model. It is separate from `/usage`, which shows account limits. `/compact` works only when that conversation has an idle Codex thread; Esc or Ctrl+C cancels it. Pace records compaction usage, estimated API-equivalent cost, duration, and outcome separately from user turns in `/stats`. The gauge becomes unknown after compaction until another model request reports context usage.
+
+After 16 retained turns, Pace asks the current Codex thread for a bounded, structured checkpoint while its earlier tool results are still available. It validates the note, saves it with its source turn, and records each generation attempt separately in `/stats`. A failed checkpoint leaves the existing thread available. Pace does not use a checkpoint to start a fresh thread automatically; that policy awaits the coding quality comparison.
 Markdown links in the interactive transcript are clickable in terminals that support OSC 8 hyperlinks; their destinations remain visible in other terminals.
 
 ## Non-interactive runs

@@ -849,7 +849,8 @@ const shell = createShellRunner({
       if (command === "/stats") {
         const turns = session.turns;
         const compactions = session.compactions ?? [];
-        if (!turns.length && !compactions.length) { add("info", "No recorded turns or compactions yet."); return; }
+        const generations = session.checkpointGenerations ?? [];
+        if (!turns.length && !compactions.length && !generations.length) { add("info", "No recorded turns or context actions yet."); return; }
         const total = (key: "input_tokens" | "cached_input_tokens" | "cache_write_input_tokens" | "output_tokens") => turns.reduce((sum, turn) => sum + (turn.usage?.[key] ?? 0), 0);
         const elapsed = turns.reduce((sum, turn) => sum + (turn.durationMs ?? 0), 0);
         const reported = turns.filter(turn => turn.usage).length;
@@ -864,6 +865,14 @@ const shell = createShellRunner({
           const estimated = compactions.reduce((sum, item) => sum + (item.estimatedCostUsd ?? 0), 0);
           const pricedCount = compactions.filter(item => item.estimatedCostUsd !== undefined).length;
           add("info", `Compactions: ${compactions.length} (${compactions.filter(item => item.outcome === "completed").length} completed, ${compactions.filter(item => item.outcome === "failed").length} failed, ${compactions.filter(item => item.outcome === "cancelled").length} cancelled) · ${input} input / ${output} output tokens (${compactions.filter(item => item.usage).length} reported usage) · ${(duration / 1000).toFixed(1)}s · ${pricedCount ? `~$${estimated.toFixed(4)} estimated API equivalent (${pricedCount} priced)` : "API-equivalent cost unavailable"}`);
+        }
+        if (generations.length) {
+          const input = generations.reduce((sum, item) => sum + (item.usage?.input_tokens ?? 0), 0);
+          const output = generations.reduce((sum, item) => sum + (item.usage?.output_tokens ?? 0), 0);
+          const duration = generations.reduce((sum, item) => sum + item.durationMs, 0);
+          const estimated = generations.reduce((sum, item) => sum + (item.estimatedCostUsd ?? 0), 0);
+          const pricedCount = generations.filter(item => item.estimatedCostUsd !== undefined).length;
+          add("info", `Checkpoints: ${generations.length} generation attempts (${generations.filter(item => item.outcome === "valid").length} valid) · ${input} input / ${output} output tokens (${generations.filter(item => item.usage).length} reported usage) · ${(duration / 1000).toFixed(1)}s · ${pricedCount ? `~$${estimated.toFixed(4)} estimated API equivalent (${pricedCount} priced)` : "API-equivalent cost unavailable"}`);
         }
         return;
       }

@@ -4,6 +4,7 @@ import type { CodexRunner, Progress } from "../integrations/codex.js";
 import { Orchestrator, VexUnavailableError } from "../core/orchestrator.js";
 import { PaceStore } from "../core/sessions.js";
 import { PromptQueue } from "../core/prompt-queue.js";
+import { checkpointDue, createCheckpointIfDue } from "../core/checkpoint.js";
 import { formatTurnFooter, modelName } from "./turn-format.js";
 import type { Line } from "./Transcript.js";
 
@@ -115,6 +116,21 @@ export function createTurnRunner({
       );
       for (const artifact of outcome.artifacts) addFor(sessionId, "artifact", artifact);
       addFor(sessionId, "divider", "");
+      if (checkpointDue(turnSession)) {
+        try {
+          const checkpoint = await createCheckpointIfDue(turnSession, runner, progress => {
+            if (progress.kind === "status") setStatusFor(sessionId, progress.text);
+            if (progress.kind === "approval") showApproval(progress, sessionId, controller);
+            if (progress.kind === "error") addFor(sessionId, "error", progress.text);
+          }, controller.signal);
+          await store.save(turnSession, () => activeSessionId.current === sessionId);
+          if (activeSessionId.current === sessionId) setSession({ ...turnSession });
+          if (checkpoint) addFor(sessionId, "meta", "Context checkpoint saved for a future handoff.");
+          else addFor(sessionId, "meta", "Context checkpoint could not be validated; the existing thread remains available.");
+        } catch (error) {
+          addFor(sessionId, "error", `Could not save context checkpoint: ${String(error)}`);
+        }
+      }
       setStatusFor(sessionId, "Done");
       refreshUsage();
     } catch (error) {
