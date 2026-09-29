@@ -2,6 +2,7 @@ import React from "react";
 import { Box, Text } from "ink";
 import { EFFORTS } from "../shared/config.js";
 import type { Config } from "../shared/types.js";
+import { menuWindow } from "./ConversationMenus.js";
 
 export function ModelMenu({
   mode,
@@ -16,12 +17,15 @@ export function ModelMenu({
   selectedIndex: number;
   config?: Config;
 }) {
+  const items = mode === "models" ? models : EFFORTS;
+  const { start, end } = menuWindow(items.length, selectedIndex);
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="#34D399" paddingX={1} marginBottom={1}>
       <Text color="#59E6A7" bold>
         ◈ {mode === "models" ? "Configured Models" : `${selectedModel} Reasoning Levels`}
       </Text>
-      {(mode === "models" ? models : EFFORTS).map((item, index) => {
+      {items.slice(start, end).map((item, offset) => {
+        const index = start + offset;
         const configured = config?.models.find(
           (model) => model.model === (mode === "models" ? item : selectedModel),
         );
@@ -47,6 +51,7 @@ export function ModelMenu({
           </Box>
         );
       })}
+      {items.length > 5 ? <Text color="#64748B">{start + 1}–{end} of {items.length}</Text> : null}
       <Box marginTop={1}>
         <Text color="#64748B">
           {mode === "models"

@@ -1,6 +1,7 @@
 import React from "react";
 import { Box, Text } from "ink";
 import type { Session } from "../shared/types.js";
+import { menuWindow } from "./ConversationMenus.js";
 
 export function ResumeMenu({
   choices,
@@ -17,6 +18,10 @@ export function ResumeMenu({
 }) {
   const processChoices = choices.filter(choice => processIds.includes(choice.id));
   const globalChoices = choices.filter(choice => !processIds.includes(choice.id));
+  const orderedChoices = [...processChoices, ...globalChoices];
+  const selectedId = choices[selectedIndex]?.id;
+  const { start, end } = menuWindow(orderedChoices.length, Math.max(0, orderedChoices.findIndex(choice => choice.id === selectedId)));
+  const visibleChoices = orderedChoices.slice(start, end);
   const renderChoice = (choice: Session) => {
     const index = choices.indexOf(choice);
     const selected = index === selectedIndex;
@@ -49,8 +54,9 @@ export function ResumeMenu({
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="#34D399" paddingX={1} marginBottom={1}>
       <Text color="#59E6A7" bold>◈ Resume Conversation</Text>
-      {processChoices.length ? <><Text color="#38BDF8" bold>This Pace Process</Text>{renderGroups(processChoices)}</> : null}
-      {globalChoices.length ? <><Text color="#38BDF8" bold>Saved Projects</Text>{renderGroups(globalChoices)}</> : null}
+      {visibleChoices.some(choice => processIds.includes(choice.id)) ? <><Text color="#38BDF8" bold>This Pace Process</Text>{renderGroups(visibleChoices.filter(choice => processIds.includes(choice.id)))}</> : null}
+      {visibleChoices.some(choice => !processIds.includes(choice.id)) ? <><Text color="#38BDF8" bold>Saved Projects</Text>{renderGroups(visibleChoices.filter(choice => !processIds.includes(choice.id)))}</> : null}
+      {choices.length > 5 ? <Text color="#64748B">{start + 1}–{end} of {choices.length}</Text> : null}
       <Box marginTop={1}><Text color="#64748B">↑/↓ or Tab select · Enter resume available project · Esc close</Text></Box>
     </Box>
   );

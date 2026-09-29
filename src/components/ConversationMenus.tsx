@@ -9,6 +9,11 @@ export type ConversationChoice = {
   state: "ready" | "running" | "approval" | "done";
 };
 
+export function menuWindow(length: number, selectedIndex: number, size = 5): { start: number; end: number } {
+  const start = Math.max(0, Math.min(selectedIndex - Math.floor(size / 2), length - size));
+  return { start, end: Math.min(start + size, length) };
+}
+
 export function ConversationPicker({ choices, activeId, selectedIndex, focused }: {
   choices: ConversationChoice[];
   activeId?: string;
@@ -16,7 +21,7 @@ export function ConversationPicker({ choices, activeId, selectedIndex, focused }
   focused: boolean;
 }) {
   const anchor = focused ? selectedIndex : Math.max(0, choices.findIndex(choice => choice.id === activeId));
-  const start = Math.max(0, Math.min(anchor - 2, choices.length - 5));
+  const { start } = menuWindow(choices.length, anchor);
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={focused ? "#38BDF8" : "#475569"} paddingX={1} marginTop={1}>
       <Text color="#94A3B8" bold>Conversations <Text dimColor>· ↓ from input to select · Enter switch · Esc back</Text></Text>
@@ -45,11 +50,12 @@ export function CommandMenu({
   matches: string[];
   selectedIndex: number;
 }) {
+  const { start, end } = menuWindow(matches.length, selectedIndex);
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="#475569" paddingX={1} marginTop={1}>
       <Text color="#38BDF8" bold>◈ Commands</Text>
-      {matches.map((match, index) => {
-        const selected = index === selectedIndex;
+      {matches.slice(start, end).map((match, offset) => {
+        const selected = start + offset === selectedIndex;
         return (
           <Box key={match} gap={1}>
             <Text color={selected ? "#59E6A7" : "gray"} bold={selected}>
@@ -61,6 +67,7 @@ export function CommandMenu({
           </Box>
         );
       })}
+      {matches.length > 5 ? <Text color="#64748B">{start + 1}–{end} of {matches.length}</Text> : null}
       <Box marginTop={0}>
         <Text color="#64748B">↑/↓ select · Tab complete</Text>
       </Box>
@@ -75,12 +82,14 @@ export function ConvoMenu({
   turns: TurnSummary[];
   selectedIndex: number;
 }) {
+  const { start, end } = menuWindow(turns.length, selectedIndex);
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="#38BDF8" paddingX={1} marginBottom={1}>
       <Text color="#38BDF8" bold>
         ◈ Conversation Turns ({turns.length} message{turns.length === 1 ? "" : "s"})
       </Text>
-      {turns.map((turn, index) => {
+      {turns.slice(start, end).map((turn, offset) => {
+        const index = start + offset;
         const selected = index === selectedIndex;
         const cleanPrompt = turn.prompt.replace(/\s+/g, " ").trim();
         const shortPrompt = cleanPrompt.length > 40 ? `${cleanPrompt.slice(0, 37)}…` : cleanPrompt;
@@ -101,6 +110,7 @@ export function ConvoMenu({
           </Box>
         );
       })}
+      {turns.length > 5 ? <Text color="#64748B">{start + 1}–{end} of {turns.length}</Text> : null}
       <Box marginTop={1}>
         <Text color="#64748B">↑/↓ select · Enter edit from here · Backspace/d delete · Esc close</Text>
       </Box>
