@@ -8,6 +8,11 @@ export type ModelOption = {
   enabled?: boolean;
 };
 export type Route = { model?: string; effort?: Effort };
+export type ContextMeasurement = {
+  tokens: number;
+  windowTokens: number;
+  model?: string;
+};
 export type Config = {
   models: ModelOption[];
   defaultRoute: Route;
@@ -37,6 +42,7 @@ export type Session = {
   title?: string;
   projectPath: string;
   threadId?: string;
+  contextByThread?: Record<string, ContextMeasurement>;
   createdAt: string;
   updatedAt: string;
   routingMode: "auto" | "manual";

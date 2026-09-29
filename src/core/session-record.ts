@@ -22,6 +22,11 @@ function isRouting(value: unknown): boolean {
     Object.values(value.probabilities).every(probability => nonnegative(probability) && (probability as number) <= 1) &&
     Number.isInteger(value.attempts) && (value.attempts as number) >= 0;
 }
+function isContextMeasurement(value: unknown): boolean {
+  return isRecord(value) && nonnegative(value.tokens) &&
+    nonnegative(value.windowTokens) && (value.windowTokens as number) > 0 &&
+    (value.model === undefined || typeof value.model === "string");
+}
 
 export function parseSession(value: unknown, project: string): Session | undefined {
   if (
@@ -33,6 +38,8 @@ export function parseSession(value: unknown, project: string): Session | undefin
     typeof value.createdAt !== "string" ||
     typeof value.updatedAt !== "string" ||
     (value.threadId !== undefined && typeof value.threadId !== "string") ||
+    (value.contextByThread !== undefined && (!isRecord(value.contextByThread) ||
+      !Object.entries(value.contextByThread).every(([id, reading]) => !!id && isContextMeasurement(reading)))) ||
     !Array.isArray(value.turns) ||
     !value.turns.every(
       (turn: unknown) =>
