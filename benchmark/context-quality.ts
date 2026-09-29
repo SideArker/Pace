@@ -21,7 +21,7 @@ type Case = {
   check: string;
   rubric: string;
 };
-type Stage = { kind: string; prompt: string; answer?: string; usage?: Usage; estimatedCostUsd?: number; durationMs: number; error?: string };
+type Stage = { kind: string; prompt: string; answer?: string; usage?: Usage; estimatedCostUsd?: number; durationMs: number; error?: string; threadId?: string; approvalsDeclined?: number; lastProgress?: string };
 type Run = {
   id: string; repeat: number; arm: Arm; route: Route; fixture: string;
   stages: Stage[]; check?: { passed: boolean; output: string };
@@ -39,13 +39,16 @@ function options() {
   }
   const repeat = Number(values.get("--repeat") ?? "1");
   if (!Number.isInteger(repeat) || repeat < 1 || repeat > 10) throw new Error("--repeat must be 1 to 10");
+  const turnTimeoutMinutes = Number(values.get("--turn-timeout-minutes") ?? "5");
+  if (!Number.isInteger(turnTimeoutMinutes) || turnTimeoutMinutes < 1 || turnTimeoutMinutes > 20)
+    throw new Error("--turn-timeout-minutes must be 1 to 20");
   const route: Route = { model: values.get("--model") ?? "gpt-6-sol", effort: (values.get("--effort") ?? "medium") as Route["effort"] };
   const arm = values.get("--arm");
   if (arm && !arms.includes(arm as Arm)) throw new Error(`Unknown arm ${arm}`);
   return {
     suite: resolve(values.get("--suite") ?? "benchmark/suites/context-quality.json"),
     out: resolve(values.get("--out") ?? `benchmark/results/context-quality-${new Date().toISOString().replace(/[:.]/g, "-")}`),
-    selected: values.get("--case"), repeat, route, arm: arm as Arm | undefined,
+    selected: values.get("--case"), repeat, route, arm: arm as Arm | undefined, turnTimeoutMinutes,
   };
 }
 
@@ -88,7 +91,7 @@ async function removeFixture(root: string) {
   }
 }
 
-async function runArm(task: Case, repetition: number, arm: Arm, route: Route, out: string): Promise<Run> {
+async function runArm(task: Case, repetition: number, arm: Arm, route: Route, out: string, turnTimeoutMinutes: number): Promise<Run> {
   const root = await fixture(task);
   const run: Run = { id: task.id, repeat: repetition, arm, route, fixture: root, stages: [], totalDurationMs: 0, rubric: task.rubric };
   const runDir = join(out, task.id, String(repetition), arm);
@@ -98,14 +101,18 @@ async function runArm(task: Case, repetition: number, arm: Arm, route: Route, ou
   const history: { user: string; assistant: string }[] = [];
   const runTurn = async (kind: string, prompt: string, resume: boolean) => {
     const started = performance.now();
-    const stage: Stage = { kind, prompt, durationMs: 0 };
+    const stage: Stage = { kind, prompt, durationMs: 0, approvalsDeclined: 0 };
     run.stages.push(stage);
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 180_000);
+    const timer = setTimeout(() => controller.abort(), turnTimeoutMinutes * 60_000);
     try {
-      const result = await runner.run(prompt, root, route, resume ? threadId : undefined, () => {}, controller.signal, "main");
+      const result = await runner.run(prompt, root, route, resume ? threadId : undefined, progress => {
+        stage.lastProgress = progress.kind === "activity" ? progress.title : progress.kind === "status" ? progress.text : progress.kind;
+        if (progress.kind === "approval") { stage.approvalsDeclined = (stage.approvalsDeclined ?? 0) + 1; progress.respond("decline"); }
+      }, controller.signal, "main");
       if (!result.threadId || !result.completed) throw new Error("Codex did not complete a thread turn");
       threadId = result.threadId;
+      stage.threadId = result.threadId;
       stage.answer = result.result;
       stage.usage = result.usage;
       stage.estimatedCostUsd = costForUsage(route, result.usage);
@@ -116,6 +123,7 @@ async function runArm(task: Case, repetition: number, arm: Arm, route: Route, ou
     } finally {
       clearTimeout(timer);
       stage.durationMs = Math.round(performance.now() - started);
+      console.log(`  ${arm} ${kind}: ${stage.durationMs} ms${stage.error ? ` (${stage.error})` : ""}`);
     }
   };
   try {
@@ -175,13 +183,13 @@ async function main() {
   if (!cases.length) throw new Error("No matching case");
   await mkdir(opts.out, { recursive: false });
   await writeFile(join(opts.out, "manifest.json"), JSON.stringify({ suite: opts.suite, route: opts.route,
-    repeat: opts.repeat, priceSnapshot: PRICE_SNAPSHOT, runId: randomUUID() }, null, 2) + "\n");
+    repeat: opts.repeat, turnTimeoutMinutes: opts.turnTimeoutMinutes, priceSnapshot: PRICE_SNAPSHOT, runId: randomUUID() }, null, 2) + "\n");
   const runs: Run[] = [];
   for (const task of cases) for (let repetition = 1; repetition <= opts.repeat; repetition++) {
     const order = (repetition % 2 ? arms : [...arms].reverse()).filter(arm => !opts.arm || arm === opts.arm);
     for (const arm of order) {
       console.log(`${task.id} ${repetition}/${opts.repeat} ${arm}`);
-      const result = await runArm(task, repetition, arm, opts.route, opts.out);
+      const result = await runArm(task, repetition, arm, opts.route, opts.out, opts.turnTimeoutMinutes);
       runs.push(result);
       await writeFile(join(opts.out, "summary.json"), JSON.stringify({
         runs: runs.map(run => ({ id: run.id, repeat: run.repeat, arm: run.arm, checkPassed: run.check?.passed ?? false,
