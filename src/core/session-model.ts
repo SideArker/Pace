@@ -31,15 +31,17 @@ export function rewindConversation(session: Session, index: number): TurnSummary
   if (!turn) return undefined;
   session.turns = session.turns.slice(0, index);
   session.threadId = undefined;
+  session.checkpoint = undefined;
   return turn;
 }
 export function deleteConversationTurn(session: Session, index: number): void {
   if (index < 0 || index >= session.turns.length) return;
   session.turns.splice(index, 1);
   session.threadId = undefined;
+  session.checkpoint = undefined;
 }
 export function undoConversationTurn(session: Session): TurnSummary | undefined {
   const turn = session.turns.pop();
-  if (turn) session.threadId = undefined;
+  if (turn) { session.threadId = undefined; session.checkpoint = undefined; }
   return turn;
 }

@@ -1,6 +1,7 @@
 import { EFFORTS, isRecord } from "../shared/config.js";
 import type { Session } from "../shared/types.js";
 import type { Usage } from "@openai/codex-sdk";
+import { parseCheckpoint } from "./checkpoint.js";
 
 function isUsage(value: unknown): value is Usage {
   if (!isRecord(value)) return false;
@@ -38,6 +39,15 @@ function isCompaction(value: unknown): boolean {
     (value.estimatedCostUsd === undefined || nonnegative(value.estimatedCostUsd)) &&
     (value.error === undefined || typeof value.error === "string");
 }
+function isCheckpoint(value: unknown): boolean {
+  if (!isRecord(value) || typeof value.createdAt !== "string" || typeof value.sourceTurnAt !== "string" ||
+    typeof value.threadId !== "string" || !isRecord(value.route) ||
+    (value.route.model !== undefined && typeof value.route.model !== "string") ||
+    (value.route.effort !== undefined && !EFFORTS.includes(value.route.effort as (typeof EFFORTS)[number])) ||
+    !isRecord(value.note) || !nonnegative(value.durationMs) || (value.usage !== undefined && !isUsage(value.usage)) ||
+    (value.estimatedCostUsd !== undefined && !nonnegative(value.estimatedCostUsd))) return false;
+  try { parseCheckpoint(JSON.stringify(value.note)); return true; } catch { return false; }
+}
 
 export function parseSession(value: unknown, project: string): Session | undefined {
   if (
@@ -52,6 +62,7 @@ export function parseSession(value: unknown, project: string): Session | undefin
     (value.contextByThread !== undefined && (!isRecord(value.contextByThread) ||
       !Object.entries(value.contextByThread).every(([id, reading]) => !!id && isContextMeasurement(reading)))) ||
     (value.compactions !== undefined && (!Array.isArray(value.compactions) || !value.compactions.every(isCompaction))) ||
+    (value.checkpoint !== undefined && !isCheckpoint(value.checkpoint)) ||
     !Array.isArray(value.turns) ||
     !value.turns.every(
       (turn: unknown) =>

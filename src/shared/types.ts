@@ -47,6 +47,27 @@ export type CompactionRecord = {
   estimatedCostUsd?: number;
   error?: string;
 };
+export type CheckpointNote = {
+  complete: true;
+  goal: string;
+  constraints: string[];
+  findings: { detail: string; file?: string }[];
+  changes: { detail: string; file?: string }[];
+  checks: { command: string; outcome: string }[];
+  unfinished: string[];
+  questions: string[];
+  risks: string[];
+};
+export type CheckpointRecord = {
+  createdAt: string;
+  sourceTurnAt: string;
+  threadId: string;
+  route: Route;
+  note: CheckpointNote;
+  durationMs: number;
+  usage?: Usage;
+  estimatedCostUsd?: number;
+};
 export type Session = {
   id: string;
   title?: string;
@@ -61,5 +82,6 @@ export type Session = {
   skillOptions?: Record<string, string>;
   turns: TurnSummary[];
   compactions?: CompactionRecord[];
+  checkpoint?: CheckpointRecord;
 };
 export type Notice = (message: string) => void;

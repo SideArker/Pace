@@ -1,14 +1,5 @@
-export type CheckpointNote = {
-  complete: true;
-  goal: string;
-  constraints: string[];
-  findings: { detail: string; file?: string }[];
-  changes: { detail: string; file?: string }[];
-  checks: { command: string; outcome: string }[];
-  unfinished: string[];
-  questions: string[];
-  risks: string[];
-};
+import type { CheckpointNote, Session } from "../shared/types.js";
+export type { CheckpointNote } from "../shared/types.js";
 
 export const CHECKPOINT_MAX_CHARS = 10_000;
 
@@ -45,4 +36,12 @@ export function parseCheckpoint(text: string): CheckpointNote {
 
 export function checkpointHandoff(note: CheckpointNote, recent: { user: string; assistant: string }[], request: string): string {
   return `Continue this coding task from the validated checkpoint. Verify any important repository state before editing.\n\nCheckpoint:\n${JSON.stringify(note)}\n\nRecent exchanges:\n${JSON.stringify(recent.slice(-3))}\n\nCurrent user request:\n${request}`;
+}
+
+export function checkpointDue(session: Session): boolean {
+  if (!session.threadId || session.turns.length < 16) return false;
+  const checkpoint = session.checkpoint;
+  if (!checkpoint || checkpoint.threadId !== session.threadId) return true;
+  const source = session.turns.findIndex(turn => turn.at === checkpoint.sourceTurnAt);
+  return source < 0 || session.turns.length - source - 1 >= 4;
 }
