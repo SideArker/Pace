@@ -85,8 +85,10 @@ This runner uses the fixed model and effort for four arms: resume, fresh replay,
 
 The output records every setup, checkpoint, compaction, and follow-up step, including duration, usage, estimated cost, failures, check output, and diffs. `summary.json` includes every attempted arm. Inspect each `run.json` and `diff.patch` against its rubric, then report task pass rates and critical lost-context errors with cost across all attempts. A passing check alone does not establish quality. Keep automatic context policies disabled until a separate holdout shows meaningful net savings without a material quality regression.
 
+The first coding comparison and its limitations are in [the 2026-09-29 context quality report](reports/context-quality-2026-09-29.md).
+
 ## Reading cost and safety limits
 
-Codex dollar values are **estimated Standard API equivalents**, since actual account billing is unavailable to the SDK. Stage cost uses its own model's ordinary, cached, cache-write, and output rates; reasoning output is already in output. Workflow cost sums all recorded stages. Vex cost is measured separately and never enters routing optimization. Compare cost only among quality-passing runs; report latency and raw tokens separately.
+Codex dollar values are **estimated Standard API equivalents**, since actual account billing is unavailable to the SDK. Stage cost uses its own model's ordinary, cached, cache-write, and output rates; reasoning output is already in output. Workflow cost sums all recorded stages. Vex cost is measured separately and never enters routing optimization. Compare quality-passing pairs for policy decisions, and report all-attempt cost, failures, latency, and raw tokens separately; mark cost unknown when usage was not reported.
 
 Runs are sequential and consume Codex account allowance. They use the existing Codex login. The baseline disables MCP servers; routed arms may call Vex, and those agent-initiated calls are counted separately from Pace routing calls. A repository under test can still invoke installed programs through shell commands. Review raw event logs before sharing them because they may contain source text or command output.
