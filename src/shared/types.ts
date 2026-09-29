@@ -37,6 +37,16 @@ export type TurnSummary = {
   failed?: boolean;
   cancelled?: boolean;
 };
+export type CompactionRecord = {
+  at: string;
+  threadId: string;
+  route: Route;
+  durationMs: number;
+  outcome: "completed" | "failed" | "cancelled";
+  usage?: Usage;
+  estimatedCostUsd?: number;
+  error?: string;
+};
 export type Session = {
   id: string;
   title?: string;
@@ -50,5 +60,6 @@ export type Session = {
   activeSkills?: string[];
   skillOptions?: Record<string, string>;
   turns: TurnSummary[];
+  compactions?: CompactionRecord[];
 };
 export type Notice = (message: string) => void;

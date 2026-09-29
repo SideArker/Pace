@@ -1,4 +1,5 @@
 import type { Route } from "../shared/types.js";
+import { realpath } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import type { Usage } from "@openai/codex-sdk";
 import { artifactPrompt } from "../core/system/artifacts.js";
@@ -9,6 +10,24 @@ import { appItemProgress, fileChangeProgress } from "./codex-events.js";
 import { contextMeasurement } from "../core/context.js";
 
 type RpcMessage = { id?: number | string; method?: string; params?: unknown; result?: unknown; error?: { message?: string } };
+export type CompactionResult = {
+  threadId: string;
+  outcome: "completed" | "failed" | "cancelled";
+  durationMs: number;
+  usage?: Usage;
+  error?: string;
+};
+
+function sumUsage(left: Usage, right: Usage): Usage {
+  return {
+    input_tokens: left.input_tokens + right.input_tokens,
+    cached_input_tokens: left.cached_input_tokens + right.cached_input_tokens,
+    cache_write_input_tokens: left.cache_write_input_tokens + right.cache_write_input_tokens,
+    output_tokens: left.output_tokens + right.output_tokens,
+    reasoning_output_tokens: left.reasoning_output_tokens + right.reasoning_output_tokens,
+  };
+}
+
 export class AppServerRunner implements CodexRunner {
   constructor(
     private readonly createServer: (
@@ -16,6 +35,96 @@ export class AppServerRunner implements CodexRunner {
       onExit: (error: Error) => void,
     ) => AppServerConnection = (onMessage, onExit) => new AppServer(onMessage, onExit),
   ) {}
+
+  async compact(
+    threadId: string,
+    project: string,
+    route: Route,
+    onProgress: (progress: Progress) => void | Promise<void>,
+    signal?: AbortSignal,
+  ): Promise<CompactionResult> {
+    const started = performance.now();
+    let usage: Usage | undefined;
+    let usageKnown = true;
+    let previousTotal = -1;
+    let sawCompaction = false;
+    let completedStatus: string | undefined;
+    let failure: string | undefined;
+    let compacting = false;
+    let finish!: () => void;
+    const done = new Promise<void>(resolve => { finish = resolve; });
+    const server = this.createServer(message => {
+      if (!compacting) return;
+      const params = isRecord(message.params) ? message.params : {};
+      if (message.method === "thread/tokenUsage/updated") {
+        const tokenUsage = isRecord(params.tokenUsage) ? params.tokenUsage : {};
+        const total = isRecord(tokenUsage.total) ? tokenUsage.total.totalTokens : undefined;
+        if (typeof total !== "number" || !Number.isFinite(total)) usageKnown = false;
+        else if (total > previousTotal) {
+          previousTotal = total;
+          const last = appUsage(tokenUsage);
+          if (last) usage = usage ? sumUsage(usage, last) : last;
+          else usageKnown = false;
+        }
+      }
+      if (message.method === "item/completed" && isRecord(params.item) && params.item.type === "contextCompaction") {
+        sawCompaction = true;
+        void onProgress({ kind: "status", text: "Context compacted; finishing…" });
+      }
+      if (message.method === "turn/completed") {
+        const turn = isRecord(params.turn) ? params.turn : {};
+        completedStatus = typeof turn.status === "string" ? turn.status : undefined;
+        if (isRecord(turn.error) && typeof turn.error.message === "string") failure = turn.error.message;
+        finish();
+      }
+      if (message.method === "error") {
+        failure = isRecord(params.error) && typeof params.error.message === "string" ? params.error.message : "Codex app-server error";
+        finish();
+      }
+    }, error => { failure = error.message; finish(); });
+    let cancelled = !!signal?.aborted;
+    let abort!: () => void;
+    const aborted = new Promise<never>((_resolve, reject) => {
+      abort = () => {
+        cancelled = true;
+        void server.request("turn/interrupt", { threadId }).catch(() => {});
+        reject(new Error("Compaction cancelled"));
+      };
+      signal?.addEventListener("abort", abort, { once: true });
+    });
+    const race = <T,>(work: Promise<T>) => Promise.race([work, aborted]);
+    try {
+      if (cancelled) throw new Error("Compaction cancelled");
+      const cwd = await race(realpath(project));
+      await race(server.request("initialize", {
+        clientInfo: { name: "pace", title: "Pace", version: "0.1.0" },
+        capabilities: { experimentalApi: true },
+      }));
+      server.notify("initialized", {});
+      const response = await race(server.request("thread/resume", appServerThreadParams(cwd, route, threadId, "main")));
+      const resumed = isRecord(response) && isRecord(response.thread) ? response.thread.id : undefined;
+      if (resumed !== threadId) throw new Error("Codex resumed a different thread");
+      await race(Promise.resolve(onProgress({ kind: "status", text: "Compacting context…" })));
+      compacting = true;
+      await race(server.request("thread/compact/start", { threadId }));
+      await race(done);
+      if (failure) throw new Error(failure);
+      if (completedStatus !== "completed" || !sawCompaction)
+        throw new Error(`Compaction ended without a completed contextCompaction item (${completedStatus ?? "unknown"})`);
+      return { threadId, outcome: "completed", durationMs: Math.round(performance.now() - started), ...(usageKnown && usage ? { usage } : {}) };
+    } catch (error) {
+      return {
+        threadId,
+        outcome: cancelled ? "cancelled" : "failed",
+        durationMs: Math.round(performance.now() - started),
+        ...(usageKnown && usage ? { usage } : {}),
+        error: String(error),
+      };
+    } finally {
+      signal?.removeEventListener("abort", abort);
+      server.kill();
+    }
+  }
 
   async run(
     prompt: string,

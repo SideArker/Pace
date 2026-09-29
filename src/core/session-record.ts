@@ -27,6 +27,17 @@ function isContextMeasurement(value: unknown): boolean {
     nonnegative(value.windowTokens) && (value.windowTokens as number) > 0 &&
     (value.model === undefined || typeof value.model === "string");
 }
+function isCompaction(value: unknown): boolean {
+  return isRecord(value) && typeof value.at === "string" &&
+    typeof value.threadId === "string" && isRecord(value.route) &&
+    (value.route.model === undefined || typeof value.route.model === "string") &&
+    (value.route.effort === undefined || EFFORTS.includes(value.route.effort as (typeof EFFORTS)[number])) &&
+    nonnegative(value.durationMs) &&
+    ["completed", "failed", "cancelled"].includes(String(value.outcome)) &&
+    (value.usage === undefined || isUsage(value.usage)) &&
+    (value.estimatedCostUsd === undefined || nonnegative(value.estimatedCostUsd)) &&
+    (value.error === undefined || typeof value.error === "string");
+}
 
 export function parseSession(value: unknown, project: string): Session | undefined {
   if (
@@ -40,6 +51,7 @@ export function parseSession(value: unknown, project: string): Session | undefin
     (value.threadId !== undefined && typeof value.threadId !== "string") ||
     (value.contextByThread !== undefined && (!isRecord(value.contextByThread) ||
       !Object.entries(value.contextByThread).every(([id, reading]) => !!id && isContextMeasurement(reading)))) ||
+    (value.compactions !== undefined && (!Array.isArray(value.compactions) || !value.compactions.every(isCompaction))) ||
     !Array.isArray(value.turns) ||
     !value.turns.every(
       (turn: unknown) =>
