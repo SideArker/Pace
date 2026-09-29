@@ -2,6 +2,14 @@ import React, { useMemo } from "react";
 import { Box, Text } from "ink";
 import { basename } from "node:path";
 import { getGitBranch } from "../core/system/git.js";
+import { contextPercent, measuredContext } from "../core/context.js";
+import type { Session } from "../shared/types.js";
+
+export function contextLabel(session: Session | undefined): string {
+  const percent = session && contextPercent(measuredContext(session));
+  const gauge = percent === undefined ? "○" : ["○", "◔", "◑", "◕", "●"][Math.min(4, Math.ceil(percent / 25))];
+  return `${gauge} Context ${percent === undefined ? "?" : `${percent}%`}`;
+}
 
 const paceShadowLetters = [
   ["  ██████╗ ", "  █████╗ ", "  ██████╗ ", "███████╗"],
@@ -23,10 +31,12 @@ export function Header({
   project,
   vexState,
   width,
+  session,
 }: {
   project: string;
   vexState: "connecting" | "connected" | "failed";
   width: number;
+  session?: Session;
 }) {
   const branch = useMemo(() => getGitBranch(project), [project]);
   const dividerLength = Math.max(20, Math.min(width - 4, 72));
@@ -68,6 +78,7 @@ export function Header({
           📁 {basename(project)}
         </Text>
         {branch ? <Text color="#93C5FD">⎇ {branch}</Text> : null}
+        <Text color="#A5B4FC">{contextLabel(session)}</Text>
         <Text
           color={
             vexState === "connected"

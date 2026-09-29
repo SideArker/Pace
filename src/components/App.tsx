@@ -969,7 +969,7 @@ const shell = createShellRunner({
   });
   return (
     <Box flexDirection="column" paddingX={1}>
-      {showHeader ? <Header project={project} vexState={vexState} width={stdout.columns ?? 80} /> : null}
+      {showHeader ? <Header project={project} vexState={vexState} width={stdout.columns ?? 80} session={session} /> : null}
       <Transcript lines={lines} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} rows={stdout.rows ?? 24} scrollBack={scrollBack} width={stdout.columns ?? 80} />
       {modelMenu ? <ModelMenu mode={modelMenu} models={menuModels} selectedModel={menuModel} selectedIndex={menuIndex} config={config} /> : null}
       {resumeMenu ? <ResumeMenu choices={resumeChoices} selectedIndex={menuIndex} runningIds={runningIds} processIds={resumeProcessIds} missingProjectPaths={missingProjectPaths} /> : null}
