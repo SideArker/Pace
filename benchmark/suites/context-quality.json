@@ -1,0 +1,40 @@
+{
+  "cases": [
+    {
+      "id": "export-correction",
+      "files": {
+        "package.json": "{\"type\":\"module\"}\n",
+        "config/limits.json": "{\"batch\":{\"rows\":500000,\"archives\":true,\"schedule\":\"nightly UTC\"},\"incremental\":{\"rows\":20000,\"archives\":false,\"schedule\":\"every 15 minutes UTC\"}}\n",
+        "src/export.mjs": "import limits from '../config/limits.json' with { type: 'json' };\n\nexport function planExport(mode, rows, archived) {\n  // Unfinished: validate mode and row count, then apply the configured rules.\n  return { mode, rows, archived, schedule: limits[mode]?.schedule };\n}\n"
+      },
+      "setup": [
+        "Inspect src/export.mjs and config/limits.json using tools. Do not edit. I initially thought row counts above a cap should be trimmed. Report the exact mode limits, archive behavior, schedules, and the unfinished branch. Keep this context for a later implementation request.",
+        "Correction: over-cap requests must throw RangeError rather than be trimmed. Do not edit yet. Keep the configured caps and schedules exact, and preserve the existing partial implementation until I ask for the change."
+      ],
+      "followups": [
+        "Complete the unfinished planExport function using the policy we established. Validate mode and nonnegative integer rows. Keep the public function name and return the selected mode, row count, archive flag, and schedule. Do not edit config/limits.json.",
+        "One additional constraint: an incremental request for archives must fail with an Error whose message includes 'archives require batch', even when its row count is also too large. Update the implementation and keep the earlier rules."
+      ],
+      "check": "import assert from 'node:assert/strict'; import {planExport} from './src/export.mjs'; assert.deepEqual(planExport('batch', 500000, true), {mode:'batch',rows:500000,archived:true,schedule:'nightly UTC'}); assert.deepEqual(planExport('incremental', 20000, false), {mode:'incremental',rows:20000,archived:false,schedule:'every 15 minutes UTC'}); assert.throws(()=>planExport('batch',500001,false),RangeError); assert.throws(()=>planExport('incremental',20001,false),RangeError); assert.throws(()=>planExport('incremental',20001,true),/archives require batch/); assert.throws(()=>planExport('unknown',1,false)); assert.throws(()=>planExport('batch',-1,false)); console.log('PASS');",
+      "rubric": "Pass only if both follow-ups preserve exact caps, schedules, archive rules, correction precedence, public API, and partial code intent. Review the diff for unrelated edits or test changes. A wrong cap or archive leak is a critical lost-context error."
+    },
+    {
+      "id": "copy-on-parse",
+      "files": {
+        "package.json": "{\"type\":\"module\"}\n",
+        "docs/contract.md": "Settings: endpoint is a nonempty string. retries is an integer from 0 through 3. The parser may cache an internal copy, but callers must receive independent objects and edits to a returned object must never change later results. Unknown keys are rejected.\n",
+        "src/settings.mjs": "const cache = new Map();\n\nexport function parseSettings(raw) {\n  if (cache.has(raw)) return cache.get(raw); // unfinished: this leaks a mutable cache value\n  const value = JSON.parse(raw);\n  cache.set(raw, value);\n  return value;\n}\n"
+      },
+      "setup": [
+        "Read docs/contract.md and src/settings.mjs with tools. Do not edit. Report the exact validation rules and identify why the existing cache branch is unfinished. Remember the contract for a later change.",
+        "Correction: the cache is allowed to remain for performance, but it must never expose its stored object. Preserve copy-on-parse on both cache hits and misses. Do not edit yet."
+      ],
+      "followups": [
+        "Finish parseSettings using the contract and correction we discussed. Keep the public function name and the cache. Reject invalid JSON and invalid settings with an Error.",
+        "Add one more case while preserving the earlier behavior: JSON null, arrays, and unknown keys must also be rejected."
+      ],
+      "check": "import assert from 'node:assert/strict'; import {parseSettings} from './src/settings.mjs'; const raw=JSON.stringify({endpoint:'https://example.test',retries:2}); const first=parseSettings(raw); first.retries=99; assert.deepEqual(parseSettings(raw),{endpoint:'https://example.test',retries:2}); assert.notStrictEqual(first,parseSettings(raw)); for(const bad of ['null','[]','{\\\"endpoint\\\":\\\"x\\\",\\\"retries\\\":4}','{\\\"endpoint\\\":\\\"x\\\",\\\"retries\\\":1,\\\"extra\\\":true}','{']) assert.throws(()=>parseSettings(bad)); console.log('PASS');",
+      "rubric": "Pass only if the parser validates every contract field, rejects unknown keys and invalid top-level values, and never shares mutable cache objects with callers. Check both cache paths and inspect the diff. A mutation leaking through the cache is a critical lost-context error."
+    }
+  ]
+}

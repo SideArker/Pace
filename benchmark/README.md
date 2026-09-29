@@ -75,6 +75,16 @@ Use `--history-turns 1,4,8`, `--from-model`, `--from-effort`, `--to-model`, `--t
 
 Build and test success alone do not establish requested behavior. For example, a previous Luna coding run passed tests but changed copy-on-parse behavior; manual review caught it. Grade answers and diffs against each task rubric. Record failures as failures even when they are cheap.
 
+## 5. Context actions on coding tasks
+
+```powershell
+npm run benchmark:context-quality -- --repeat 1
+```
+
+This runner uses the fixed model and effort for four arms: resume, fresh replay, native compact and resume, and fresh thread with a validated checkpoint. Each arm starts from the same generated Git fixture, receives the same setup prompts and follow-ups, and runs the same external check. Arm order reverses on even repetitions. The two cases cover earlier tool output, a user correction, partial code, exact constraints, and two coding follow-ups. Use `--case <id>`, `--repeat <1-10>`, `--model`, `--effort`, and `--out <new-directory>` to control a run. `--arm <name>` runs one arm for debugging and does not produce a paired comparison.
+
+The output records every setup, checkpoint, compaction, and follow-up step, including duration, usage, estimated cost, failures, check output, and diffs. `summary.json` includes every attempted arm. Inspect each `run.json` and `diff.patch` against its rubric, then report task pass rates and critical lost-context errors with cost across all attempts. A passing check alone does not establish quality. Keep automatic context policies disabled until a separate holdout shows meaningful net savings without a material quality regression.
+
 ## Reading cost and safety limits
 
 Codex dollar values are **estimated Standard API equivalents**, since actual account billing is unavailable to the SDK. Stage cost uses its own model's ordinary, cached, cache-write, and output rates; reasoning output is already in output. Workflow cost sums all recorded stages. Vex cost is measured separately and never enters routing optimization. Compare cost only among quality-passing runs; report latency and raw tokens separately.

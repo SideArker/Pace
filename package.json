@@ -22,6 +22,7 @@
     "start": "node dist/entrypoints/cli.js",
     "benchmark": "tsx benchmark/runner/workflows.ts",
     "benchmark:thread-switch": "tsx benchmark/thread-switch.ts",
+    "benchmark:context-quality": "tsx benchmark/context-quality.ts",
     "benchmark:routing": "npm run build && node dist/entrypoints/routing-benchmark.js",
     "benchmark:grade": "tsx benchmark/grading/grade.ts",
     "benchmark:check": "tsc -p benchmark/tsconfig.json",

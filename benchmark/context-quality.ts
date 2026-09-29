@@ -1,0 +1,196 @@
+import { randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve, sep } from "node:path";
+import { promisify } from "node:util";
+import type { Usage } from "@openai/codex-sdk";
+import { AppServerRunner } from "../src/integrations/codex.js";
+import { checkpointHandoff, checkpointPrompt, parseCheckpoint } from "../src/core/checkpoint.js";
+import { costForUsage, PRICE_SNAPSHOT } from "../src/core/routing/pricing.js";
+import type { Route } from "../src/shared/types.js";
+
+const exec = promisify(execFile);
+type Arm = "resume" | "fresh_replay" | "compact_resume" | "fresh_checkpoint";
+const arms: Arm[] = ["resume", "fresh_replay", "compact_resume", "fresh_checkpoint"];
+type Case = {
+  id: string;
+  files: Record<string, string>;
+  setup: string[];
+  followups: string[];
+  check: string;
+  rubric: string;
+};
+type Stage = { kind: string; prompt: string; answer?: string; usage?: Usage; estimatedCostUsd?: number; durationMs: number; error?: string };
+type Run = {
+  id: string; repeat: number; arm: Arm; route: Route; fixture: string;
+  stages: Stage[]; check?: { passed: boolean; output: string };
+  diff?: string; error?: string; totalEstimatedCostUsd?: number;
+  totalDurationMs: number; rubric: string;
+};
+
+function options() {
+  const values = new Map<string, string>();
+  for (let i = 2; i < process.argv.length; i += 2) {
+    const key = process.argv[i];
+    const value = process.argv[i + 1];
+    if (!key?.startsWith("--") || !value || value.startsWith("--")) throw new Error(`Invalid option ${key}`);
+    values.set(key, value);
+  }
+  const repeat = Number(values.get("--repeat") ?? "1");
+  if (!Number.isInteger(repeat) || repeat < 1 || repeat > 10) throw new Error("--repeat must be 1 to 10");
+  const route: Route = { model: values.get("--model") ?? "gpt-6-sol", effort: (values.get("--effort") ?? "medium") as Route["effort"] };
+  const arm = values.get("--arm");
+  if (arm && !arms.includes(arm as Arm)) throw new Error(`Unknown arm ${arm}`);
+  return {
+    suite: resolve(values.get("--suite") ?? "benchmark/suites/context-quality.json"),
+    out: resolve(values.get("--out") ?? `benchmark/results/context-quality-${new Date().toISOString().replace(/[:.]/g, "-")}`),
+    selected: values.get("--case"), repeat, route, arm: arm as Arm | undefined,
+  };
+}
+
+async function command(file: string, args: string[], cwd: string) {
+  try {
+    const result = await exec(file, args, { cwd, windowsHide: true, timeout: 120_000, maxBuffer: 2_000_000 });
+    return { passed: true, output: `${result.stdout}${result.stderr}`.slice(-10_000) };
+  } catch (error) {
+    const value = error as Error & { stdout?: string; stderr?: string };
+    return { passed: false, output: `${value.stdout ?? ""}${value.stderr ?? ""}${value.message}`.slice(-10_000) };
+  }
+}
+
+async function fixture(task: Case): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "pace-context-quality-"));
+  for (const [name, content] of Object.entries(task.files)) {
+    if (name.startsWith("/") || name.startsWith("\\") || name.split(/[\\/]/).includes("..")) throw new Error(`Unsafe fixture path ${name}`);
+    const path = join(root, name);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, content, "utf8");
+  }
+  for (const args of [["init", "--quiet"], ["add", "."], ["-c", "user.name=Pace Benchmark", "-c", "user.email=pace@example.invalid", "commit", "--quiet", "-m", "fixture"]]) {
+    const result = await command("git", args, root);
+    if (!result.passed) throw new Error(`Fixture Git setup failed: ${result.output}`);
+  }
+  return root;
+}
+
+async function removeFixture(root: string) {
+  const target = await realpath(root);
+  const temp = await realpath(tmpdir());
+  if (!target.startsWith(temp + sep) || !target.split(sep).at(-1)?.startsWith("pace-context-quality-"))
+    throw new Error(`Refusing to remove unexpected fixture ${target}`);
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try { await rm(target, { recursive: true, force: true }); return; }
+    catch (error) {
+      if (attempt === 4) throw error;
+      await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)));
+    }
+  }
+}
+
+async function runArm(task: Case, repetition: number, arm: Arm, route: Route, out: string): Promise<Run> {
+  const root = await fixture(task);
+  const run: Run = { id: task.id, repeat: repetition, arm, route, fixture: root, stages: [], totalDurationMs: 0, rubric: task.rubric };
+  const runDir = join(out, task.id, String(repetition), arm);
+  await mkdir(runDir, { recursive: true });
+  const runner = new AppServerRunner();
+  let threadId: string | undefined;
+  const history: { user: string; assistant: string }[] = [];
+  const runTurn = async (kind: string, prompt: string, resume: boolean) => {
+    const started = performance.now();
+    const stage: Stage = { kind, prompt, durationMs: 0 };
+    run.stages.push(stage);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 180_000);
+    try {
+      const result = await runner.run(prompt, root, route, resume ? threadId : undefined, () => {}, controller.signal, "main");
+      if (!result.threadId || !result.completed) throw new Error("Codex did not complete a thread turn");
+      threadId = result.threadId;
+      stage.answer = result.result;
+      stage.usage = result.usage;
+      stage.estimatedCostUsd = costForUsage(route, result.usage);
+      return result.result;
+    } catch (error) {
+      stage.error = String(error);
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      stage.durationMs = Math.round(performance.now() - started);
+    }
+  };
+  try {
+    for (const prompt of task.setup) history.push({ user: prompt, assistant: await runTurn("setup", prompt, !!threadId) });
+    let firstPrompt = task.followups[0]!;
+    if (arm === "compact_resume") {
+      const compact = await runner.compact(threadId!, root, route, () => {});
+      run.stages.push({ kind: "compact", prompt: "/compact", usage: compact.usage,
+        estimatedCostUsd: costForUsage(route, compact.usage), durationMs: compact.durationMs, error: compact.error });
+      if (compact.outcome !== "completed") throw new Error(`Compaction ${compact.outcome}: ${compact.error}`);
+    }
+    if (arm === "fresh_checkpoint") {
+      let note: ReturnType<typeof parseCheckpoint> | undefined;
+      let correction = "";
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        const answer = await runTurn(attempt === 1 ? "checkpoint" : "checkpoint-retry", checkpointPrompt() + correction, true);
+        try { note = parseCheckpoint(answer); break; }
+        catch (error) {
+          if (attempt === 2) throw error;
+          correction = `\n\nThe previous note failed validation: ${String(error)}. Correct the note. Set complete to true when all known relevant facts are captured, even if the implementation is still pending or questions remain. Previous note:\n${answer}`;
+        }
+      }
+      firstPrompt = checkpointHandoff(note!, history, firstPrompt);
+      threadId = undefined;
+    }
+    if (arm === "fresh_replay") {
+      firstPrompt = `Continue this conversation using the retained exchanges below.\n\n${JSON.stringify(history)}\n\nCurrent user request:\n${firstPrompt}`;
+      threadId = undefined;
+    }
+    for (let index = 0; index < task.followups.length; index++)
+      await runTurn(`followup-${index + 1}`, index === 0 ? firstPrompt : task.followups[index]!, !!threadId);
+    const check = await command(process.execPath, ["--input-type=module", "-e", task.check], root);
+    run.check = check;
+    await command("git", ["add", "-N", "."], root);
+    const diff = await command("git", ["diff", "--", "."], root);
+    run.diff = diff.output;
+    if (!diff.passed) throw new Error(`Could not read diff: ${diff.output}`);
+  } catch (error) {
+    run.error = String(error);
+  } finally {
+    run.totalDurationMs = run.stages.reduce((sum, stage) => sum + stage.durationMs, 0);
+    run.totalEstimatedCostUsd = run.stages.every(stage => stage.estimatedCostUsd !== undefined)
+      ? run.stages.reduce((sum, stage) => sum + stage.estimatedCostUsd!, 0) : undefined;
+    await writeFile(join(runDir, "run.json"), JSON.stringify(run, null, 2) + "\n");
+    await writeFile(join(runDir, "diff.patch"), run.diff ?? "");
+    try { await removeFixture(root); }
+    catch (error) { console.warn(`Fixture cleanup failed for ${root}: ${String(error)}`); }
+  }
+  return run;
+}
+
+async function main() {
+  const opts = options();
+  const suite = JSON.parse(await readFile(opts.suite, "utf8")) as { cases: Case[] };
+  if (!Array.isArray(suite.cases) || !suite.cases.length) throw new Error("Suite has no cases");
+  const cases = suite.cases.filter(item => !opts.selected || item.id === opts.selected);
+  if (!cases.length) throw new Error("No matching case");
+  await mkdir(opts.out, { recursive: false });
+  await writeFile(join(opts.out, "manifest.json"), JSON.stringify({ suite: opts.suite, route: opts.route,
+    repeat: opts.repeat, priceSnapshot: PRICE_SNAPSHOT, runId: randomUUID() }, null, 2) + "\n");
+  const runs: Run[] = [];
+  for (const task of cases) for (let repetition = 1; repetition <= opts.repeat; repetition++) {
+    const order = (repetition % 2 ? arms : [...arms].reverse()).filter(arm => !opts.arm || arm === opts.arm);
+    for (const arm of order) {
+      console.log(`${task.id} ${repetition}/${opts.repeat} ${arm}`);
+      const result = await runArm(task, repetition, arm, opts.route, opts.out);
+      runs.push(result);
+      await writeFile(join(opts.out, "summary.json"), JSON.stringify({
+        runs: runs.map(run => ({ id: run.id, repeat: run.repeat, arm: run.arm, checkPassed: run.check?.passed ?? false,
+          error: run.error, totalEstimatedCostUsd: run.totalEstimatedCostUsd, totalDurationMs: run.totalDurationMs })),
+        note: "Checks are automatic gates. Review each answer and diff against its rubric before comparing quality or savings.",
+      }, null, 2) + "\n");
+    }
+  }
+  console.log(`Results: ${opts.out}`);
+}
+
+main().catch(error => { console.error(error); process.exitCode = 1; });
