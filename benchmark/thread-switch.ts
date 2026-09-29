@@ -1,16 +1,65 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Usage } from "@openai/codex-sdk";
-import { AppServerRunner, type CodexRunner } from "../src/integrations/codex.js";
+import {
+  AppServerRunner,
+  type CodexRunner,
+} from "../src/integrations/codex.js";
 import { costForUsage, PRICE_SNAPSHOT } from "../src/core/routing/pricing.js";
 import type { Route } from "../src/shared/types.js";
 
 type ArmName = "fresh-thread" | "same-thread";
-type Options = { fromModel: string; fromEffort: string; toModel: string; toEffort: string; repeat: number; historyTurns: number[]; out: string };
-type SavedTurn = { prompt: string; promptCharacters: number; route: Route; threadId: string; durationMs: number; usage?: Usage; estimatedCostUsd?: number; answer: string; answerCharacters: number };
-type ArmResult = { arm: ArmName; prompt: string; promptCharacters: number; startedAt: string; turn?: SavedTurn; error?: string; failedAt?: string };
-type SwitchDelta = { inputTokens: number; cachedInputTokens: number; cacheWriteInputTokens: number; ordinaryInputTokens: number; outputTokens: number; reasoningOutputTokens: number; durationMs: number; estimatedCostUsd?: number };
-type Trial = { repeat: number; historyTurns: number; startedAt: string; setupTurns: SavedTurn[]; setupPromptCharacters: number; setupAnswerCharacters: number; firstThreadId?: string; setupError?: string; arms: ArmResult[]; switchDeltaFreshMinusSame?: SwitchDelta };
+type Options = {
+  fromModel: string;
+  fromEffort: string;
+  toModel: string;
+  toEffort: string;
+  repeat: number;
+  historyTurns: number[];
+  out: string;
+};
+type SavedTurn = {
+  prompt: string;
+  promptCharacters: number;
+  route: Route;
+  threadId: string;
+  durationMs: number;
+  usage?: Usage;
+  estimatedCostUsd?: number;
+  answer: string;
+  answerCharacters: number;
+};
+type ArmResult = {
+  arm: ArmName;
+  prompt: string;
+  promptCharacters: number;
+  startedAt: string;
+  turn?: SavedTurn;
+  error?: string;
+  failedAt?: string;
+};
+type SwitchDelta = {
+  inputTokens: number;
+  cachedInputTokens: number;
+  cacheWriteInputTokens: number;
+  ordinaryInputTokens: number;
+  outputTokens: number;
+  reasoningOutputTokens: number;
+  durationMs: number;
+  estimatedCostUsd?: number;
+};
+type Trial = {
+  repeat: number;
+  historyTurns: number;
+  startedAt: string;
+  setupTurns: SavedTurn[];
+  setupPromptCharacters: number;
+  setupAnswerCharacters: number;
+  firstThreadId?: string;
+  setupError?: string;
+  arms: ArmResult[];
+  switchDeltaFreshMinusSame?: SwitchDelta;
+};
 
 // Each extra prompt adds one prior Codex turn. The final question still requires
 // the batch/incremental limits and timing introduced in the first turn.
@@ -24,7 +73,8 @@ const setupPrompts = [
   "Add this fact to the same policy: export files are encrypted at rest. A security FAQ needs to distinguish stored-file protection from the separate key rotation schedule in the original policy. The FAQ may state that files are encrypted while stored, but it should not infer a new encryption algorithm, a different rotation interval, or special handling for one export mode. Batch and incremental files follow the same stated rotation schedule. A customer choosing between modes still needs to decide based on rows, timing, and archive inclusion; encryption at rest does not make the modes interchangeable. The FAQ should also avoid claims about network transfer, customer-managed keys, and download authorization, because those topics are not specified here. This addition supplies one storage fact and leaves all previously stated limits and schedules in place. Confirm the new fact in two sentences and keep the earlier policy in context. Do not modify files.",
   "Add this fact to the same policy: a failed export can be retried once. An incident guide is explaining what happens after a job fails for an operational reason. One retry is available for that failed job, but the guide should not claim unlimited attempts, an automatic retry time, or a promise that the retry will succeed. A request rejected before execution for exceeding a row cap is different from a running job that fails; the retry rule does not authorize a request over a mode's limit. The retry also does not change a batch job into an incremental job or grant an incremental job access to archives. Customers planning around a deadline should use the published mode schedule and treat any retry as uncertainty, not as a faster path. This addition is about handling a failure after a valid request. Confirm the new fact in two sentences and keep the earlier policy in context. Do not modify files.",
 ];
-const followupPrompt = "Using the policy we discussed, a customer needs archived records, has 24,000 changed rows, and cannot wait until tonight. Which export mode can meet the request, and why? State the relevant row limits, archive behavior, and timing. Do not invent a workaround or modify files.";
+const followupPrompt =
+  "Using the policy we discussed, a customer needs archived records, has 24,000 changed rows, and cannot wait until tonight. Which export mode can meet the request, and why? State the relevant row limits, archive behavior, and timing. Do not invent a workaround or modify files.";
 
 function parseOptions(argv: string[]): Options {
   const values = new Map<string, string>();
@@ -32,120 +82,255 @@ function parseOptions(argv: string[]): Options {
     const key = argv[i];
     if (!key?.startsWith("--")) throw new Error(`Unexpected argument: ${key}`);
     const value = argv[++i];
-    if (!value || value.startsWith("--")) throw new Error(`Missing value for ${key}`);
+    if (!value || value.startsWith("--"))
+      throw new Error(`Missing value for ${key}`);
     values.set(key, value);
   }
   const repeat = Number(values.get("--repeat") ?? "3");
-  if (!Number.isInteger(repeat) || repeat < 1 || repeat > 10) throw new Error("--repeat must be 1 to 10");
-  const historyTurns = (values.get("--history-turns") ?? "1,4,8").split(",").map(Number);
-  if (!historyTurns.length || historyTurns.some(n => !Number.isInteger(n) || n < 1 || n > setupPrompts.length) || new Set(historyTurns).size !== historyTurns.length)
-    throw new Error(`--history-turns must be unique comma-separated integers from 1 to ${setupPrompts.length}`);
+  if (!Number.isInteger(repeat) || repeat < 1 || repeat > 10)
+    throw new Error("--repeat must be 1 to 10");
+  const historyTurns = (values.get("--history-turns") ?? "1,4,8")
+    .split(",")
+    .map(Number);
+  if (
+    !historyTurns.length ||
+    historyTurns.some(
+      (n) => !Number.isInteger(n) || n < 1 || n > setupPrompts.length,
+    ) ||
+    new Set(historyTurns).size !== historyTurns.length
+  )
+    throw new Error(
+      `--history-turns must be unique comma-separated integers from 1 to ${setupPrompts.length}`,
+    );
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   return {
     fromModel: values.get("--from-model") ?? "gpt-6-sol",
     fromEffort: values.get("--from-effort") ?? "high",
     toModel: values.get("--to-model") ?? "gpt-6-luna",
     toEffort: values.get("--to-effort") ?? "low",
-    repeat, historyTurns,
-    out: resolve(values.get("--out") ?? `benchmark/results/thread-switch-${stamp}.json`),
+    repeat,
+    historyTurns,
+    out: resolve(
+      values.get("--out") ?? `benchmark/results/thread-switch-${stamp}.json`,
+    ),
   };
 }
 
 function retainedPrompt(prompt: string, turns: SavedTurn[]): string {
-  const history = turns.map(turn => ({ user: turn.prompt, assistant: turn.answer }));
+  const history = turns.map((turn) => ({
+    user: turn.prompt,
+    assistant: turn.answer,
+  }));
   return `Continue this conversation using only the retained exchanges below. The current user request follows the history.\n\nRetained conversation:\n${JSON.stringify(history)}\n\nCurrent user request:\n${prompt}`;
 }
 
-async function runTurn(runner: CodexRunner, prompt: string, route: Route, expectedThreadId?: string): Promise<SavedTurn> {
+async function runTurn(
+  runner: CodexRunner,
+  prompt: string,
+  route: Route,
+  expectedThreadId?: string,
+): Promise<SavedTurn> {
   const started = performance.now();
-  const execution = await runner.run(prompt, process.cwd(), route, expectedThreadId, () => {}, undefined, "side");
+  const execution = await runner.run(
+    prompt,
+    process.cwd(),
+    route,
+    expectedThreadId,
+    () => {},
+    undefined,
+    "side",
+  );
   if (!execution.threadId) throw new Error("Codex did not return a thread ID");
   const turn: SavedTurn = {
-    prompt, promptCharacters: prompt.length, route, threadId: execution.threadId,
-    durationMs: Math.round(performance.now() - started), usage: execution.usage,
-    estimatedCostUsd: costForUsage(route, execution.usage), answer: execution.result, answerCharacters: execution.result.length,
+    prompt,
+    promptCharacters: prompt.length,
+    route,
+    threadId: execution.threadId,
+    durationMs: Math.round(performance.now() - started),
+    usage: execution.usage,
+    estimatedCostUsd: costForUsage(route, execution.usage),
+    answer: execution.result,
+    answerCharacters: execution.result.length,
   };
   return turn;
 }
 
 function switchDelta(arms: ArmResult[]): SwitchDelta | undefined {
-  const fresh = arms.find(arm => arm.arm === "fresh-thread")?.turn;
-  const same = arms.find(arm => arm.arm === "same-thread")?.turn;
+  const fresh = arms.find((arm) => arm.arm === "fresh-thread")?.turn;
+  const same = arms.find((arm) => arm.arm === "same-thread")?.turn;
   if (!fresh?.usage || !same?.usage) return undefined;
   return {
     inputTokens: fresh.usage.input_tokens - same.usage.input_tokens,
-    cachedInputTokens: fresh.usage.cached_input_tokens - same.usage.cached_input_tokens,
-    cacheWriteInputTokens: fresh.usage.cache_write_input_tokens - same.usage.cache_write_input_tokens,
-    ordinaryInputTokens: (fresh.usage.input_tokens - fresh.usage.cached_input_tokens - fresh.usage.cache_write_input_tokens) - (same.usage.input_tokens - same.usage.cached_input_tokens - same.usage.cache_write_input_tokens),
+    cachedInputTokens:
+      fresh.usage.cached_input_tokens - same.usage.cached_input_tokens,
+    cacheWriteInputTokens:
+      fresh.usage.cache_write_input_tokens -
+      same.usage.cache_write_input_tokens,
+    ordinaryInputTokens:
+      fresh.usage.input_tokens -
+      fresh.usage.cached_input_tokens -
+      fresh.usage.cache_write_input_tokens -
+      (same.usage.input_tokens -
+        same.usage.cached_input_tokens -
+        same.usage.cache_write_input_tokens),
     outputTokens: fresh.usage.output_tokens - same.usage.output_tokens,
-    reasoningOutputTokens: fresh.usage.reasoning_output_tokens - same.usage.reasoning_output_tokens,
-    estimatedCostUsd: fresh.estimatedCostUsd === undefined || same.estimatedCostUsd === undefined ? undefined : fresh.estimatedCostUsd - same.estimatedCostUsd,
+    reasoningOutputTokens:
+      fresh.usage.reasoning_output_tokens - same.usage.reasoning_output_tokens,
+    estimatedCostUsd:
+      fresh.estimatedCostUsd === undefined ||
+      same.estimatedCostUsd === undefined
+        ? undefined
+        : fresh.estimatedCostUsd - same.estimatedCostUsd,
     durationMs: fresh.durationMs - same.durationMs,
   };
 }
 
 function summaryByHistoryTurns(trials: Trial[], historyTurns: number[]) {
-  return historyTurns.map(count => {
-    const group = trials.filter(trial => trial.historyTurns === count);
-    const paired = group.filter(trial => trial.switchDeltaFreshMinusSame);
-    const totals = (armName: ArmName) => paired.reduce((sum, trial) => {
-      const turn = trial.arms.find(arm => arm.arm === armName)!.turn!;
-      const usage = turn.usage!;
-      sum.inputTokens += usage.input_tokens;
-      sum.cachedInputTokens += usage.cached_input_tokens;
-      sum.cacheWriteInputTokens += usage.cache_write_input_tokens;
-      sum.ordinaryInputTokens += usage.input_tokens - usage.cached_input_tokens - usage.cache_write_input_tokens;
-      sum.outputTokens += usage.output_tokens;
-      sum.reasoningOutputTokens += usage.reasoning_output_tokens;
-      return sum;
-    }, { inputTokens: 0, cachedInputTokens: 0, cacheWriteInputTokens: 0, ordinaryInputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0 });
-    const priced = paired.filter(trial => trial.switchDeltaFreshMinusSame!.estimatedCostUsd !== undefined);
+  return historyTurns.map((count) => {
+    const group = trials.filter((trial) => trial.historyTurns === count);
+    const paired = group.filter((trial) => trial.switchDeltaFreshMinusSame);
+    const totals = (armName: ArmName) =>
+      paired.reduce(
+        (sum, trial) => {
+          const turn = trial.arms.find((arm) => arm.arm === armName)!.turn!;
+          const usage = turn.usage!;
+          sum.inputTokens += usage.input_tokens;
+          sum.cachedInputTokens += usage.cached_input_tokens;
+          sum.cacheWriteInputTokens += usage.cache_write_input_tokens;
+          sum.ordinaryInputTokens +=
+            usage.input_tokens -
+            usage.cached_input_tokens -
+            usage.cache_write_input_tokens;
+          sum.outputTokens += usage.output_tokens;
+          sum.reasoningOutputTokens += usage.reasoning_output_tokens;
+          return sum;
+        },
+        {
+          inputTokens: 0,
+          cachedInputTokens: 0,
+          cacheWriteInputTokens: 0,
+          ordinaryInputTokens: 0,
+          outputTokens: 0,
+          reasoningOutputTokens: 0,
+        },
+      );
+    const priced = paired.filter(
+      (trial) =>
+        trial.switchDeltaFreshMinusSame!.estimatedCostUsd !== undefined,
+    );
     return {
-      historyTurns: count, trials: group.length,
-      setupFailures: group.filter(trial => trial.setupError).length,
+      historyTurns: count,
+      trials: group.length,
+      setupFailures: group.filter((trial) => trial.setupError).length,
       switchFailures: {
-        freshThread: group.filter(trial => trial.arms.some(arm => arm.arm === "fresh-thread" && arm.error)).length,
-        sameThread: group.filter(trial => trial.arms.some(arm => arm.arm === "same-thread" && arm.error)).length,
+        freshThread: group.filter((trial) =>
+          trial.arms.some((arm) => arm.arm === "fresh-thread" && arm.error),
+        ).length,
+        sameThread: group.filter((trial) =>
+          trial.arms.some((arm) => arm.arm === "same-thread" && arm.error),
+        ).length,
       },
       pairedWithCompleteUsage: paired.length,
       pairedWithPrices: priced.length,
-      pairedSwitchCostDeltaUsd: priced.map(trial => trial.switchDeltaFreshMinusSame!.estimatedCostUsd!),
+      pairedSwitchCostDeltaUsd: priced.map(
+        (trial) => trial.switchDeltaFreshMinusSame!.estimatedCostUsd!,
+      ),
       pricedPairSwitchCostTotalsUsd: {
-        freshThread: priced.reduce((sum, trial) => sum + trial.arms.find(arm => arm.arm === "fresh-thread")!.turn!.estimatedCostUsd!, 0),
-        sameThread: priced.reduce((sum, trial) => sum + trial.arms.find(arm => arm.arm === "same-thread")!.turn!.estimatedCostUsd!, 0),
+        freshThread: priced.reduce(
+          (sum, trial) =>
+            sum +
+            trial.arms.find((arm) => arm.arm === "fresh-thread")!.turn!
+              .estimatedCostUsd!,
+          0,
+        ),
+        sameThread: priced.reduce(
+          (sum, trial) =>
+            sum +
+            trial.arms.find((arm) => arm.arm === "same-thread")!.turn!
+              .estimatedCostUsd!,
+          0,
+        ),
       },
-      pairedSwitchTokenTotals: { freshThread: totals("fresh-thread"), sameThread: totals("same-thread") },
+      pairedSwitchTokenTotals: {
+        freshThread: totals("fresh-thread"),
+        sameThread: totals("same-thread"),
+      },
     };
   });
 }
 
-async function runTrial(runner: CodexRunner, repeat: number, historyTurns: number, options: Options): Promise<Trial> {
-  const trial: Trial = { repeat, historyTurns, startedAt: new Date().toISOString(), setupTurns: [], setupPromptCharacters: 0, setupAnswerCharacters: 0, arms: [] };
-  const firstRoute: Route = { model: options.fromModel, effort: options.fromEffort as Route["effort"] };
-  const nextRoute: Route = { model: options.toModel, effort: options.toEffort as Route["effort"] };
+async function runTrial(
+  runner: CodexRunner,
+  repeat: number,
+  historyTurns: number,
+  options: Options,
+): Promise<Trial> {
+  const trial: Trial = {
+    repeat,
+    historyTurns,
+    startedAt: new Date().toISOString(),
+    setupTurns: [],
+    setupPromptCharacters: 0,
+    setupAnswerCharacters: 0,
+    arms: [],
+  };
+  const firstRoute: Route = {
+    model: options.fromModel,
+    effort: options.fromEffort as Route["effort"],
+  };
+  const nextRoute: Route = {
+    model: options.toModel,
+    effort: options.toEffort as Route["effort"],
+  };
   try {
     for (const prompt of setupPrompts.slice(0, historyTurns)) {
-      const turn = await runTurn(runner, prompt, firstRoute, trial.firstThreadId);
+      const turn = await runTurn(
+        runner,
+        prompt,
+        firstRoute,
+        trial.firstThreadId,
+      );
       trial.setupTurns.push(turn);
       trial.setupPromptCharacters += turn.promptCharacters;
       trial.setupAnswerCharacters += turn.answerCharacters;
       trial.firstThreadId ??= turn.threadId;
-      if (turn.threadId !== trial.firstThreadId) throw new Error(`Setup thread changed from ${trial.firstThreadId} to ${turn.threadId}`);
+      if (turn.threadId !== trial.firstThreadId)
+        throw new Error(
+          `Setup thread changed from ${trial.firstThreadId} to ${turn.threadId}`,
+        );
     }
   } catch (error) {
     trial.setupError = String(error);
     return trial;
   }
-  const order: ArmName[] = (repeat + historyTurns) % 2 === 0 ? ["fresh-thread", "same-thread"] : ["same-thread", "fresh-thread"];
+  const order: ArmName[] =
+    (repeat + historyTurns) % 2 === 0
+      ? ["fresh-thread", "same-thread"]
+      : ["same-thread", "fresh-thread"];
   for (const arm of order) {
-    const prompt = arm === "fresh-thread" ? retainedPrompt(followupPrompt, trial.setupTurns) : followupPrompt;
-    const result: ArmResult = { arm, prompt, promptCharacters: prompt.length, startedAt: new Date().toISOString() };
+    const prompt =
+      arm === "fresh-thread"
+        ? retainedPrompt(followupPrompt, trial.setupTurns)
+        : followupPrompt;
+    const result: ArmResult = {
+      arm,
+      prompt,
+      promptCharacters: prompt.length,
+      startedAt: new Date().toISOString(),
+    };
     trial.arms.push(result);
     try {
-      const turn = await runTurn(runner, prompt, nextRoute, arm === "same-thread" ? trial.firstThreadId : undefined);
+      const turn = await runTurn(
+        runner,
+        prompt,
+        nextRoute,
+        arm === "same-thread" ? trial.firstThreadId : undefined,
+      );
       result.turn = turn;
       if (arm === "same-thread" && turn.threadId !== trial.firstThreadId)
-        throw new Error(`Same-thread arm did not resume ${trial.firstThreadId}; got ${turn.threadId}`);
+        throw new Error(
+          `Same-thread arm did not resume ${trial.firstThreadId}; got ${turn.threadId}`,
+        );
       if (arm === "fresh-thread" && turn.threadId === trial.firstThreadId)
         throw new Error("Fresh-thread arm reused the setup thread");
     } catch (error) {
@@ -153,7 +338,8 @@ async function runTrial(runner: CodexRunner, repeat: number, historyTurns: numbe
       result.failedAt = new Date().toISOString();
     }
   }
-  if (trial.arms.every(arm => !arm.error)) trial.switchDeltaFreshMinusSame = switchDelta(trial.arms);
+  if (trial.arms.every((arm) => !arm.error))
+    trial.switchDeltaFreshMinusSame = switchDelta(trial.arms);
   return trial;
 }
 
@@ -165,7 +351,8 @@ async function main() {
   const createdAt = new Date().toISOString();
   const result = () => ({
     benchmark: "model-switch-threading",
-    createdAt, options,
+    createdAt,
+    options,
     prompts: { setup: setupPrompts, followup: followupPrompt },
     priceSnapshot: PRICE_SNAPSHOT,
     descriptiveSummary: summaryByHistoryTurns(trials, options.historyTurns),
@@ -178,18 +365,26 @@ async function main() {
     ],
     trials,
   });
-  await writeFile(options.out, `${JSON.stringify(result(), null, 2)}\n`, { flag: "wx" });
+  await writeFile(options.out, `${JSON.stringify(result(), null, 2)}\n`, {
+    flag: "wx",
+  });
   for (let repeat = 1; repeat <= options.repeat; repeat++) {
     for (const historyTurns of options.historyTurns) {
-      console.log(`Repeat ${repeat}/${options.repeat}, ${historyTurns} prior turns`);
+      console.log(
+        `Repeat ${repeat}/${options.repeat}, ${historyTurns} prior turns`,
+      );
       const trial = await runTrial(runner, repeat, historyTurns, options);
       trials.push(trial);
       await writeFile(options.out, `${JSON.stringify(result(), null, 2)}\n`);
       if (trial.setupError) console.error(`Setup failed: ${trial.setupError}`);
-      for (const arm of trial.arms) if (arm.error) console.error(`${arm.arm} failed: ${arm.error}`);
+      for (const arm of trial.arms)
+        if (arm.error) console.error(`${arm.arm} failed: ${arm.error}`);
     }
   }
   console.log(`Results: ${options.out}`);
 }
 
-void main().catch(error => { console.error(String(error)); process.exitCode = 1; });
+void main().catch((error) => {
+  console.error(String(error));
+  process.exitCode = 1;
+});

@@ -37,7 +37,6 @@ const commands = [
   "/route",
   "/stats",
   "/clear",
-  "/queue",
   "/exit",
 ];
 const modelCatalog = ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra"];
@@ -751,7 +750,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       void askBtw(text.slice(4).trim());
       return;
     }
-    if (jobs.current.has(session.id) && !/^\/(?:new|clear|resume|help|exit|usage|stats|route|artifacts|models|trust|skills|queue)(?:\s|$)/.test(text)) {
+    if (jobs.current.has(session.id) && !/^\/(?:new|clear|resume|help|exit|usage|stats|route|artifacts|models|trust|skills)(?:\s|$)/.test(text)) {
       if (text.startsWith("/") && !skillCommand(text, enabledSkills(skills, config))) {
         add("info", "This conversation is working. Use /new or /resume to switch conversations.");
         return;
@@ -766,18 +765,6 @@ export default function App({ onClear }: { onClear: () => void }) {
     setSelection(0);
     if (text.startsWith("/")) {
       const [command, ...parts] = text.split(/\s+/);
-      if (command === "/queue") {
-        if (parts.length === 1 && parts[0] === "clear") {
-          const count = promptQueue.current.clear(session.id);
-          setQueueVersion(value => value + 1);
-          add("info", `Cleared ${count} queued prompt${count === 1 ? "" : "s"}.`);
-        } else if (parts.length) add("error", "Use /queue or /queue clear.");
-        else {
-          const pending = promptQueue.current.list(session.id);
-          add("info", pending.length ? pending.map((prompt, index) => `${index + 1}. ${prompt.replace(/\s+/g, " ")}`).join("\n") : "No queued prompts.");
-        }
-        return;
-      }
       if (command === "/clear" || command === "/new") {
         if (parts.length) {
           add("error", `Type ${command} without arguments.`);
@@ -824,7 +811,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       if (command === "/help") {
         add(
           "info",
-          "/models · /model <name> [effort] · /auto · /new · /resume · /convo · /undo · /usage · /btw <q> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /queue [clear] · /route · /stats · /clear · /exit · Esc/Ctrl+C cancel · Ctrl+Z undo · ! Bash · Ctrl+O toggle reasoning and command output · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
+          "/models · /model <name> [effort] · /auto · /new · /resume · /convo · /undo · /usage · /btw <q> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /route · /stats · /clear · /exit · Esc/Ctrl+C cancel · Ctrl+Z undo · ! Bash · Ctrl+O toggle reasoning and command output · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
         );
         add("info", "With multiple open conversations, press Down from the input to focus the picker. Use arrows and Enter to switch; Esc returns to input. Ctrl+C cancels the selected turn. /exit quits.");
         return;
@@ -1172,10 +1159,10 @@ export default function App({ onClear }: { onClear: () => void }) {
             return true;
           }}
           onMoveDown={focusPicker}
-          placeholder={modelMenu || resumeMenu || convoMenu ? "Close menu to type" : shellMode ? "Bash command; ! returns to Pace" : vexState !== "connected" ? "Vex unavailable; manual turns work" : busy ? "Type next prompt to queue it; /queue to view" : "Ask Pace or type /"}
+          placeholder={modelMenu || resumeMenu || convoMenu ? "Close menu to type" : shellMode ? "Bash command; ! returns to Pace" : vexState !== "connected" ? "Vex unavailable; manual turns work" : busy ? "Type next prompt to queue it" : "Ask Pace or type /"}
         />
       </Box>
-      {queued.length > 0 ? <Text color="#FBBF24" wrap="truncate">{queued.length} queued · next: {queued[0]!.replace(/\s+/g, " ").slice(0, 80)} · /queue clear to remove</Text> : null}
+      {queued.map((prompt, index) => <Text key={`${index}-${prompt}`} color="#FBBF24" wrap="truncate">QUEUED: {prompt.replace(/\s+/g, " ")}</Text>)}
       {runningIds.length > 0 && openSessions.length > 1 ? <ConversationPicker choices={pickerChoices} activeId={activeSessionId.current} selectedIndex={pickerIndex} focused={pickerFocused} /> : null}
       {showUsage ? <UsageBar limits={usageLimits} error={usageError} /> : null}
       {!modelMenu && !resumeMenu && !convoMenu && matches.length > 0 ? <CommandMenu matches={matches} selectedIndex={selection} /> : null}
