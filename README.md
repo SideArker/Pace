@@ -76,7 +76,7 @@ Pace discovers skills in `~/.agents/skills` by default (`C:\Users\<user>\.agents
 
 ## Models and routing
 
-With a fresh config, Pace enables Luna (`low`, `medium`, `high`), Sol (`medium`, `high`, `xhigh`, `ultra`), and Astra (`high`, `xhigh`, `ultra`). Existing configs keep their saved allowlists and effort levels. Open `/models` to change them; a newly enabled model starts with medium reasoning. Additional model IDs can be configured in `~/.pace/config.json`. Disabled models are never offered to Vex or Codex. If every model is off, Pace stops the turn and asks you to enable one. An existing Codex thread cannot continue while its saved model is off; use `/new` or enable that model again. When a turn changes model, Pace starts a new Codex thread and includes saved successful exchanges in the new prompt. The original turns remain in the Pace session.
+With a fresh config, Pace enables Luna (`low`, `medium`, `high`), Sol (`medium`, `high`, `xhigh`, `ultra`), and Astra (`high`, `xhigh`, `ultra`). Existing configs keep their saved allowlists and effort levels. Open `/models` to change them; a newly enabled model starts with medium reasoning. Additional model IDs can be configured in `~/.pace/config.json`. Disabled models are never offered to Vex or Codex. If every model is off, Pace stops the turn and asks you to enable one. When a turn changes model, Pace resumes the existing Codex thread with the selected model and effort. The thread ID and its history remain available.
 
 Pace cannot query which models your account can use. The menu offers `gpt-6-sol`, `gpt-6-luna`, and `gpt-6-astra` as examples; access depends on account and workspace. You can also edit `~/.pace/config.json` (`%USERPROFILE%\.pace\config.json` on Windows) directly:
 

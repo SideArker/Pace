@@ -392,8 +392,7 @@ export class Orchestrator {
       }
       signal?.throwIfAborted();
       if (session.threadId && session.route.model !== route.model) {
-        session.threadId = undefined;
-        systemMessage("Model changed. Starting a fresh Codex thread with saved successful turns.");
+        systemMessage("Model changed. Continuing the existing Codex thread.");
       }
       session.route = route;
       await save();

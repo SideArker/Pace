@@ -981,12 +981,12 @@ const shell = createShellRunner({
         }
         const route: Route = { model: choice.model, effort: (effort as Route["effort"]) ?? choice.defaultEffort ?? choice.efforts[0] };
         const changedModel = !!session.threadId && session.route.model !== route.model;
-        const updated = { ...session, route, routingMode: "manual" as const, threadId: changedModel ? undefined : session.threadId };
+        const updated = { ...session, route, routingMode: "manual" as const };
         try {
           await store.save(updated);
           setSession(updated);
           rememberSession(updated);
-          add("info", `Manual route: ${route.model} ${route.effort}.${changedModel ? " Next turn starts a fresh thread with saved successful turns." : ""}`);
+          add("info", `Manual route: ${route.model} ${route.effort}.${changedModel ? " Next turn continues the existing thread." : ""}`);
         } catch (error) {
           add("error", `Could not save manual route: ${String(error)}`);
         }
