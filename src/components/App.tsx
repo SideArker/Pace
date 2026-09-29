@@ -21,6 +21,7 @@ import { CommandMenu, ConversationPicker, ConvoMenu, ModelMenu, ResumeMenu, type
 import { resolve } from "node:path";
 import { createShellRunner, formatCommandActivity } from "./shell-runner.js";
 import { createTurnRunner, type PendingApproval, type TurnJob } from "./turn-runner.js";
+import { costForUsage } from "../core/routing/pricing.js";
 const commands = [
   "/help",
   "/models",
@@ -37,6 +38,7 @@ const commands = [
   "/skills",
   "/route",
   "/stats",
+  "/compact",
   "/clear",
   "/exit",
 ];
@@ -683,7 +685,7 @@ const shell = createShellRunner({
       void askBtw(text.slice(4).trim());
       return;
     }
-    if (jobs.current.has(session.id) && !/^\/(?:new|clear|resume|help|exit|usage|stats|route|artifacts|models|trust|skills)(?:\s|$)/.test(text)) {
+    if (jobs.current.has(session.id) && !/^\/(?:new|clear|resume|help|exit|usage|stats|compact|route|artifacts|models|trust|skills)(?:\s|$)/.test(text)) {
       if (text.startsWith("/") && !skillCommand(text, enabledSkills(skills, config))) {
         add("info", "This conversation is working. Use /new or /resume to switch conversations.");
         return;
@@ -744,7 +746,7 @@ const shell = createShellRunner({
       if (command === "/help") {
         add(
           "info",
-          "/models · /model <name> [effort] · /auto · /new · /resume · /convo · /undo · /usage · /btw <q> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /route · /stats · /clear · /exit · Esc/Ctrl+C cancel · Ctrl+Z undo · ! Bash · Ctrl+O toggle reasoning and command output · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
+          "/models · /model <name> [effort] · /auto · /new · /resume · /convo · /undo · /compact · /usage · /btw <q> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /route · /stats · /clear · /exit · Esc/Ctrl+C cancel · Ctrl+Z undo · ! Bash · Ctrl+O toggle reasoning and command output · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
         );
         add("info", "With multiple open conversations, press Down from the input to focus the picker. Use arrows and Enter to switch; Esc returns to input. Ctrl+C cancels the selected turn. /exit quits.");
         return;
@@ -765,6 +767,52 @@ const shell = createShellRunner({
       if (command === "/usage") {
         setShowUsage(value => !value);
         refreshUsage();
+        return;
+      }
+      if (command === "/compact") {
+        if (parts.length) { add("error", "Type /compact without arguments."); return; }
+        if (!session.threadId) { add("error", "This conversation has no Codex thread to compact."); return; }
+        if (jobs.current.has(session.id)) { add("error", "Wait for this conversation to finish before compacting."); return; }
+        const target = session;
+        const sessionId = target.id;
+        const threadId = session.threadId;
+        const controller = new AbortController();
+        jobs.current.set(sessionId, { session: target, controller, prompt: "/compact" });
+        setRunningIds([...jobs.current.keys()]);
+        addFor(sessionId, "info", "Compacting Codex context…");
+        void (async () => {
+          try {
+            const result = await runner.compact(threadId, target.projectPath, target.route,
+              progress => { if (progress.kind === "status") setStatusFor(sessionId, progress.text); }, controller.signal);
+            const record = {
+              at: new Date().toISOString(), threadId, route: target.route,
+              durationMs: result.durationMs, outcome: result.outcome,
+              usage: result.usage, estimatedCostUsd: costForUsage(target.route, result.usage),
+              error: result.error,
+            };
+            target.compactions = [...(target.compactions ?? []), record].slice(-50);
+            if (target.contextByThread) delete target.contextByThread[threadId];
+            await store.save(target, () => activeSessionId.current === sessionId);
+            rememberSession(target);
+            if (activeSessionId.current === sessionId) setSession({ ...target });
+            const detail = result.outcome === "completed" ? "Context compacted." :
+              result.outcome === "cancelled" ? "Compaction cancelled." : `Compaction failed: ${result.error ?? "unknown error"}`;
+            addFor(sessionId, result.outcome === "failed" ? "error" : "info", detail);
+            setStatusFor(sessionId, result.outcome === "completed" ? "Done" : result.outcome === "cancelled" ? "Cancelled" : "Failed");
+          } catch (error) {
+            addFor(sessionId, "error", `Could not save compaction: ${String(error)}`);
+            setStatusFor(sessionId, "Failed");
+          } finally {
+            jobs.current.delete(sessionId);
+            if (activeSessionId.current !== sessionId) unreadCompletions.current.add(sessionId);
+            setRunningIds([...jobs.current.keys()]);
+            const next = promptQueue.current.take(sessionId);
+            if (next !== undefined) {
+              setQueueVersion(value => value + 1);
+              void runTurn(next, target, config);
+            }
+          }
+        })();
         return;
       }
       if (command === "/models") {
@@ -800,7 +848,8 @@ const shell = createShellRunner({
       }
       if (command === "/stats") {
         const turns = session.turns;
-        if (!turns.length) { add("info", "No recorded turns yet."); return; }
+        const compactions = session.compactions ?? [];
+        if (!turns.length && !compactions.length) { add("info", "No recorded turns or compactions yet."); return; }
         const total = (key: "input_tokens" | "cached_input_tokens" | "cache_write_input_tokens" | "output_tokens") => turns.reduce((sum, turn) => sum + (turn.usage?.[key] ?? 0), 0);
         const elapsed = turns.reduce((sum, turn) => sum + (turn.durationMs ?? 0), 0);
         const reported = turns.filter(turn => turn.usage).length;
@@ -808,6 +857,14 @@ const shell = createShellRunner({
         const priced = turns.filter(turn => turn.estimatedCostUsd !== undefined).length;
         add("info", `Codex usage: ${total("input_tokens")} input (${total("cached_input_tokens")} cached, ${total("cache_write_input_tokens")} cache write), ${total("output_tokens")} output; ${priced ? `~$${cost.toFixed(4)} estimated API equivalent (${priced} priced turns)` : 'API-equivalent cost unavailable'}`);
         add("info", `Current conversation, last ${turns.length} turns · ${turns.filter(turn => turn.failed).length} failed · ${(elapsed / 1000).toFixed(1)}s elapsed · ${total("input_tokens")} input / ${total("output_tokens")} output tokens (${reported} turns reported usage)`);
+        if (compactions.length) {
+          const input = compactions.reduce((sum, item) => sum + (item.usage?.input_tokens ?? 0), 0);
+          const output = compactions.reduce((sum, item) => sum + (item.usage?.output_tokens ?? 0), 0);
+          const duration = compactions.reduce((sum, item) => sum + item.durationMs, 0);
+          const estimated = compactions.reduce((sum, item) => sum + (item.estimatedCostUsd ?? 0), 0);
+          const pricedCount = compactions.filter(item => item.estimatedCostUsd !== undefined).length;
+          add("info", `Compactions: ${compactions.length} (${compactions.filter(item => item.outcome === "completed").length} completed, ${compactions.filter(item => item.outcome === "failed").length} failed, ${compactions.filter(item => item.outcome === "cancelled").length} cancelled) · ${input} input / ${output} output tokens (${compactions.filter(item => item.usage).length} reported usage) · ${(duration / 1000).toFixed(1)}s · ${pricedCount ? `~$${estimated.toFixed(4)} estimated API equivalent (${pricedCount} priced)` : "API-equivalent cost unavailable"}`);
+        }
         return;
       }
       if (command === "/trust") {
