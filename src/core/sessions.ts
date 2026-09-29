@@ -1,4 +1,4 @@
-import { randomUUID, createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { resolve, join } from "node:path";
 import {
@@ -10,72 +10,12 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { DEFAULT_CONFIG, EFFORTS, isRecord, parseConfig } from "../shared/config.js";
-import type { Config, Notice, Session, TurnSummary } from "../shared/types.js";
-import type { Usage } from "@openai/codex-sdk";
+import { DEFAULT_CONFIG, isRecord, parseConfig } from "../shared/config.js";
+import type { Config, Notice, Session } from "../shared/types.js";
+import { normalizeProject, projectKey } from "./session-model.js";
+import { parseSession } from "./session-record.js";
+export { normalizeProject, projectKey, newSession, rewindConversation, deleteConversationTurn, undoConversationTurn } from "./session-model.js";
 
-function isUsage(value: unknown): value is Usage {
-  if (!isRecord(value)) return false;
-  const record = value;
-  return ["input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens", "reasoning_output_tokens"].every(key => typeof record[key] === "number");
-}
-const nonnegative = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && value >= 0;
-function isStage(value: unknown): boolean {
-  return isRecord(value) && typeof value.objective === 'string' && isRecord(value.route) &&
-    (value.route.model === undefined || typeof value.route.model === 'string') &&
-    (value.route.effort === undefined || EFFORTS.includes(value.route.effort as (typeof EFFORTS)[number])) &&
-    nonnegative(value.durationMs) && (value.usage === undefined || isUsage(value.usage)) &&
-    (value.estimatedCostUsd === undefined || nonnegative(value.estimatedCostUsd)) &&
-    (value.handoff === undefined || (typeof value.handoff === 'string' && value.handoff.length <= 20_000));
-}
-function isRouting(value: unknown): boolean {
-  return isRecord(value) && typeof value.objective === 'string' && typeof value.choice === 'string' &&
-    nonnegative(value.confidence) && (value.confidence as number) <= 1 && isRecord(value.probabilities) &&
-    Object.values(value.probabilities).every(probability => nonnegative(probability) && (probability as number) <= 1) &&
-    Number.isInteger(value.attempts) && (value.attempts as number) >= 0;
-}
-
-export function normalizeProject(path: string): string {
-  const absolute = resolve(path);
-  return process.platform === "win32" ? absolute.toLowerCase() : absolute;
-}
-export function projectKey(path: string): string {
-  return createHash("sha256").update(normalizeProject(path)).digest("hex");
-}
-export function newSession(
-  projectPath: string,
-  mode: Session["routingMode"],
-): Session {
-  const now = new Date().toISOString();
-  return {
-    id: randomUUID(),
-    projectPath: normalizeProject(projectPath),
-    createdAt: now,
-    updatedAt: now,
-    routingMode: mode,
-    route: {},
-    activeSkills: [],
-    skillOptions: {},
-    turns: [],
-  };
-}
-export function rewindConversation(session: Session, index: number): TurnSummary | undefined {
-  const turn = session.turns[index];
-  if (!turn) return undefined;
-  session.turns = session.turns.slice(0, index);
-  session.threadId = undefined;
-  return turn;
-}
-export function deleteConversationTurn(session: Session, index: number): void {
-  if (index < 0 || index >= session.turns.length) return;
-  session.turns.splice(index, 1);
-  session.threadId = undefined;
-}
-export function undoConversationTurn(session: Session): TurnSummary | undefined {
-  const turn = session.turns.pop();
-  if (turn) session.threadId = undefined;
-  return turn;
-}
 export async function atomicJson(path: string, value: unknown): Promise<void> {
   const temp = `${path}.${randomUUID()}.tmp`;
   await mkdir(resolve(path, ".."), { recursive: true });
@@ -89,48 +29,6 @@ export async function atomicJson(path: string, value: unknown): Promise<void> {
     await rm(temp, { force: true }).catch(() => {});
     throw error;
   }
-}
-function parseSession(value: unknown, project: string): Session | undefined {
-  if (
-    !isRecord(value) ||
-    typeof value.id !== "string" ||
-    !/^[0-9a-f-]{36}$/.test(value.id) ||
-    (value.title !== undefined && (typeof value.title !== "string" || value.title.length > 120)) ||
-    value.projectPath !== project ||
-    typeof value.createdAt !== "string" ||
-    typeof value.updatedAt !== "string" ||
-    (value.threadId !== undefined && typeof value.threadId !== "string") ||
-    !Array.isArray(value.turns) ||
-    !value.turns.every(
-      (turn: unknown) =>
-        isRecord(turn) &&
-        typeof turn.prompt === "string" &&
-        typeof turn.result === "string" &&
-        typeof turn.at === "string" &&
-        (turn.route === undefined || (isRecord(turn.route) && (turn.route.model === undefined || typeof turn.route.model === "string") && (turn.route.effort === undefined || EFFORTS.includes(turn.route.effort as (typeof EFFORTS)[number])))) &&
-        (turn.routeNote === undefined || typeof turn.routeNote === "string") &&
-        (turn.durationMs === undefined || (typeof turn.durationMs === "number" && Number.isFinite(turn.durationMs) && turn.durationMs >= 0)) &&
-        (turn.usage === undefined || isUsage(turn.usage)) &&
-        (turn.estimatedCostUsd === undefined || nonnegative(turn.estimatedCostUsd)) &&
-        (turn.stages === undefined || (Array.isArray(turn.stages) && turn.stages.every(isStage))) &&
-        (turn.routing === undefined || (Array.isArray(turn.routing) && turn.routing.every(isRouting))) &&
-        (turn.artifacts === undefined || (Array.isArray(turn.artifacts) && turn.artifacts.every((artifact: unknown) => typeof artifact === "string" && /^\.pace\/artifacts\/[^/\\]+\.md$/.test(artifact)))) &&
-        (turn.failed === undefined || typeof turn.failed === "boolean") &&
-        (turn.cancelled === undefined || typeof turn.cancelled === "boolean"),
-    ) ||
-    !isRecord(value.route) ||
-    (value.route.model !== undefined &&
-      typeof value.route.model !== "string") ||
-    (value.route.effort !== undefined &&
-      !EFFORTS.includes(value.route.effort as (typeof EFFORTS)[number])) ||
-    (value.activeSkills !== undefined && (!Array.isArray(value.activeSkills) ||
-      !value.activeSkills.every((name: unknown) => typeof name === "string" && /^[a-z0-9][a-z0-9_-]*$/i.test(name)))) ||
-    (value.skillOptions !== undefined && (!isRecord(value.skillOptions) ||
-      !Object.entries(value.skillOptions).every(([name, option]) => /^[a-z0-9][a-z0-9_-]*$/i.test(name) && typeof option === "string" && option.length <= 80))) ||
-    (value.routingMode !== "auto" && value.routingMode !== "manual")
-  )
-    return undefined;
-  return value as Session;
 }
 export class PaceStore {
   private activationQueue: Promise<void> = Promise.resolve();
