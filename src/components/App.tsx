@@ -18,8 +18,9 @@ import { Composer, commandToken } from "./Composer.js";
 import { Header, Transcript, type Line } from "./Transcript.js";
 import { UsageBar } from "./UsageBar.js";
 import { CommandMenu, ConversationPicker, ConvoMenu, ModelMenu, ResumeMenu, type ConversationChoice } from "./Menus.js";
-import { spawn } from "node:child_process";
 import { resolve } from "node:path";
+import { createShellRunner, formatCommandActivity } from "./shell-runner.js";
+import { createTurnRunner, type PendingApproval, type TurnJob } from "./turn-runner.js";
 const commands = [
   "/help",
   "/models",
@@ -53,46 +54,11 @@ const thinkingWords = [
   "Daydreaming",
 ] as const;
 const folderArgument = (value: string) => value.trim().replace(/^(?:"(.*)"|'(.*)')$/, (_match, double: string | undefined, single: string | undefined) => double ?? single ?? value);
-const manualApprovalCommand = (command: string) => /\bgit\b[^;&|()\n]*\s(?:push|reset)\b/i.test(command);
-function displayShellCommand(command: string): string | undefined {
-  const invocation = /^(?:&\s*)?(?:"([^"]+)"|'([^']+)'|(\S+))\s+([\s\S]*)$/.exec(command.trim());
-  if (!invocation) return undefined;
-  const executable = invocation[1] ?? invocation[2] ?? invocation[3] ?? "";
-  const args = invocation[4] ?? "";
-  const basename = executable.split(/[\\/]+/).at(-1) ?? "";
-  const shell = /^(?:powershell|pwsh)(?:\.exe)?$/i.test(basename)
-    ? "PS"
-    : /^bash(?:\.exe)?$/i.test(basename)
-      ? "Bash"
-      : undefined;
-  if (!shell) return undefined;
-  const commandFlag = shell === "Bash"
-    ? /(?:^|\s)-(?:c|lc)\s+/i
-    : /(?:^|\s)-(?:command|c)\s+/i;
-  const flag = commandFlag.exec(args);
-  const body = flag ? args.slice(flag.index + flag[0].length).trim() : args.trim();
-  const script = body.length >= 2 && body[0] === body.at(-1) && (body[0] === "'" || body[0] === '"')
-    ? body.slice(1, -1)
-    : body;
-  return `${shell}: ${script || args.trim()}`;
-}
-function formatCommandActivity(title: string, detail?: string): { title: string; detail?: string } {
-  const match = /^(Running|Ran|Failed): ([\s\S]*?)( \(exit [^)]+\))?$/.exec(title);
-  if (!match) return { title, detail };
-  const display = displayShellCommand(match[2]!);
-  if (!display) return { title, detail };
-  return {
-    title: `${match[1]}: ${display}${match[3] ?? ""}`,
-    detail: [`Command line: ${match[2]}`, detail ? `Output:\n${detail}` : undefined].filter(Boolean).join("\n\n"),
-  };
-}
 const project = process.cwd();
 const store = new PaceStore();
 const vex = new VexRouter();
 const runner = new AppServerRunner();
 const orchestrator = new Orchestrator(store, runner, vex);
-type TurnJob = { session: Session; controller: AbortController; prompt: string };
-type PendingApproval = Extract<Progress, { kind: "approval" }> & { owner?: AbortController };
 
 export default function App({ onClear }: { onClear: () => void }) {
   const { exit } = useApp();
@@ -636,56 +602,23 @@ export default function App({ onClear }: { onClear: () => void }) {
     }
   });
 
-  const shell = async (command: string) => {
-    if (manualApprovalCommand(command)) {
-      const decision = await new Promise<ApprovalDecision>(resolveDecision => {
-        showApproval({
-          kind: "approval", id: `shell-approval-${nextId.current++}`, command,
-          reason: "This command can publish changes or rewrite Git history.",
-          respond: resolveDecision,
-        });
+const shell = createShellRunner({
+    project,
+    nextId,
+    shells,
+    setShellJobs,
+    activity,
+    add,
+    requestApproval: command => new Promise(resolveDecision => {
+      showApproval({
+        kind: "approval",
+        id: `shell-approval-${nextId.current++}`,
+        command,
+        reason: "This command can publish changes or rewrite Git history.",
+        respond: decision => resolveDecision(decision === "accept"),
       });
-      if (decision !== "accept") return;
-    }
-    const id = `shell-${nextId.current++}`;
-    activity({ kind: "activity", id, category: "command", title: `Running: Bash: ${command}`, completed: false });
-    const executable =
-      process.platform === "win32"
-        ? "C:\\Program Files\\Git\\bin\\bash.exe"
-        : "bash";
-    try {
-      const child = spawn(
-        executable,
-        ["--noprofile", "--norc", "-c", command],
-        { cwd: project, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
-      );
-      shells.current.add(child);
-      setShellJobs((value) => value + 1);
-      let output = "";
-      let clipped = false;
-      let failed = false;
-      const append = (chunk: Buffer) => {
-        const text = chunk.toString("utf8");
-        const remaining = 32768 - output.length;
-        if (text.length > remaining) clipped = true;
-        if (remaining > 0) output += text.slice(0, remaining);
-      };
-      child.stdout.on("data", append);
-      child.stderr.on("data", append);
-      child.on("error", (error) => {
-        failed = true;
-        activity({ kind: "activity", id, category: "command", title: `Failed: Bash: ${command}`, detail: String(error), completed: true });
-      });
-      child.on("close", (code) => {
-        shells.current.delete(child);
-        setShellJobs((value) => Math.max(0, value - 1));
-        if (!failed) activity({ kind: "activity", id, category: "command", title: `${code === 0 ? "Ran" : "Failed"}: Bash: ${command} (exit ${code ?? "unknown"})`, detail: `${output.trimEnd() || "(no output)"}${clipped ? "\n[output truncated]" : ""}`, completed: true });
-      });
-    } catch (error) {
-      add("error", `Shell error: ${String(error)}`);
-    }
-  };
-
+    }),
+  });
   const askBtw = async (question: string) => {
     if (!session || !config) return;
     if (!question.trim()) { add("error", "Type /btw <question> to ask a side question."); return; }
@@ -1029,106 +962,11 @@ export default function App({ onClear }: { onClear: () => void }) {
     }
     void runTurn(text, session, config);
   };
-  const runTurn = async (text: string, turnSession: Session, turnConfig: Config) => {
-    const controller = new AbortController();
-    const turnId = ++turnSequence.current;
-    const sessionId = turnSession.id;
-    rememberSession(turnSession);
-    jobs.current.set(sessionId, { session: turnSession, controller, prompt: text });
-    setRunningIds([...jobs.current.keys()]);
-    addFor(sessionId, "you", text);
-    setStatusFor(sessionId, "Starting…");
-    if (!turnSession.turns.length && !turnSession.title) {
-      const luna = turnConfig.models.find(model => model.enabled !== false && model.model === "gpt-6-luna");
-      if (luna) {
-        const titleController = new AbortController();
-        titleAborts.current.set(sessionId, titleController);
-        const titleRoute = { model: luna.model, effort: luna.efforts.includes("low") ? "low" as const : luna.defaultEffort ?? luna.efforts[0] };
-        void runner.run(
-          `Create a short conversation title from this initial user prompt. Return only the title, at most 8 words. Do not answer the prompt.\n\n${text.slice(0, 4000)}`,
-          turnSession.projectPath,
-          titleRoute,
-          undefined,
-          () => {},
-          titleController.signal,
-          "side",
-        ).then(async result => {
-          const title = result.result.replace(/^['"#]+|['"#]+$/g, "").replace(/\s+/g, " ").trim().slice(0, 80);
-          if (!title || turnSession.title) return;
-          turnSession.title = title;
-          await store.save(turnSession, () => activeSessionId.current === sessionId);
-          rememberSession(turnSession);
-          if (activeSessionId.current === sessionId) setSession({ ...turnSession });
-        }).catch(() => {}).finally(() => {
-          if (titleAborts.current.get(sessionId) === titleController) titleAborts.current.delete(sessionId);
-        });
-      }
-    }
-    try {
-      const outcome = await orchestrator.turn(
-        text,
-        turnSession,
-        turnConfig,
-        (progress) => {
-          if (progress.kind === "status") {
-            setStatusFor(sessionId, progress.text);
-            if (activeSessionId.current === sessionId) setSession({ ...turnSession });
-          }
-          if (progress.kind === "route")
-            setStatusFor(sessionId, `Using ${modelName(progress.route)}…`);
-          if (progress.kind === "system") addFor(sessionId, "system", progress.text);
-          if (progress.kind === "activity") {
-            activityFor(sessionId, { ...progress, id: `turn-${turnId}-${progress.id}` });
-            setStatusFor(sessionId, progress.title);
-          }
-          if (progress.kind === "approval") showApproval(progress, sessionId, controller);
-          if (progress.kind === "error") addFor(sessionId, "error", progress.text);
-          if (progress.kind === "message") {
-            setStatusFor(sessionId, "Finishing response…");
-          }
-        },
-        controller.signal,
-        () => activeSessionId.current === sessionId,
-      );
-      if (activeSessionId.current === sessionId) setSession({ ...outcome.session });
-      addFor(sessionId, "codex", outcome.result);
-      if (outcome.stages.length) addFor(sessionId,
-        "meta",
-        formatTurnFooter(
-          outcome.route,
-          outcome.note,
-          outcome.usage,
-          outcome.durationMs,
-          outcome.estimatedCostUsd,
-        ),
-      );
-      for (const artifact of outcome.artifacts) addFor(sessionId, "artifact", artifact);
-      addFor(sessionId, "divider", "");
-      setStatusFor(sessionId, "Done");
-      refreshUsage();
-    } catch (error) {
-      if (controller.signal.aborted) {
-        addFor(sessionId, "meta", "Turn cancelled by user");
-        setStatusFor(sessionId, "Cancelled");
-      } else {
-        addFor(sessionId, "error", String(error));
-        if (error instanceof VexUnavailableError && error.source === "connection") setVexState("failed");
-        setStatusFor(sessionId, "Failed");
-      }
-    } finally {
-      const pending = pendingApprovals.current.get(sessionId);
-      if (pending?.owner === controller) pending.respond("decline");
-      jobs.current.delete(sessionId);
-      if (activeSessionId.current !== sessionId) unreadCompletions.current.add(sessionId);
-      rememberSession(turnSession);
-      setRunningIds([...jobs.current.keys()]);
-      const next = promptQueue.current.take(sessionId);
-      if (next !== undefined) {
-        setQueueVersion(value => value + 1);
-        void runTurn(next, turnSession, turnConfig);
-      }
-    }
-  };
+  const runTurn = createTurnRunner({
+    turnSequence, activeSessionId, jobs, promptQueue, titleAborts, pendingApprovals, unreadCompletions,
+    runner, orchestrator, store, rememberSession, setRunningIds, addFor, activityFor,
+    setStatusFor, showApproval, setSession, setVexState, refreshUsage, setQueueVersion,
+  });
   return (
     <Box flexDirection="column" paddingX={1}>
       {showHeader ? <Header project={project} vexState={vexState} width={stdout.columns ?? 80} /> : null}
