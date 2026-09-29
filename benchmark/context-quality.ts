@@ -209,6 +209,11 @@ async function main() {
           error: run.error, totalEstimatedCostUsd: run.totalEstimatedCostUsd, totalDurationMs: run.totalDurationMs })),
         note: "Checks are automatic gates. Review each answer and diff against its rubric before comparing quality or savings.",
       }, null, 2) + "\n");
+      if (/hit your usage limit/i.test(result.error ?? "")) {
+        console.warn("Codex usage limit reached; remaining arms were not started.");
+        console.log(`Results: ${opts.out}`);
+        return;
+      }
     }
   }
   console.log(`Results: ${opts.out}`);
