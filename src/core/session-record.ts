@@ -48,6 +48,16 @@ function isCheckpoint(value: unknown): boolean {
     (value.estimatedCostUsd !== undefined && !nonnegative(value.estimatedCostUsd))) return false;
   try { parseCheckpoint(JSON.stringify(value.note)); return true; } catch { return false; }
 }
+function isCheckpointGeneration(value: unknown): boolean {
+  return isRecord(value) && typeof value.at === "string" && typeof value.sourceTurnAt === "string" &&
+    typeof value.threadId === "string" && isRecord(value.route) &&
+    (value.route.model === undefined || typeof value.route.model === "string") &&
+    (value.route.effort === undefined || EFFORTS.includes(value.route.effort as (typeof EFFORTS)[number])) &&
+    nonnegative(value.durationMs) && ["valid", "invalid", "failed", "cancelled"].includes(String(value.outcome)) &&
+    (value.usage === undefined || isUsage(value.usage)) &&
+    (value.estimatedCostUsd === undefined || nonnegative(value.estimatedCostUsd)) &&
+    (value.error === undefined || typeof value.error === "string");
+}
 
 export function parseSession(value: unknown, project: string): Session | undefined {
   if (
@@ -63,6 +73,8 @@ export function parseSession(value: unknown, project: string): Session | undefin
       !Object.entries(value.contextByThread).every(([id, reading]) => !!id && isContextMeasurement(reading)))) ||
     (value.compactions !== undefined && (!Array.isArray(value.compactions) || !value.compactions.every(isCompaction))) ||
     (value.checkpoint !== undefined && !isCheckpoint(value.checkpoint)) ||
+    (value.checkpointGenerations !== undefined && (!Array.isArray(value.checkpointGenerations) ||
+      !value.checkpointGenerations.every(isCheckpointGeneration))) ||
     !Array.isArray(value.turns) ||
     !value.turns.every(
       (turn: unknown) =>

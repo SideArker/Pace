@@ -68,6 +68,17 @@ export type CheckpointRecord = {
   usage?: Usage;
   estimatedCostUsd?: number;
 };
+export type CheckpointGeneration = {
+  at: string;
+  sourceTurnAt: string;
+  threadId: string;
+  route: Route;
+  durationMs: number;
+  outcome: "valid" | "invalid" | "failed" | "cancelled";
+  usage?: Usage;
+  estimatedCostUsd?: number;
+  error?: string;
+};
 export type Session = {
   id: string;
   title?: string;
@@ -83,5 +94,6 @@ export type Session = {
   turns: TurnSummary[];
   compactions?: CompactionRecord[];
   checkpoint?: CheckpointRecord;
+  checkpointGenerations?: CheckpointGeneration[];
 };
 export type Notice = (message: string) => void;

@@ -1,7 +1,8 @@
 import { expect, it } from "vitest";
-import { CHECKPOINT_MAX_CHARS, checkpointDue, checkpointHandoff, parseCheckpoint } from "../src/core/checkpoint.js";
+import { CHECKPOINT_MAX_CHARS, checkpointDue, checkpointHandoff, createCheckpointIfDue, parseCheckpoint } from "../src/core/checkpoint.js";
 import { newSession, undoConversationTurn } from "../src/core/sessions.js";
 import type { CheckpointNote } from "../src/shared/types.js";
+import type { CodexRunner } from "../src/integrations/codex.js";
 
 const note: CheckpointNote = {
   complete: true,
@@ -38,4 +39,28 @@ it("requests a checkpoint before retention and invalidates it after undo", () =>
   expect(checkpointDue(session)).toBe(true);
   undoConversationTurn(session);
   expect(session.checkpoint).toBeUndefined();
+});
+
+it("creates a checkpoint in the current thread and records both validation attempts", async () => {
+  const session = newSession(process.cwd(), "manual");
+  session.threadId = "thread-1";
+  session.route = { model: "gpt-6-sol", effort: "medium" };
+  session.turns = Array.from({ length: 16 }, (_, index) => ({ prompt: `p${index}`, result: `r${index}`, at: `turn-${index}` }));
+  let calls = 0;
+  const usage = { input_tokens: 100, cached_input_tokens: 25, cache_write_input_tokens: 0, output_tokens: 20, reasoning_output_tokens: 0 };
+  const runner: CodexRunner = { async run(_prompt, _project, _route, threadId, _progress, _signal, mode) {
+    calls++;
+    expect(threadId).toBe("thread-1");
+    expect(mode).toBe("main");
+    return { threadId, result: calls === 1 ? "{}" : JSON.stringify(note), completed: true, usage,
+      context: { tokens: 120, windowTokens: 1000, model: "gpt-6-sol" } };
+  } };
+  const checkpoint = await createCheckpointIfDue(session, runner, () => {});
+  expect(checkpoint?.sourceTurnAt).toBe("turn-15");
+  expect(checkpoint?.note.constraints).toContain("Keep copy on parse");
+  expect(checkpoint?.usage?.input_tokens).toBe(200);
+  expect(checkpoint?.estimatedCostUsd).toBeGreaterThan(0);
+  expect(session.checkpointGenerations?.map(item => item.outcome)).toEqual(["invalid", "valid"]);
+  expect(session.contextByThread?.["thread-1"]?.tokens).toBe(120);
+  expect(checkpointDue(session)).toBe(false);
 });
