@@ -10,6 +10,25 @@ import { VexRouter } from "../core/vex/client.js";
 import App from "../components/App.js";
 import { execTurn } from "../core/exec.js";
 import { getGitBranch } from "../core/system/git.js";
+
+// Ink clears scrollback with CSI 3J whenever a live frame fills the terminal.
+// Keep its repaint within the visible viewport without changing the UI layout.
+const inkStdout = new Proxy(process.stdout, {
+  get(target, property) {
+    if (property === "write") {
+      return (chunk: string | Uint8Array, ...args: unknown[]) => {
+        const clearTerminal = "\x1b[2J\x1b[3J\x1b[H";
+        const repaintViewport = "\x1b[1;1H\x1b[J";
+        const output = typeof chunk === "string" && chunk.startsWith(clearTerminal)
+          ? repaintViewport + chunk.slice(clearTerminal.length)
+          : chunk;
+        return Reflect.apply(target.write, target, [output, ...args]) as boolean;
+      };
+    }
+    const value = Reflect.get(target, property, target);
+    return typeof value === "function" ? value.bind(target) : value;
+  },
+});
 const require = createRequire(import.meta.url);
 const version = (require("../../package.json") as { version: string }).version;
 const args = process.argv.slice(2);
@@ -85,5 +104,5 @@ else if (args[0] === "doctor") {
   instance = render(<App onClear={() => {
     instance.clear();
     process.stdout.write("\x1b[3J\x1b[2J\x1b[H");
-  }} />, { kittyKeyboard: { mode: "auto" }, exitOnCtrlC: false });
+  }} />, { stdout: inkStdout, kittyKeyboard: { mode: "auto" }, exitOnCtrlC: false });
 }
