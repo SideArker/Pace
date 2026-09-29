@@ -143,6 +143,10 @@ export class AppServerRunner implements CodexRunner {
     let result = "";
     let usage: Usage | undefined;
     let context: Execution["context"];
+    let previousTotal: number | undefined;
+    let turnStarted = false;
+    let usageEvents = 0;
+    let usageKnown = true;
     let thread: JsonRecord | undefined;
     let failure: string | undefined;
     let completed = false;
@@ -156,15 +160,28 @@ export class AppServerRunner implements CodexRunner {
       }
       if (message.method === "turn/completed") {
         const turn = isRecord(params.turn) ? params.turn : {};
-        usage = appUsage(params.tokenUsage) ?? appUsage(turn.tokenUsage) ?? appUsage(turn.usage) ?? usage;
+        if (!usageEvents) usage = appUsage(params.tokenUsage) ?? appUsage(turn.tokenUsage) ?? appUsage(turn.usage);
         if (turn.status === "failed" || turn.status === "interrupted") failure = isRecord(turn.error) && typeof turn.error.message === "string" ? turn.error.message : `Codex turn ${String(turn.status)}`;
         completed = turn.status === "completed";
         turnResolve();
         return;
       }
       if (message.method === "thread/tokenUsage/updated") {
-        usage = appUsage(params.tokenUsage) ?? usage;
-        context = contextMeasurement(params.tokenUsage, route.model);
+        const tokenUsage = isRecord(params.tokenUsage) ? params.tokenUsage : {};
+        const total = isRecord(tokenUsage.total) ? tokenUsage.total.totalTokens : undefined;
+        if (!turnStarted) {
+          if (typeof total === "number" && Number.isFinite(total)) previousTotal = total;
+        } else if (typeof total !== "number" || !Number.isFinite(total)) {
+          usageKnown = false;
+          context = undefined;
+        } else if (previousTotal === undefined || total > previousTotal) {
+          previousTotal = total;
+          usageEvents++;
+          const last = appUsage(tokenUsage);
+          if (last) usage = usage ? sumUsage(usage, last) : last;
+          else usageKnown = false;
+          context = contextMeasurement(tokenUsage, route.model);
+        }
       }
       if (message.method === "error") {
         failure = isRecord(params.error) && typeof params.error.message === "string" ? params.error.message : "Codex app-server error";
@@ -252,12 +269,13 @@ export class AppServerRunner implements CodexRunner {
         signal?.throwIfAborted();
         await onProgress({ kind: "status", text: "Working…" });
         signal?.throwIfAborted();
+        turnStarted = true;
         await awaitAbort(server.request("turn/start", appServerTurnParams(prompt, cwd, route, id, mode, trustedFolders)));
         await awaitAbort(turnDone);
       } finally { signal?.removeEventListener("abort", abortTurn); }
       if (failure) throw new Error(failure);
       if (!completed) throw new Error("Codex stream ended without turn.completed");
-      return { threadId: id, result: result || "Codex completed without a final message.", completed, usage, context };
+      return { threadId: id, result: result || "Codex completed without a final message.", completed, usage: usageKnown ? usage : undefined, context };
     } finally { server.kill(); }
   }
 }

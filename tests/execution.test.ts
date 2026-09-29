@@ -343,6 +343,35 @@ it('reads current context from the raw App Server usage event', async () => {
   expect(execution.usage).toMatchObject({ input_tokens: 120_000, output_tokens: 10_000 });
 });
 
+it('sums distinct model requests without counting resumed history or duplicate usage events', async () => {
+  const usageEvent = (totalTokens: number, inputTokens: number, outputTokens: number) => ({
+    method: 'thread/tokenUsage/updated', params: { tokenUsage: {
+      total: { totalTokens }, last: { totalTokens: inputTokens + outputTokens, inputTokens, outputTokens },
+      modelContextWindow: 1000,
+    } },
+  });
+  const runner = new AppServerRunner(onMessage => ({
+    setRequestHandler() {}, notify() {}, respond() {}, kill() {},
+    async request(method: string) {
+      if (method === 'thread/resume') {
+        onMessage(usageEvent(1000, 700, 100));
+        return { thread: { id: 'thread-1' } };
+      }
+      if (method === 'turn/start') queueMicrotask(() => {
+        onMessage(usageEvent(1000, 700, 100));
+        onMessage(usageEvent(1100, 80, 20));
+        onMessage(usageEvent(1100, 80, 20));
+        onMessage(usageEvent(1200, 90, 10));
+        onMessage({ method: 'turn/completed', params: { turn: { status: 'completed' } } });
+      });
+      return {};
+    },
+  }));
+  const execution = await runner.run('work', process.cwd(), { model: 'gpt-6-sol', effort: 'high' }, 'thread-1', () => {});
+  expect(execution.usage).toMatchObject({ input_tokens: 170, output_tokens: 30 });
+  expect(execution.context).toEqual({ tokens: 100, windowTokens: 1000, model: 'gpt-6-sol' });
+});
+
 it('gives Codex independent Vex MCP access without key in command arguments', () => {
   expect(codexOptions('/installed/vex/dist/index.js')).toEqual({ config: { mcp_servers: { vex: { command: process.execPath, args: ['/installed/vex/dist/index.js', 'mcp', 'serve'], env_vars: ['OPENROUTER_API_KEY'] } } } });
 });
