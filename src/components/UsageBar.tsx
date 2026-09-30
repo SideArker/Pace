@@ -2,11 +2,16 @@ import React from "react";
 import { Box, Text } from "ink";
 import type { UsageLimits, UsageWindow } from "../integrations/usage.js";
 
-function Meter({ label, window }: { label: string; window: UsageWindow }) {
+function windowLabel(window: UsageWindow): string {
+  const minutes = window.windowDurationMins;
+  return minutes === null ? "Window" : minutes % 1440 === 0 ? `${minutes / 1440}d` : minutes % 60 === 0 ? `${minutes / 60}h` : `${minutes}m`;
+}
+
+function Meter({ label, window, compact }: { label: string; window: UsageWindow; compact?: boolean }) {
   const used = Math.max(0, Math.min(100, window.usedPercent));
   const left = 100 - used;
-  const blocks = Math.round(left / 5);
-  const empty = Math.max(0, 20 - blocks);
+  const blocks = Math.round(left / (compact ? 10 : 5));
+  const empty = Math.max(0, (compact ? 10 : 20) - blocks);
   const barColor = left < 10 ? "#F87171" : left < 25 ? "#FBBF24" : "#34D399";
 
   return (
@@ -14,8 +19,10 @@ function Meter({ label, window }: { label: string; window: UsageWindow }) {
       <Text color="#94A3B8" bold>
         [{label}]
       </Text>
-      <Text color={barColor}>{"█".repeat(blocks)}</Text>
-      <Text color="#334155">{"░".repeat(empty)}</Text>
+      <Text>
+        <Text color={barColor}>{"█".repeat(blocks)}</Text>
+        <Text color="#334155">{"█".repeat(empty)}</Text>
+      </Text>
       <Text color={barColor} bold>
         {left.toFixed(0)}% left
       </Text>
@@ -24,21 +31,27 @@ function Meter({ label, window }: { label: string; window: UsageWindow }) {
   );
 }
 
-export function UsageBar({ limits, error }: { limits?: UsageLimits; error?: string }) {
+export function UsageBar({
+  limits,
+  error,
+  width,
+  marginTop = 0,
+}: {
+  limits?: UsageLimits;
+  error?: string;
+  width?: number;
+  marginTop?: number;
+}) {
+  const compact = width !== undefined && width < 50;
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="#334155" paddingX={1} marginTop={1}>
+    <Box flexDirection="column" borderStyle="round" borderColor="#334155" paddingX={1} width={width} marginTop={marginTop}>
       <Text color="#59E6A7" bold>◈ Codex Usage</Text>
-      {limits?.primary ? <Meter label={windowLabel(limits.primary)} window={limits.primary} /> : null}
-      {limits?.secondary ? <Meter label={windowLabel(limits.secondary)} window={limits.secondary} /> : null}
+      {limits?.primary ? <Meter label={windowLabel(limits.primary)} window={limits.primary} compact={compact} /> : null}
+      {limits?.secondary ? <Meter label={windowLabel(limits.secondary)} window={limits.secondary} compact={compact} /> : null}
       {error && (limits?.primary || limits?.secondary) ? <Text color="gray">{error} · showing last reading</Text> : null}
       {!limits?.primary && !limits?.secondary ? (
         <Text color="gray">{error ?? "Loading usage…"}</Text>
       ) : null}
     </Box>
   );
-}
-
-function windowLabel(window: UsageWindow): string {
-  const minutes = window.windowDurationMins;
-  return minutes === null ? "Window" : minutes % 1440 === 0 ? `${minutes / 1440}d` : minutes % 60 === 0 ? `${minutes / 60}h` : `${minutes}m`;
 }

@@ -31,6 +31,7 @@ export function ComposerFrame({ children, width, session, shellMode, approvalMod
     <Box flexDirection="column" width="100%" marginTop={1}>
       <Text color="#334155" wrap="truncate">{rule}</Text>
       {children}
+      <Text color="#334155" wrap="truncate">{rule}</Text>
       <Box flexDirection={wide ? "row" : "column"} justifyContent="space-between" width="100%">
         {hints}
         {width < 50 ? <Box flexDirection="column"><Text color="#A5B4FC" wrap="truncate">{`${contextLabel(session)} · ${mode}`}</Text><Text color="#A5B4FC" wrap="truncate">{`Approval: ${approval}`}</Text></Box>

@@ -21,7 +21,7 @@ export const letterGradients = ["#59E6A7", "#4ADE80", "#2DD4BF", "#38BDF8"] as c
 
 export function HeaderLogo({ width }: { width: number }) {
   return (
-    <Box flexDirection="column" marginBottom={1}>
+    <Box flexDirection="column">
       {width >= 42 ? (
         <Box flexDirection="column">
           {paceShadowLetters.map((row, rIdx) => (
@@ -58,19 +58,16 @@ export function HeaderLogo({ width }: { width: number }) {
 export function HeaderStatus({
   project,
   vexState,
-  width,
 }: {
   project: string;
   vexState: "connecting" | "connected" | "failed";
-  width: number;
+  width?: number;
 }) {
   const branch = useMemo(() => getGitBranch(project), [project]);
-  const dividerLength = Math.max(20, Math.min(width - 4, 72));
 
   return (
     <Box flexDirection="column" marginBottom={1}>
-
-      <Box gap={1} marginTop={1} flexWrap="wrap">
+      <Box gap={1} flexWrap="wrap">
         <Text color="#A7F3D0" bold>
           📁 {basename(project)}
         </Text>
@@ -91,30 +88,10 @@ export function HeaderStatus({
               : "◌ Vex MCP connecting..."}
         </Text>
       </Box>
-
-      <Box marginTop={0}>
-        <Text dimColor>Type </Text>
-        <Text color="#38BDF8" bold>
-          /help
-        </Text>
-        <Text dimColor> for commands · </Text>
-        <Text color="#38BDF8" bold>
-          !cmd
-        </Text>
-        <Text dimColor> for bash · </Text>
-        <Text color="#38BDF8" bold>
-          /models
-        </Text>
-        <Text dimColor> for routing</Text>
-      </Box>
-
-      <Box marginTop={0}>
-        <Text color="#334155">{"─".repeat(dividerLength)}</Text>
-      </Box>
     </Box>
   );
 }
 
 export function Header(props: Parameters<typeof HeaderStatus>[0]) {
-  return <Box flexDirection="column"><HeaderLogo width={props.width} /><HeaderStatus {...props} /></Box>;
+  return <Box flexDirection="column"><HeaderLogo width={props.width ?? 80} /><HeaderStatus {...props} /></Box>;
 }

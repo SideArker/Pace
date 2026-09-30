@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import React from "react";
 import { renderToString } from "ink";
-import { ConvoMenu, ConversationPicker, ResumeMenu } from "../src/components/Menus.js";
+import { ConvoMenu, ConversationPicker, ResumeMenu, sortConversations } from "../src/components/Menus.js";
 import { newSession, PaceStore, rewindConversation, deleteConversationTurn, undoConversationTurn } from "../src/core/sessions.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -34,6 +34,21 @@ describe("Conversation editing and undo logic", () => {
     expect(output).toContain("running");
     expect(output).toContain("done");
     expect(output).toContain("Finished");
+  });
+
+  it("sorts conversations by 1. Running, 2. Approve, 3. done (by last active time)", () => {
+    const sorted = sortConversations([
+      { id: "1", prompt: "Done older", state: "done", updatedAt: "2026-09-30T10:00:00Z" },
+      { id: "2", prompt: "Running now", state: "running", updatedAt: "2026-09-30T09:00:00Z" },
+      { id: "3", prompt: "Waiting approval", state: "approval", updatedAt: "2026-09-30T08:00:00Z" },
+      { id: "4", prompt: "Done newer", state: "done", updatedAt: "2026-09-30T12:00:00Z" },
+    ]);
+
+    expect(sorted.map(s => s.id)).toEqual(["2", "3", "4", "1"]);
+    expect(sorted[0]!.state).toBe("running");
+    expect(sorted[1]!.state).toBe("approval");
+    expect(sorted[2]!.id).toBe("4"); // Done newer (12:00) before Done older (10:00)
+    expect(sorted[3]!.id).toBe("1");
   });
 
   it("renders ConvoMenu with turn summaries without error", () => {
