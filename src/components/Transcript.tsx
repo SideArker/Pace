@@ -27,6 +27,22 @@ export type Line = {
   sourceId?: string;
 };
 
+// Ink can only append settled lines to terminal history. Keep running activity
+// live, along with later lines that may still need to be redrawn.
+export function splitTranscript(lines: Line[]): { history: Line[][]; live: Line[] } {
+  let settledEnd = lines.findIndex(line => line.activity && !line.activity.completed);
+  if (settledEnd < 0) settledEnd = lines.length;
+  while (settledEnd > 0 && lines[settledEnd - 1]?.activity?.category === "thinking") settledEnd--;
+
+  const history: Line[][] = [];
+  for (const line of lines.slice(0, settledEnd)) {
+    const group = history.at(-1);
+    if (line.activity?.category === "thinking" && group?.[0]?.activity?.category === "thinking") group.push(line);
+    else history.push([line]);
+  }
+  return { history, live: lines.slice(settledEnd) };
+}
+
 const activityColors = {
   thinking: "magentaBright",
   command: "#38BDF8",
@@ -68,24 +84,15 @@ export function Transcript({
   lines,
   outputsExpanded,
   detailsExpanded,
-  rows,
-  scrollBack,
   width = 80,
 }: {
   lines: Line[];
   outputsExpanded: boolean;
   detailsExpanded: boolean;
-  rows: number;
-  scrollBack: number;
   width?: number;
 }) {
-  // Keep Ink's redraw area within one terminal screen; scroll through the
-  // transcript by changing its end offset instead of rendering a huge buffer.
-  const count = Math.max(1, rows - 12);
-  const end = Math.max(0, lines.length - scrollBack);
-  const visible = lines.slice(Math.max(0, end - count), end);
   const displayLines: (Line & { thinkingCount?: number })[] = [];
-  for (const line of visible) {
+  for (const line of lines) {
     const previous = displayLines.at(-1);
     if (line.activity?.category === "thinking" && previous?.activity?.category === "thinking") {
       displayLines[displayLines.length - 1] = {
@@ -105,9 +112,6 @@ export function Transcript({
 
   return (
     <Box flexDirection="column">
-      {scrollBack > 0 ? (
-        <Text color="#94A3B8">↑ Earlier activity · PageDown to return</Text>
-      ) : null}
       {displayLines.map((line) => (
         <Box
           key={line.id}

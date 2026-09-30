@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import React from "react";
 import { renderToString } from "ink";
-import { Header, Transcript, type Line } from "../src/components/Transcript.js";
+import { Header, Transcript, splitTranscript, type Line } from "../src/components/Transcript.js";
 
 describe("Header component", () => {
   it("creates React element without error", () => {
@@ -36,7 +36,7 @@ describe("activity transcript", () => {
   it("labels routing notices as System messages", () => {
     const output = renderToString(React.createElement(Transcript, {
       lines: [{ id: 1, role: "system", text: "Vex routed to GPT-6 Sol High.", spaceBefore: false }],
-      outputsExpanded: false, detailsExpanded: false, rows: 24, scrollBack: 0,
+      outputsExpanded: false, detailsExpanded: false,
     }), { columns: 80 });
     expect(output).toContain("System");
     expect(output).toContain("Vex routed to GPT-6 Sol High.");
@@ -48,7 +48,7 @@ describe("activity transcript", () => {
   ];
   const render = (completed = false) => renderToString(React.createElement(Transcript, {
     lines: [{ ...lines[0]!, activity: { ...lines[0]!.activity!, completed } }, lines[1]!],
-    outputsExpanded: false, detailsExpanded: false, rows: 24, scrollBack: 0,
+    outputsExpanded: false, detailsExpanded: false,
   }), { columns: 80 });
 
   it("keeps thinking in the transcript and compacts completed commands", () => {
@@ -69,7 +69,7 @@ describe("activity transcript", () => {
         { id: 3, role: "activity", text: "Ran: rg foo", spaceBefore: false, activity: { category: "command", completed: true } },
         { id: 4, role: "activity", text: "Thinking", spaceBefore: false, activity: { category: "thinking", detail: "After command", completed: true } },
       ],
-      outputsExpanded: false, detailsExpanded: true, rows: 24, scrollBack: 0,
+      outputsExpanded: false, detailsExpanded: true,
     }), { columns: 80 });
     expect(output).toContain("2 thoughts");
     expect(output).toContain("First clue");
@@ -83,14 +83,14 @@ describe("activity transcript", () => {
     const output = renderToString(React.createElement(Transcript, {
       lines: [{ id: 1, role: "activity", text: "Edited src/example.ts", spaceBefore: false,
         activity: { category: "files", detail: "@@ -1 +1 @@\n-old\n+new", completed: false } }],
-      outputsExpanded: false, detailsExpanded: false, rows: 24, scrollBack: 0,
+      outputsExpanded: false, detailsExpanded: false,
     }), { columns: 80 });
     expect(output).toContain("Edited src/example.ts");
     expect(output).toContain("-old");
     expect(output).toContain("+new");
   });
 
-  it("renders only one terminal screen of transcript while scrolling back", () => {
+  it("renders the full transcript for terminal history", () => {
     const output = renderToString(React.createElement(Transcript, {
       lines: Array.from({ length: 40 }, (_, index) => ({
         id: index,
@@ -98,13 +98,29 @@ describe("activity transcript", () => {
         text: `entry-${index}`,
         spaceBefore: false,
       })),
-      outputsExpanded: false, detailsExpanded: false, rows: 24, scrollBack: 4,
+      outputsExpanded: false, detailsExpanded: false,
     }), { columns: 80 });
 
-    expect(output).toContain("entry-24");
-    expect(output).toContain("entry-35");
-    expect(output).not.toContain("entry-23");
-    expect(output).not.toContain("entry-36");
+    expect(output).toContain("entry-0");
+    expect(output).toContain("entry-39");
+  });
+
+  it("keeps live agent activity out of settled terminal history", () => {
+    const lines: Line[] = [
+      { id: 1, role: "you", text: "Question", spaceBefore: false },
+      { id: 2, role: "activity", text: "Running: test", spaceBefore: false, sourceId: "cmd", activity: { category: "command", completed: false } },
+      { id: 3, role: "info", text: "Following notice", spaceBefore: false },
+    ];
+    const before = splitTranscript(lines);
+    expect(before.history.flat().map(line => line.id)).toEqual([1]);
+    expect(before.live.map(line => line.id)).toEqual([2, 3]);
+
+    const updated = splitTranscript(lines.map(line => line.id === 2
+      ? { ...line, text: "Ran: test", activity: { category: "command" as const, completed: true } }
+      : line));
+    expect(updated.history.flat().map(line => line.id)).toEqual([1, 2, 3]);
+    expect(updated.live).toEqual([]);
+    expect(updated.history[0]).toEqual(before.history[0]);
   });
 });
 
@@ -112,7 +128,7 @@ describe("Markdown transcript", () => {
   it("emits a terminal hyperlink for Markdown links", () => {
     const output = renderToString(React.createElement(Transcript, {
       lines: [{ id: 1, role: "codex", text: "Read [docs](https://example.com/page).", spaceBefore: false }],
-      outputsExpanded: false, detailsExpanded: false, rows: 24, scrollBack: 0,
+      outputsExpanded: false, detailsExpanded: false,
     }), { columns: 80 });
     expect(output).toContain("\u001b]8;;https://example.com/page\u001b\\");
     expect(output).toContain("docs (https://example.com/page)");
@@ -122,7 +138,7 @@ describe("Markdown transcript", () => {
   it("supports parenthesized URLs and local file links without unsafe schemes", () => {
     const output = renderToString(React.createElement(Transcript, {
       lines: [{ id: 1, role: "codex", text: "[web](https://example.com/a_(b)) [file](src/components/App.tsx) [bad](javascript:alert(1))", spaceBefore: false }],
-      outputsExpanded: false, detailsExpanded: false, rows: 24, scrollBack: 0,
+      outputsExpanded: false, detailsExpanded: false,
     }), { columns: 120 });
     expect(output).toContain("\u001b]8;;https://example.com/a_(b)\u001b\\");
     expect(output).toContain("\u001b]8;;file:///");
@@ -138,7 +154,7 @@ describe("Markdown transcript", () => {
         { id: 4, role: "codex", text: "> quoted", spaceBefore: false },
         { id: 5, role: "codex", text: "```ts\nconst answer = 42;\n```", spaceBefore: false },
       ],
-      outputsExpanded: false, detailsExpanded: false, rows: 24, scrollBack: 0,
+      outputsExpanded: false, detailsExpanded: false,
     }), { columns: 80 });
 
     expect(output).toContain("Plan");

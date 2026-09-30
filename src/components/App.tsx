@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from "react";
-import { Box, Text, useApp, useInput, useStdout } from "ink";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Box, Static, Text, useApp, useInput, useStdout } from "ink";
 import type { ApprovalDecision, Progress } from "../integrations/codex.js";
 import type { Config, Session, Route } from "../shared/types.js";
 import { PaceStore, newSession, rewindConversation, deleteConversationTurn, undoConversationTurn } from "../core/sessions.js";
@@ -15,7 +15,7 @@ import { formatTurnFooter, modelName } from "./turn-format.js";
 import { readUsageLimits } from "../integrations/usage.js";
 import type { UsageLimits } from "../integrations/usage.js";
 import { Composer, commandToken } from "./Composer.js";
-import { Header, Transcript, type Line } from "./Transcript.js";
+import { Header, Transcript, splitTranscript, type Line } from "./Transcript.js";
 import { UsageBar } from "./UsageBar.js";
 import { CommandMenu, ConversationPicker, ConvoMenu, ModelMenu, ResumeMenu, type ConversationChoice } from "./Menus.js";
 import { resolve } from "node:path";
@@ -82,7 +82,6 @@ export default function App({ onClear }: { onClear: () => void }) {
   const [usageError, setUsageError] = useState<string>();
   const [showUsage, setShowUsage] = useState(false);
   const [showHeader, setShowHeader] = useState(true);
-  const [scrollBack, setScrollBack] = useState(0);
   const [selection, setSelection] = useState(0);
   const [tick, setTick] = useState(0);
   const [shellMode, setShellMode] = useState(false);
@@ -417,7 +416,6 @@ export default function App({ onClear }: { onClear: () => void }) {
       setPickerIndex(targetIndex < 0 ? openSessions.length : targetIndex);
       setDraft(sessionDrafts.current.get(target.id) ?? "");
       setShowHeader(true);
-      setScrollBack(0);
       if (sessionLines.current.has(target.id)) setLines(sessionLines.current.get(target.id)!);
       else renderSessionTurns(target);
       setApproval(pendingApprovals.current.get(target.id));
@@ -512,14 +510,6 @@ export default function App({ onClear }: { onClear: () => void }) {
       }
     }
     if (key.ctrl && input === "o") setOutputsExpanded(value => !value);
-    if (key.pageUp) {
-      setScrollBack(value => Math.min(value + Math.max(1, (stdout.rows ?? 24) - 12), lines.length));
-      return;
-    }
-    if (key.pageDown) {
-      setScrollBack(value => Math.max(0, value - Math.max(1, (stdout.rows ?? 24) - 12)));
-      return;
-    }
     if (modelMenu) {
       const size = modelMenu === "models" ? menuModels.length : EFFORTS.length;
       if (key.escape) {
@@ -728,7 +718,6 @@ const shell = createShellRunner({
           setPickerIndex(openSessions.length);
           setShowHeader(true);
           setShowUsage(false);
-          setScrollBack(0);
           setStatus("Ready");
           setApproval(undefined);
         } catch (error) {
@@ -1034,10 +1023,14 @@ const shell = createShellRunner({
     runner, orchestrator, store, rememberSession, setRunningIds, addFor, activityFor,
     setStatusFor, showApproval, setSession, setVexState, refreshUsage, setQueueVersion,
   });
+  const { history: settledLines, live: liveLines } = useMemo(() => splitTranscript(lines), [lines]);
   return (
     <Box flexDirection="column" paddingX={1}>
+      <Static key={`${session?.id ?? "startup"}:${lines[0]?.id ?? "empty"}`} items={settledLines}>
+        {group => <Transcript lines={group} outputsExpanded detailsExpanded width={stdout.columns ?? 80} />}
+      </Static>
       {showHeader ? <Header project={project} vexState={vexState} width={stdout.columns ?? 80} session={session} /> : null}
-      <Transcript lines={lines} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} rows={stdout.rows ?? 24} scrollBack={scrollBack} width={stdout.columns ?? 80} />
+      <Transcript lines={liveLines} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} width={stdout.columns ?? 80} />
       {modelMenu ? <ModelMenu mode={modelMenu} models={menuModels} selectedModel={menuModel} selectedIndex={menuIndex} config={config} /> : null}
       {resumeMenu ? <ResumeMenu choices={resumeChoices} selectedIndex={menuIndex} runningIds={runningIds} processIds={resumeProcessIds} missingProjectPaths={missingProjectPaths} /> : null}
       {convoMenu && session ? <ConvoMenu turns={session.turns} selectedIndex={menuIndex} /> : null}
