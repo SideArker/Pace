@@ -74,9 +74,10 @@ function activityIcon(line: Line): string {
     : activityIcons[line.activity!.category];
 }
 
-function DiffDetail({ detail }: { detail: string }) {
-  return <Box flexDirection="column">{detail.slice(-12000).split("\n").map((line, index) => (
-    <Text key={index} color={line.startsWith("+") && !line.startsWith("+++") ? "#34D399" : line.startsWith("-") && !line.startsWith("---") ? "#F87171" : "#94A3B8"} wrap="wrap">{line || " "}</Text>
+function DiffDetail({ detail, livePreview }: { detail: string; livePreview: boolean }) {
+  const lines = detail.slice(-12000).split("\n");
+  return <Box flexDirection="column">{(livePreview ? lines.slice(-2) : lines).map((line, index) => (
+    <Text key={index} color={line.startsWith("+") && !line.startsWith("+++") ? "#34D399" : line.startsWith("-") && !line.startsWith("---") ? "#F87171" : "#94A3B8"} wrap={livePreview ? "truncate" : "wrap"}>{line || " "}</Text>
   ))}</Box>;
 }
 
@@ -84,11 +85,13 @@ export function Transcript({
   lines,
   outputsExpanded,
   detailsExpanded,
+  livePreview = false,
   width = 80,
 }: {
   lines: Line[];
   outputsExpanded: boolean;
   detailsExpanded: boolean;
+  livePreview?: boolean;
   width?: number;
 }) {
   const displayLines: (Line & { thinkingCount?: number })[] = [];
@@ -178,8 +181,8 @@ export function Transcript({
                   borderColor="#475569"
                 >
                   {line.activity.category === "files"
-                    ? <DiffDetail detail={line.activity.detail} />
-                    : <Text color="gray" wrap="wrap">{line.activity.detail.slice(-12000)}</Text>}
+                    ? <DiffDetail detail={line.activity.detail} livePreview={livePreview} />
+                    : <Text color="gray" wrap={livePreview ? "truncate" : "wrap"}>{livePreview ? line.activity.detail.slice(-500).split("\n").slice(-2).join("\n") : line.activity.detail.slice(-12000)}</Text>}
                 </Box>
               ) : null}
             </Box>

@@ -1027,10 +1027,10 @@ const shell = createShellRunner({
   return (
     <Box flexDirection="column" paddingX={1}>
       <Static key={`${session?.id ?? "startup"}:${lines[0]?.id ?? "empty"}`} items={settledLines}>
-        {group => <Transcript lines={group} outputsExpanded detailsExpanded width={stdout.columns ?? 80} />}
+        {group => <Transcript key={group[0]?.id} lines={group} outputsExpanded detailsExpanded width={stdout.columns ?? 80} />}
       </Static>
       {showHeader ? <Header project={project} vexState={vexState} width={stdout.columns ?? 80} session={session} /> : null}
-      <Transcript lines={liveLines} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} width={stdout.columns ?? 80} />
+      <Transcript lines={liveLines.slice(-Math.max(1, Math.floor(((stdout.rows ?? 24) - 12) / 4)))} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} livePreview width={stdout.columns ?? 80} />
       {modelMenu ? <ModelMenu mode={modelMenu} models={menuModels} selectedModel={menuModel} selectedIndex={menuIndex} config={config} /> : null}
       {resumeMenu ? <ResumeMenu choices={resumeChoices} selectedIndex={menuIndex} runningIds={runningIds} processIds={resumeProcessIds} missingProjectPaths={missingProjectPaths} /> : null}
       {convoMenu && session ? <ConvoMenu turns={session.turns} selectedIndex={menuIndex} /> : null}
