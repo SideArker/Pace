@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { contextMeasurement, contextPercent, measuredContext } from "../src/core/context.js";
-import { contextLabel } from "../src/components/Header.js";
+import { contextLabel } from "../src/components/ComposerFrame.js";
 import { newSession } from "../src/core/sessions.js";
 
 it("uses the last model request and never cumulative billed tokens for context", () => {

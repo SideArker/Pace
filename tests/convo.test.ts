@@ -17,7 +17,7 @@ describe("Conversation editing and undo logic", () => {
     }), { columns: 100 });
     expect(output).toContain(available.projectPath);
     expect(output).toContain(missing.projectPath);
-    expect(output).toContain('(missing; restore this folder)');
+    expect(output).toContain('(missing; use pace reconnect)');
     expect(output).toContain('(unavailable)');
   });
 

@@ -30,6 +30,7 @@ export function UsageBar({ limits, error }: { limits?: UsageLimits; error?: stri
       <Text color="#59E6A7" bold>◈ Codex Usage</Text>
       {limits?.primary ? <Meter label={windowLabel(limits.primary)} window={limits.primary} /> : null}
       {limits?.secondary ? <Meter label={windowLabel(limits.secondary)} window={limits.secondary} /> : null}
+      {error && (limits?.primary || limits?.secondary) ? <Text color="gray">{error} · showing last reading</Text> : null}
       {!limits?.primary && !limits?.secondary ? (
         <Text color="gray">{error ?? "Loading usage…"}</Text>
       ) : null}

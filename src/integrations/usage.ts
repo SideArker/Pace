@@ -4,6 +4,27 @@ import { dirname, join } from "node:path";
 
 export type UsageWindow = { usedPercent: number; windowDurationMins: number | null };
 export type UsageLimits = { primary?: UsageWindow; secondary?: UsageWindow };
+export type UsageWarningLevels = Partial<Record<"5h" | "7d", 50 | 25 | 10>>;
+
+export function usageWarnings(limits: UsageLimits, previous: UsageWarningLevels): {
+  levels: UsageWarningLevels;
+  messages: string[];
+} {
+  const levels = { ...previous };
+  const messages: string[] = [];
+  for (const [label, minutes] of [["5h", 300], ["7d", 10080]] as const) {
+    const window = [limits.primary, limits.secondary].find(item => item?.windowDurationMins === minutes);
+    if (!window) continue;
+    const remaining = 100 - window.usedPercent;
+    const threshold = ([10, 25, 50] as const).find(value => remaining < value);
+    if (threshold && (!previous[label] || threshold < previous[label])) {
+      messages.push(`Codex ${label} usage warning: ${remaining.toFixed(1)}% remaining (below ${threshold}%).`);
+    }
+    if (threshold) levels[label] = threshold;
+    else delete levels[label];
+  }
+  return { levels, messages };
+}
 
 type RateLimitResponse = {
   rateLimits?: { primary?: UsageWindow | null; secondary?: UsageWindow | null };

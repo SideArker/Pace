@@ -28,6 +28,7 @@ export const DEFAULT_CONFIG: Config = {
   ],
   defaultRoute: { model: "gpt-6-sol", effort: "high" },
   routingMode: "auto",
+  approvalMode: "request-approval",
 };
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -114,6 +115,8 @@ export function parseConfig(value: unknown): Config {
     throw new Error("defaultRoute is not in configured model options");
   if (value.routingMode !== "auto" && value.routingMode !== "manual")
     throw new Error("routingMode must be auto or manual");
+  if (value.approvalMode !== undefined && !["full-access", "request-approval", "limited"].includes(value.approvalMode as string))
+    throw new Error("approvalMode must be full-access, request-approval, or limited");
   if (
     value.trustedFolders !== undefined &&
     (!Array.isArray(value.trustedFolders) ||
@@ -135,6 +138,7 @@ export function parseConfig(value: unknown): Config {
     models,
     defaultRoute,
     routingMode: value.routingMode,
+    approvalMode: (value.approvalMode ?? "request-approval") as Config["approvalMode"],
     trustedFolders: value.trustedFolders as string[] | undefined,
     skillFolder: value.skillFolder as string | null | undefined,
     disabledSkills: value.disabledSkills as string[] | undefined,

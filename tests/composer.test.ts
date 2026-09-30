@@ -1,7 +1,17 @@
 import React from "react";
-import { renderToString } from "ink";
+import { renderToString, Text } from "ink";
 import { expect, it } from "vitest";
 import { Composer, commandRanges, commandToken, inputColumns, isNewlineKey, paceGradient, verticalCursor } from "../src/components/Composer.js";
+import { ComposerFrame } from "../src/components/ComposerFrame.js";
+import { newSession } from "../src/core/sessions.js";
+import { normalizeNewCommand } from "../src/components/App.js";
+
+it("treats ./new as a new conversation command", () => {
+  expect(normalizeNewCommand("./new")).toBe("/new");
+  expect(normalizeNewCommand(" ./new ")).toBe("/new");
+  expect(normalizeNewCommand("./new extra")).toBe("/new extra");
+  expect(normalizeNewCommand("./newfile")).toBe("./newfile");
+});
 
 it("maps the PACE gradient across terminal columns", () => {
   expect(paceGradient(0, 80)).toBe("#59E6A7");
@@ -46,13 +56,47 @@ it("marks every slash command in multiline input", () => {
   expect(commandRanges("@review and /help")).toEqual([{ start: 0, end: 7 }, { start: 12, end: 17 }]);
 });
 
-it("shows the newline hint before typing", () => {
-  const output = renderToString(React.createElement(Composer, {
+it("frames input with command help and compact routing mode below it", () => {
+  const composer = React.createElement(Composer, {
     value: "", onChange: () => {}, onSubmit: () => {}, history: [], disabled: false,
     shellMode: false, placeholder: "Ask Pace", onComplete: () => {},
+  });
+  const output = renderToString(React.createElement(ComposerFrame, {
+    width: 80, shellMode: false, children: composer,
   }), { columns: 80 });
+  expect(output).not.toContain("Auto routing");
+  expect(output).toContain("/help for commands");
+  expect(output).toContain("type ! to run commands");
+  expect(output).not.toContain("!cmd for bash");
+  expect(output).toContain("Context ? · auto · Request Approval");
+  expect(output).toContain("Context ?");
+  expect(output.indexOf("Context ?")).toBeGreaterThan(output.indexOf("Ask Pace"));
   expect(output).toContain("newline");
   expect(output).toContain("Shift");
+  const lines = output.split("\n");
+  expect(lines.filter(line => line.includes("───"))).toHaveLength(1);
+  expect(lines.findIndex(line => line.includes("/help shortcuts"))).toBe(lines.findIndex(line => line.includes("/help for commands")) + 1);
+});
+
+it("keeps both composer hints on one footer row in wide terminals", () => {
+  const output = renderToString(React.createElement(ComposerFrame, {
+    width: 140, shellMode: false, children: React.createElement(Text, null, "Input"),
+  }), { columns: 140 });
+  const hintLine = output.split("\n").find(line => line.includes("/help for commands"));
+  expect(hintLine).toContain("/help shortcuts · Shift+Enter newline");
+});
+
+it("keeps context visible below input in narrow terminals", () => {
+  const session = newSession(process.cwd(), "manual");
+  session.route = { model: "gpt-6-sol", effort: "high" };
+  const output = renderToString(React.createElement(ComposerFrame, {
+    width: 30, session, shellMode: false, children: React.createElement(Text, null, "Input"),
+  }), { columns: 30 });
+  expect(output).toContain("Context ? · manual");
+  expect(output).toContain("Approval: Request Approval");
+  expect(output).toContain("Context ?");
+  expect(output.indexOf("Context ?")).toBeGreaterThan(output.indexOf("Input"));
+  expect(output.split("\n").every(line => line.length <= 30)).toBe(true);
 });
 
 it("moves within multiline drafts before using history", () => {
@@ -77,6 +121,7 @@ it("wraps long drafts inside narrow terminals", () => {
   }), { columns: 15 });
   expect(output.split("\n").every(line => line.length <= 15), JSON.stringify(output)).toBe(true);
   expect(output).toContain("seven");
+  expect(output).toContain("one two three\n  four five six\n  seven eight");
 });
 
 it("keeps multiline shell input within a narrow terminal", () => {

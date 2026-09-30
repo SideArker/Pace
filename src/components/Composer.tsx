@@ -138,10 +138,12 @@ export function Composer({ value, onChange, onSubmit, history, disabled, shellMo
   const columns = inputColumns(value, terminalWidth, shellMode);
   const renderText = (text: string, start: number) => {
     let position = start;
-    return [...text].map((character) => {
+    // Keep each word together as one Ink text node so its word-aware wrapper
+    // can move it intact to the next line.
+    return text.split(/(\s+)/).map((part) => {
       const index = position;
-      position += character.length;
-      return <Text key={index} color={colorAt(index)} bold={isCommand(index)}>{character}</Text>;
+      position += part.length;
+      return <Text key={index} color={colorAt(index)} bold={isCommand(index)}>{part}</Text>;
     });
   };
   const prefix = completionStart === undefined ? "" : value.slice(completionStart);
@@ -177,7 +179,6 @@ export function Composer({ value, onChange, onSubmit, history, disabled, shellMo
           </Text>
         </Box>
       </Box>
-      <Text color="#64748B" wrap="truncate">Shift/Ctrl/Alt+Enter or Ctrl+J newline · Enter send · Ctrl+O toggle reasoning and command output</Text>
     </Box>
   );
 }

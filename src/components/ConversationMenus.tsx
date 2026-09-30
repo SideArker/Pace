@@ -45,9 +45,11 @@ export function ConversationPicker({ choices, activeId, selectedIndex, focused }
 
 export function CommandMenu({
   matches,
+  descriptions = {},
   selectedIndex,
 }: {
   matches: string[];
+  descriptions?: Record<string, string>;
   selectedIndex: number;
 }) {
   const { start, end } = menuWindow(matches.length, selectedIndex);
@@ -64,6 +66,7 @@ export function CommandMenu({
             <Text color="#38BDF8" bold>
               {match}
             </Text>
+            <Text color="#64748B" wrap="truncate">{descriptions[match] ?? ""}</Text>
           </Box>
         );
       })}

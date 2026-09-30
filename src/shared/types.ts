@@ -8,6 +8,8 @@ export type ModelOption = {
   enabled?: boolean;
 };
 export type Route = { model?: string; effort?: Effort };
+export type ApprovalMode = "full-access" | "request-approval" | "limited";
+export type Task = { id: string; text: string; completed: boolean; source: "user" | "agent" };
 export type ContextMeasurement = {
   tokens: number;
   windowTokens: number;
@@ -17,6 +19,7 @@ export type Config = {
   models: ModelOption[];
   defaultRoute: Route;
   routingMode: "auto" | "manual";
+  approvalMode?: ApprovalMode;
   trustedFolders?: string[];
   skillFolder?: string | null;
   disabledSkills?: string[];
@@ -90,6 +93,7 @@ export type Session = {
   routingMode: "auto" | "manual";
   route: Route;
   activeSkills?: string[];
+  tasks?: Task[];
   skillOptions?: Record<string, string>;
   turns: TurnSummary[];
   compactions?: CompactionRecord[];

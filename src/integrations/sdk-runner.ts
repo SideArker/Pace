@@ -48,7 +48,7 @@ export class SdkRunner implements CodexRunner {
       if (event.type === "thread.started") await onProgress({ kind: "thread", text: event.thread_id });
       if (progress) await onProgress(progress);
       if (event.type === "item.completed" && event.item.type === "agent_message") result = event.item.text;
-      if (event.type === "turn.completed") { completed = true; usage = event.usage; }
+      if (event.type === "turn.completed") { completed = true; usage = event.usage; await onProgress({ kind: "usage", usage }); }
       if (event.type === "turn.failed") failure = event.error.message;
       if (event.type === "error") failure = event.message;
     }

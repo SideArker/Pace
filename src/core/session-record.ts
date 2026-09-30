@@ -19,6 +19,7 @@ function isStage(value: unknown): boolean {
 }
 function isRouting(value: unknown): boolean {
   return isRecord(value) && typeof value.objective === 'string' && typeof value.choice === 'string' &&
+    (value.choiceLabel === undefined || (typeof value.choiceLabel === 'string' && value.choiceLabel.length <= 500)) &&
     nonnegative(value.confidence) && (value.confidence as number) <= 1 && isRecord(value.probabilities) &&
     Object.values(value.probabilities).every(probability => nonnegative(probability) && (probability as number) <= 1) &&
     Number.isInteger(value.attempts) && (value.attempts as number) >= 0;
@@ -102,6 +103,10 @@ export function parseSession(value: unknown, project: string): Session | undefin
       !value.activeSkills.every((name: unknown) => typeof name === "string" && /^[a-z0-9][a-z0-9_-]*$/i.test(name)))) ||
     (value.skillOptions !== undefined && (!isRecord(value.skillOptions) ||
       !Object.entries(value.skillOptions).every(([name, option]) => /^[a-z0-9][a-z0-9_-]*$/i.test(name) && typeof option === "string" && option.length <= 80))) ||
+    (value.tasks !== undefined && (!Array.isArray(value.tasks) || value.tasks.length > 100 ||
+      !value.tasks.every((task: unknown) => isRecord(task) && typeof task.id === "string" && task.id.length <= 100 &&
+        typeof task.text === "string" && task.text.length <= 500 && typeof task.completed === "boolean" &&
+        (task.source === "user" || task.source === "agent")))) ||
     (value.routingMode !== "auto" && value.routingMode !== "manual")
   )
     return undefined;

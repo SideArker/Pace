@@ -1,12 +1,15 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
-import type { Config, Session } from "../shared/types.js";
+import type { Config, Route, Session } from "../shared/types.js";
 import type { CodexRunner, Progress } from "../integrations/codex.js";
 import { Orchestrator, VexUnavailableError } from "../core/orchestrator.js";
 import { PaceStore } from "../core/sessions.js";
 import { PromptQueue } from "../core/prompt-queue.js";
 import { checkpointDue, createCheckpointIfDue } from "../core/checkpoint.js";
-import { formatTurnFooter, modelName } from "./turn-format.js";
+import { formatLiveUsage, formatTurnFooter, modelName } from "./turn-format.js";
 import type { Line } from "./Transcript.js";
+import { updateAgentTasks } from "../core/tasks.js";
+import { formatCommandActivity } from "./shell-runner.js";
+import type { RunningProcess } from "./RunningProcesses.js";
 
 type TurnJob = { session: Session; controller: AbortController; prompt: string };
 type PendingApproval = Extract<Progress, { kind: "approval" }> & { owner?: AbortController };
@@ -18,7 +21,7 @@ export type { TurnJob, PendingApproval };
 export function createTurnRunner({
   turnSequence, activeSessionId, jobs, promptQueue, titleAborts, pendingApprovals, unreadCompletions,
   runner, orchestrator, store, rememberSession, setRunningIds, addFor, activityFor, setStatusFor,
-  showApproval, setSession, setVexState, refreshUsage, setQueueVersion,
+  showApproval, setSession, setVexState, refreshUsage, setQueueVersion, setProcesses, setLiveUsage, getConfig,
 }: {
   turnSequence: MutableRefObject<number>;
   activeSessionId: MutableRefObject<string | undefined>;
@@ -40,8 +43,13 @@ export function createTurnRunner({
   setVexState: Dispatch<SetStateAction<"connecting" | "connected" | "failed">>;
   refreshUsage: () => void;
   setQueueVersion: Dispatch<SetStateAction<number>>;
+  setProcesses: Dispatch<SetStateAction<RunningProcess[]>>;
+  setLiveUsage: Dispatch<SetStateAction<Record<string, string>>>;
+  getConfig: () => Config;
 }) {
   const runTurn = async (text: string, turnSession: Session, turnConfig: Config) => {
+    let tasksChanged = false;
+    let activeRoute: Route = turnSession.route;
     const controller = new AbortController();
     const turnId = ++turnSequence.current;
     const sessionId = turnSession.id;
@@ -50,7 +58,7 @@ export function createTurnRunner({
     setRunningIds([...jobs.current.keys()]);
     addFor(sessionId, "you", text);
     setStatusFor(sessionId, "Starting…");
-    if (!turnSession.turns.length && !turnSession.title) {
+    if (!turnSession.turns.length && !turnSession.title && !titleAborts.current.has(sessionId)) {
       const luna = turnConfig.models.find(model => model.enabled !== false && model.model === "gpt-6-luna");
       if (luna) {
         const titleController = new AbortController();
@@ -66,7 +74,7 @@ export function createTurnRunner({
           "side",
         ).then(async result => {
           const title = result.result.replace(/^['"#]+|['"#]+$/g, "").replace(/\s+/g, " ").trim().slice(0, 80);
-          if (!title || turnSession.title) return;
+          if (!title || turnSession.title || titleController.signal.aborted) return;
           turnSession.title = title;
           await store.save(turnSession, () => activeSessionId.current === sessionId);
           rememberSession(turnSession);
@@ -86,12 +94,23 @@ export function createTurnRunner({
             setStatusFor(sessionId, progress.text);
             if (activeSessionId.current === sessionId) setSession({ ...turnSession });
           }
-          if (progress.kind === "route")
+          if (progress.kind === "route") {
+            activeRoute = progress.route;
+            setLiveUsage(old => ({ ...old, [sessionId]: "" }));
             setStatusFor(sessionId, `Using ${modelName(progress.route)}…`);
+          }
+          if (progress.kind === "usage")
+            setLiveUsage(old => ({ ...old, [sessionId]: formatLiveUsage(progress.usage, activeRoute) }));
           if (progress.kind === "system") addFor(sessionId, "system", progress.text);
           if (progress.kind === "activity") {
             activityFor(sessionId, { ...progress, id: `turn-${turnId}-${progress.id}` });
-            setStatusFor(sessionId, progress.title);
+            setStatusFor(sessionId, progress.category === "command" ? formatCommandActivity(progress.title).title : progress.title);
+          }
+          if (progress.kind === "tasks") {
+            turnSession.tasks = updateAgentTasks(turnSession.tasks, progress.items);
+            tasksChanged = true;
+            rememberSession(turnSession);
+            if (activeSessionId.current === sessionId) setSession({ ...turnSession });
           }
           if (progress.kind === "approval") showApproval(progress, sessionId, controller);
           if (progress.kind === "error") addFor(sessionId, "error", progress.text);
@@ -122,7 +141,7 @@ export function createTurnRunner({
             if (progress.kind === "status") setStatusFor(sessionId, progress.text);
             if (progress.kind === "approval") showApproval(progress, sessionId, controller);
             if (progress.kind === "error") addFor(sessionId, "error", progress.text);
-          }, controller.signal);
+          }, controller.signal, turnConfig.approvalMode);
           await store.save(turnSession, () => activeSessionId.current === sessionId);
           if (activeSessionId.current === sessionId) setSession({ ...turnSession });
           if (checkpoint) addFor(sessionId, "meta", "Context checkpoint saved for a future handoff.");
@@ -143,6 +162,13 @@ export function createTurnRunner({
         setStatusFor(sessionId, "Failed");
       }
     } finally {
+      setLiveUsage(old => {
+        const updated = { ...old };
+        delete updated[sessionId];
+        return updated;
+      });
+      if (tasksChanged) await store.save(turnSession, () => activeSessionId.current === sessionId).catch(() => {});
+      setProcesses(old => old.filter(item => !item.id.startsWith(`turn-${turnId}-`)));
       const pending = pendingApprovals.current.get(sessionId);
       if (pending?.owner === controller) pending.respond("decline");
       jobs.current.delete(sessionId);
@@ -152,7 +178,7 @@ export function createTurnRunner({
       const next = promptQueue.current.take(sessionId);
       if (next !== undefined) {
         setQueueVersion(value => value + 1);
-        void runTurn(next, turnSession, turnConfig);
+        void runTurn(next, turnSession, getConfig());
       }
     }
   };

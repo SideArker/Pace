@@ -1,4 +1,4 @@
-import type { Route } from "../shared/types.js";
+import type { ApprovalMode, Route } from "../shared/types.js";
 import { realpath } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import type { Usage } from "@openai/codex-sdk";
@@ -135,6 +135,7 @@ export class AppServerRunner implements CodexRunner {
     signal?: AbortSignal,
     mode: "main" | "side" = "main",
     trustedFolders: string[] = [],
+    approvalMode: ApprovalMode = "request-approval",
   ): Promise<Execution> {
     if (signal?.aborted) throw new Error("Turn cancelled");
     const { realpath } = await import("node:fs/promises");
@@ -181,6 +182,7 @@ export class AppServerRunner implements CodexRunner {
           if (last) usage = usage ? sumUsage(usage, last) : last;
           else usageKnown = false;
           context = contextMeasurement(tokenUsage, route.model);
+          if (usageKnown && usage) void onProgress({ kind: "usage", usage });
         }
       }
       if (message.method === "error") {
@@ -203,11 +205,28 @@ export class AppServerRunner implements CodexRunner {
       if (!signal) return pending;
       if (signal.aborted) return Promise.reject(signal.reason);
       return new Promise<T>((resolve, reject) => {
-        const onAbort = () => reject(signal.reason);
+        let settled = false;
+        const cleanup = () => signal.removeEventListener("abort", onAbort);
+        const onAbort = () => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          reject(signal.reason);
+        };
         signal.addEventListener("abort", onAbort, { once: true });
         pending.then(
-          value => { signal.removeEventListener("abort", onAbort); resolve(value); },
-          error => { signal.removeEventListener("abort", onAbort); reject(error); },
+          value => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve(value);
+          },
+          error => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            reject(error);
+          },
         );
       });
     };
@@ -253,7 +272,7 @@ export class AppServerRunner implements CodexRunner {
       server.notify("initialized", {});
       const threadResult = await awaitAbort(server.request(
         threadId ? "thread/resume" : "thread/start",
-        appServerThreadParams(cwd, route, threadId, mode),
+        appServerThreadParams(cwd, route, threadId, mode, approvalMode),
       ));
       thread = isRecord(threadResult) && isRecord(threadResult.thread) ? threadResult.thread : undefined;
       const id = typeof thread?.id === "string" ? thread.id : threadId;
@@ -270,7 +289,7 @@ export class AppServerRunner implements CodexRunner {
         await onProgress({ kind: "status", text: "Working…" });
         signal?.throwIfAborted();
         turnStarted = true;
-        await awaitAbort(server.request("turn/start", appServerTurnParams(prompt, cwd, route, id, mode, trustedFolders)));
+        await awaitAbort(server.request("turn/start", appServerTurnParams(prompt, cwd, route, id, mode, trustedFolders, approvalMode)));
         await awaitAbort(turnDone);
       } finally { signal?.removeEventListener("abort", abortTurn); }
       if (failure) throw new Error(failure);

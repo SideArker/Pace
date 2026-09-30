@@ -35,6 +35,35 @@ it('keeps the existing thread when routing changes model', async () => {
   expect((await store.latest('/example/project'))?.turns).toHaveLength(2);
 });
 
+it('lets Vex route paraphrased implementation follow-ups using conversation state', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  const session = newSession('/example/project', 'auto');
+  session.threadId = 'thread-1';
+  session.tasks = [{ id: 'csv', text: 'Implement CSV writer', completed: false, source: 'agent' }];
+  session.turns.push({ prompt: 'Plan a CSV export and tests. No edits yet.', result: 'I found the export code. The implementation remains.', at: '2026-09-30' });
+  const requests: VexRequest[] = [];
+  const calls: { prompt: string; route: Route }[] = [];
+  const runner: CodexRunner = { async run(prompt, _project, route) {
+    calls.push({ prompt, route });
+    return { threadId: 'thread-1', result: 'Implemented and tested', completed: true };
+  } };
+  const vex = { choose: async (request: VexRequest) => {
+    requests.push(request);
+    return decision(request, request.options[0]?.id === 'single' ? 'single' : '1:high');
+  } };
+  const orchestrator = new Orchestrator(new PaceStore(dir), runner, vex);
+  await orchestrator.turn('Could you turn that plan into working code?', session, config, () => {});
+  expect(requests[0]?.context).toMatchObject({
+    originalRequest: 'Could you turn that plan into working code?',
+    recentConversation: [{ user: 'Plan a CSV export and tests. No edits yet.', assistant: 'I found the export code. The implementation remains.' }],
+    conversationState: { openTasks: ['Implement CSV writer'], hasCodexThread: true },
+  });
+  expect(requests[1]?.options.map(option => option.id)).toEqual(['0:low', '1:medium', '1:high']);
+  expect(calls[0]?.route).toEqual({ model: 'gpt-6-sol', effort: 'high' });
+  expect(calls[0]?.prompt).toMatch(/^Could you turn that plan into working code\?/);
+  expect(calls[0]?.prompt).not.toContain('Follow-up task context:');
+});
+
 it('replays only retained turns after undo starts a new Codex thread', async () => {
   dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
   const session = newSession('/example/project', 'auto');
@@ -275,6 +304,11 @@ it('uses Codex app-server sandbox values for threads and turns', () => {
   expect(JSON.stringify(side)).not.toContain('/trusted');
   const main = appServerTurnParams('work', '/project', { model: 'gpt-6-sol', effort: 'high' }, 'thread-1', 'main', ['/trusted']);
   expect(main).toMatchObject({ approvalPolicy: 'on-request', sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['/project', '/trusted'], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false } });
+  expect(appServerThreadParams('/project', {}, undefined, 'main', 'full-access')).toMatchObject({ approvalPolicy: 'never', sandbox: 'danger-full-access' });
+  expect(appServerTurnParams('work', '/project', {}, 'thread-1', 'main', [], 'full-access')).toMatchObject({ approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' } });
+  expect(appServerThreadParams('/project', {}, undefined, 'main', 'limited')).toMatchObject({ approvalPolicy: 'untrusted', sandbox: 'read-only' });
+  expect(appServerTurnParams('work', '/project', {}, 'thread-1', 'main', ['/trusted'], 'limited')).toMatchObject({ approvalPolicy: 'untrusted', sandboxPolicy: { type: 'readOnly', networkAccess: false } });
+  expect(appServerTurnParams('scout', '/project', {}, 'thread-1', 'side', [], 'full-access')).toMatchObject({ approvalPolicy: 'never', sandboxPolicy: { type: 'readOnly' } });
 });
 
 it('ends an active turn when Codex app-server exits', async () => {
@@ -367,9 +401,14 @@ it('sums distinct model requests without counting resumed history or duplicate u
       return {};
     },
   }));
-  const execution = await runner.run('work', process.cwd(), { model: 'gpt-6-sol', effort: 'high' }, 'thread-1', () => {});
+  const progress: Progress[] = [];
+  const execution = await runner.run('work', process.cwd(), { model: 'gpt-6-sol', effort: 'high' }, 'thread-1', event => { progress.push(event); });
   expect(execution.usage).toMatchObject({ input_tokens: 170, output_tokens: 30 });
   expect(execution.context).toEqual({ tokens: 100, windowTokens: 1000, model: 'gpt-6-sol' });
+  expect(progress.filter(event => event.kind === 'usage').map(event => event.usage)).toMatchObject([
+    { input_tokens: 80, output_tokens: 20 },
+    { input_tokens: 170, output_tokens: 30 },
+  ]);
 });
 
 it('retains observed usage when a turn fails after model work', async () => {
@@ -392,7 +431,11 @@ it('retains observed usage when a turn fails after model work', async () => {
 });
 
 it('gives Codex independent Vex MCP access without key in command arguments', () => {
-  expect(codexOptions('/installed/vex/dist/index.js')).toEqual({ config: { mcp_servers: { vex: { command: process.execPath, args: ['/installed/vex/dist/index.js', 'mcp', 'serve'], env_vars: ['OPENROUTER_API_KEY'] } } } });
+  expect(codexOptions('/installed/vex/dist/index.js')).toMatchObject({ config: { mcp_servers: { vex: {
+    command: process.execPath,
+    args: ['/installed/vex/dist/index.js', 'mcp', 'serve'],
+    env_vars: expect.arrayContaining(['OPENROUTER_API_KEY', 'TYPESAFE_API_KEY', 'JEV_API_KEY']),
+  } } } });
 });
 
 it('delivers every streamed SDK event to benchmark observer', async () => {

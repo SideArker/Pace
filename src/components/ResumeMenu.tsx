@@ -25,7 +25,7 @@ export function ResumeMenu({
   const renderChoice = (choice: Session) => {
     const index = choices.indexOf(choice);
     const selected = index === selectedIndex;
-    const cleanPrompt = (choice.turns.at(-1)?.prompt ?? "(empty)").replace(/\s+/g, " ").trim();
+    const cleanPrompt = (choice.title || choice.turns[0]?.prompt || "(empty)").replace(/\s+/g, " ").trim();
     const shortPrompt = cleanPrompt.length > 45 ? `${cleanPrompt.slice(0, 42)}…` : cleanPrompt;
     const missing = missingProjectPaths.includes(choice.projectPath);
     return (
@@ -45,7 +45,7 @@ export function ResumeMenu({
     return [...groups].map(([path, sessions]) => (
       <React.Fragment key={path}>
         <Text color={missingProjectPaths.includes(path) ? "#F87171" : "#94A3B8"}>
-          {path} {missingProjectPaths.includes(path) ? "(missing; restore this folder)" : ""}
+          {path} {missingProjectPaths.includes(path) ? "(missing; use pace reconnect)" : ""}
         </Text>
         {sessions.map(renderChoice)}
       </React.Fragment>

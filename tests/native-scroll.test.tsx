@@ -17,18 +17,47 @@ class TerminalOutput extends Writable {
   }
 }
 
-function View({ lines, status }: { lines: Line[]; status: string }) {
+function View({ lines, status, resetKey = 0, showHeader = true, expanded = false }: { lines: Line[]; status: string; resetKey?: number; showHeader?: boolean; expanded?: boolean }) {
   const { history, live } = splitTranscript(lines);
   return <Box flexDirection="column">
-    <Static items={[{ kind: "logo" as const }, ...history.map(group => ({ kind: "lines" as const, group }))]}>
-      {item => item.kind === "logo" ? <HeaderLogo key="logo" width={80} /> : <Transcript key={item.group[0]?.id} lines={item.group} outputsExpanded detailsExpanded />}
+    <Static key={resetKey} items={[...(showHeader ? [{ kind: "logo" as const }] : []), ...history.map(group => ({ kind: "lines" as const, group }))]}>
+      {item => item.kind === "logo" ? <HeaderLogo key="logo" width={80} /> : <Transcript key={item.group[0]?.id} lines={item.group} outputsExpanded={expanded} detailsExpanded={expanded} />}
     </Static>
-    <Transcript lines={live.slice(-3)} outputsExpanded={false} detailsExpanded={false} livePreview />
+    <Transcript lines={live.slice(-3)} outputsExpanded={expanded} detailsExpanded={expanded} livePreview />
     <Text>{status}</Text>
   </Box>;
 }
 
 describe("native terminal history", () => {
+  it("places a new view at top after clearing old history", async () => {
+    const stdout = new TerminalOutput();
+    const stdin = new PassThrough() as PassThrough & { isTTY: boolean; setRawMode: (enabled: boolean) => void };
+    stdin.isTTY = true;
+    stdin.setRawMode = () => {};
+    const oldLines: Line[] = Array.from({ length: 35 }, (_, id) => ({ id, role: "info", text: `old-${id}`, spaceBefore: false }));
+    const instance = render(<View lines={oldLines} status="Old prompt" />, {
+      stdin, stdout, stderr: new PassThrough(), interactive: true, patchConsole: false,
+      alternateScreen: false, maxFps: 1000,
+    });
+    let afterClear = "";
+    try {
+      await instance.waitUntilRenderFlush();
+      instance.clear();
+      stdout.write("\x1b[3J\x1b[2J\x1b[H");
+      instance.rerender(<View lines={[]} status="New prompt" resetKey={1} />);
+      await instance.waitUntilRenderFlush();
+      instance.rerender(<View lines={[{ id: 36, role: "you", text: "New request", spaceBefore: false }]} status="Working" resetKey={1} />);
+      await instance.waitUntilRenderFlush();
+      afterClear = stdout.writes.join("").split("\x1b[3J\x1b[2J\x1b[H")[1] ?? "";
+    } finally {
+      instance.unmount();
+    }
+    expect(afterClear).toContain("New prompt");
+    expect(afterClear).not.toContain("old-0");
+    expect(afterClear).toContain("██████");
+    expect(afterClear.indexOf("New request")).toBeGreaterThan(afterClear.indexOf("██████"));
+  });
+
   it("appends settled activity without clearing or repainting earlier history", async () => {
     const stdout = new TerminalOutput();
     const stdin = new PassThrough() as PassThrough & { isTTY: boolean; setRawMode: (enabled: boolean) => void };
@@ -60,6 +89,37 @@ describe("native terminal history", () => {
     expect(output).not.toContain("\u001b[?1049h");
   });
 
+  it("redraws settled activity when details are toggled", async () => {
+    const stdout = new TerminalOutput();
+    const stdin = new PassThrough() as PassThrough & { isTTY: boolean; setRawMode: (enabled: boolean) => void };
+    stdin.isTTY = true;
+    stdin.setRawMode = () => {};
+    const lines: Line[] = [
+      { id: 1, role: "activity", text: "Edited file", spaceBefore: false,
+        activity: { category: "files", detail: "-old\n+new", completed: true } },
+    ];
+    const instance = render(<View lines={lines} status="Ready" showHeader={false} />, {
+      stdin, stdout, stderr: new PassThrough(), interactive: true, patchConsole: false,
+      alternateScreen: false, maxFps: 1000,
+    });
+    try {
+      await instance.waitUntilRenderFlush();
+      expect(stdout.writes.join("")).not.toContain("-old");
+      instance.clear();
+      stdout.write("\x1b[3J\x1b[2J\x1b[H");
+      instance.rerender(<View lines={lines} status="Ready" showHeader={false} resetKey={1} expanded />);
+      await instance.waitUntilRenderFlush();
+      expect(stdout.writes.join("").split("\x1b[3J\x1b[2J\x1b[H")[1]).toContain("-old");
+      instance.clear();
+      stdout.write("\x1b[3J\x1b[2J\x1b[H");
+      instance.rerender(<View lines={lines} status="Ready" showHeader={false} resetKey={2} />);
+      await instance.waitUntilRenderFlush();
+      expect(stdout.writes.join("").split("\x1b[3J\x1b[2J\x1b[H")[2]).not.toContain("-old");
+    } finally {
+      instance.unmount();
+    }
+  });
+
   it("keeps a large running file edit inside the live redraw area", async () => {
     const stdout = new TerminalOutput();
     const stdin = new PassThrough() as PassThrough & { isTTY: boolean; setRawMode: (enabled: boolean) => void };
@@ -87,9 +147,9 @@ describe("native terminal history", () => {
     }
 
     const output = stdout.writes.join("");
-    expect(runningOutput).toContain("changed line 99");
+    expect(runningOutput).not.toContain("changed line 99");
     expect(runningOutput).not.toContain("changed line 0");
-    expect(output).toContain("changed line 0");
+    expect(output).not.toContain("changed line 0");
     expect(output).not.toContain("\u001b[2J");
   });
 });

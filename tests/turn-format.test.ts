@@ -1,9 +1,9 @@
 import { expect, it } from "vitest";
 import React from "react";
 import { renderToString } from "ink";
-import { formatTurnFooter, formatUsageLimits } from "../src/components/turn-format.js";
+import { formatLiveUsage, formatTurnFooter, formatUsageLimits } from "../src/components/turn-format.js";
 import { UsageBar } from "../src/components/UsageBar.js";
-import { parseUsageLimits } from "../src/integrations/usage.js";
+import { parseUsageLimits, usageWarnings } from "../src/integrations/usage.js";
 
 it("shows a compact two-line turn footer with the routing source", () => {
   expect(formatTurnFooter(
@@ -14,6 +14,11 @@ it("shows a compact two-line turn footer with the routing source", () => {
   )).toBe("Completed · Sol · Medium · 1.2s · 15.9k input · 27 output\nCache: 11.9k hit, 0 write · Route: auto → Sol");
   expect(formatTurnFooter({ model: "gpt-6-luna", effort: "low" }, "Policy fallback after Vex abstained or was uncertain"))
     .toBe("Completed · Luna · Low\nRoute: auto (policy) → Luna");
+});
+
+it("formats observed in-turn usage with the active stage price", () => {
+  expect(formatLiveUsage({ input_tokens: 1200, cached_input_tokens: 200, cache_write_input_tokens: 0, output_tokens: 30, reasoning_output_tokens: 10 }, { model: 'gpt-6-sol', effort: 'high' }))
+    .toContain('1.2k input · 30 output · ~$');
 });
 
 it("shows reported account usage percentages and omits missing windows", () => {
@@ -35,4 +40,40 @@ it("shows remaining Codex usage as the primary meter value", () => {
   expect(output).toContain("Codex Usage");
   expect(output).toContain("12% left");
   expect(output).toContain("88% used");
+});
+
+it("keeps the last usage reading visible after a refresh failure", () => {
+  const output = renderToString(React.createElement(UsageBar, {
+    limits: { primary: { usedPercent: 60, windowDurationMins: 300 } },
+    error: "Usage unavailable",
+  }), { columns: 80 });
+  expect(output).toContain("40% left");
+  expect(output).toContain("showing last reading");
+});
+
+it("warns once per crossed usage threshold and re-arms after recovery", () => {
+  const reading = (fiveHourUsed: number, sevenDayUsed: number) => ({
+    primary: { usedPercent: sevenDayUsed, windowDurationMins: 10080 },
+    secondary: { usedPercent: fiveHourUsed, windowDurationMins: 300 },
+  });
+  let levels = usageWarnings(reading(40, 20), {}).levels;
+  let result = usageWarnings(reading(51, 76), levels);
+  expect(result.messages).toEqual([
+    "Codex 5h usage warning: 49.0% remaining (below 50%).",
+    "Codex 7d usage warning: 24.0% remaining (below 25%).",
+  ]);
+  levels = result.levels;
+  expect(usageWarnings(reading(51, 76), levels).messages).toEqual([]);
+  result = usageWarnings(reading(91, 76), levels);
+  expect(result.messages).toEqual(["Codex 5h usage warning: 9.0% remaining (below 10%)."]);
+  levels = usageWarnings(reading(0, 76), result.levels).levels;
+  expect(usageWarnings(reading(51, 76), levels).messages).toEqual([
+    "Codex 5h usage warning: 49.0% remaining (below 50%).",
+  ]);
+});
+
+it("ignores unrecognized and missing usage windows", () => {
+  const result = usageWarnings({ primary: { usedPercent: 95, windowDurationMins: 60 } }, {});
+  expect(result.messages).toEqual([]);
+  expect(result.levels).toEqual({});
 });

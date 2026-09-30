@@ -1,12 +1,17 @@
 import { useInput } from "ink";
-import type { Dispatch, MutableRefObject, SetStateAction } from "react";
+import { useEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import type { ApprovalDecision, Progress } from "../integrations/codex.js";
 import { EFFORTS } from "../shared/config.js";
 import type { Session } from "../shared/types.js";
-import { PromptQueue } from "../core/prompt-queue.js";
 import { PaceStore, rewindConversation, deleteConversationTurn, undoConversationTurn } from "../core/sessions.js";
 import type { Line } from "./Transcript.js";
 import type { PendingApproval, TurnJob } from "./turn-runner.js";
+
+const DOUBLE_ESCAPE_MS = 750;
+
+export function isSecondEscape(previous: { sessionId: string; at: number } | undefined, sessionId: string, now: number): boolean {
+  return !!previous && previous.sessionId === sessionId && now - previous.at >= 0 && now - previous.at <= DOUBLE_ESCAPE_MS;
+}
 
 export function useAppInput(options: {
   interrupt: () => void;
@@ -22,12 +27,9 @@ export function useAppInput(options: {
   activeSessionId: MutableRefObject<string | undefined>;
   jobs: MutableRefObject<Map<string, TurnJob>>;
   sideAbort: MutableRefObject<AbortController | undefined>;
-  promptQueue: MutableRefObject<PromptQueue>;
-  setQueueVersion: Dispatch<SetStateAction<number>>;
-  addFor: (id: string, role: Line["role"], text: string) => void;
-  setStatus: (value: string) => void;
   outputsExpanded: boolean;
   setOutputsExpanded: Dispatch<SetStateAction<boolean>>;
+  redrawTranscript: () => void;
   modelMenu: "models" | "efforts" | undefined;
   setModelMenu: Dispatch<SetStateAction<"models" | "efforts" | undefined>>;
   menuModels: string[];
@@ -53,15 +55,42 @@ export function useAppInput(options: {
   const {
     interrupt, pickerFocused, setPickerFocused, pickerIndex, setPickerIndex,
     openSessions, activateSession, approval, focusPicker, pendingApprovals,
-    activeSessionId, jobs, sideAbort, promptQueue, setQueueVersion, addFor,
-    setStatus, outputsExpanded, setOutputsExpanded,
+    activeSessionId, jobs, sideAbort, outputsExpanded, setOutputsExpanded, redrawTranscript,
     modelMenu, setModelMenu, menuModels, menuIndex,
     setMenuIndex, setMenuModel, toggleModel, toggleEffort, resumeMenu,
     setResumeMenu, resumeChoices, missingProjectPaths, add, convoMenu,
     setConvoMenu, session, store, setSession, renderSessionTurns, setDraft,
     setHistory,
   } = options;
+  const lastEscape = useRef<{ sessionId: string; at: number } | undefined>(undefined);
+  const escapeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const [cancelArmed, setCancelArmed] = useState(false);
+  const clearEscape = () => {
+    lastEscape.current = undefined;
+    if (escapeTimer.current) clearTimeout(escapeTimer.current);
+    escapeTimer.current = undefined;
+    setCancelArmed(false);
+  };
+  useEffect(() => () => { if (escapeTimer.current) clearTimeout(escapeTimer.current); }, []);
+  const handleCancelEscape = () => {
+    const id = activeSessionId.current;
+    if (!(id && jobs.current.has(id)) && !sideAbort.current && !approval) return false;
+    const sessionId = id ?? "";
+    const now = Date.now();
+    if (isSecondEscape(lastEscape.current, sessionId, now)) {
+      clearEscape();
+      interrupt();
+    } else {
+      clearEscape();
+      lastEscape.current = { sessionId, at: now };
+      setCancelArmed(true);
+      escapeTimer.current = setTimeout(clearEscape, DOUBLE_ESCAPE_MS);
+    }
+    return true;
+  };
   useInput((input, key) => {
+    if (!key.escape) clearEscape();
+    else if (pickerFocused || modelMenu || resumeMenu || convoMenu) clearEscape();
     if (key.ctrl && input === "c") { interrupt(); return; }
     if (pickerFocused) {
       if (key.escape || key.tab) setPickerFocused(false);
@@ -81,26 +110,17 @@ export function useAppInput(options: {
       const pending = activeSessionId.current ? pendingApprovals.current.get(activeSessionId.current) : undefined;
       if (input.toLowerCase() === "y") pending?.respond("accept");
       else if (input.toLowerCase() === "n") pending?.respond("decline");
-      else if (key.escape) interrupt();
+      else if (key.escape) handleCancelEscape();
       return;
     }
     if (key.escape && !modelMenu && !resumeMenu && !convoMenu && !pickerFocused) {
-      const job = activeSessionId.current ? jobs.current.get(activeSessionId.current) : undefined;
-      if (job || sideAbort.current) {
-        if (job && activeSessionId.current) {
-          const cleared = promptQueue.current.clear(activeSessionId.current);
-          if (cleared) {
-            setQueueVersion(value => value + 1);
-            addFor(activeSessionId.current, "info", `Cleared ${cleared} queued prompt${cleared === 1 ? "" : "s"}.`);
-          }
-        }
-        job?.controller.abort();
-        sideAbort.current?.abort();
-        setStatus("Cancelling…");
-        return;
-      }
+      if (handleCancelEscape()) return;
     }
-    if (key.ctrl && input === "o") setOutputsExpanded(value => !value);
+    if (key.ctrl && (input.toLowerCase() === "o" || input === "\x0f")) {
+      redrawTranscript();
+      setOutputsExpanded(value => !value);
+      return;
+    }
     if (modelMenu) {
       const size = modelMenu === "models" ? menuModels.length : EFFORTS.length;
       if (key.escape) {
@@ -129,7 +149,7 @@ export function useAppInput(options: {
       else if (key.return) {
         const chosen = resumeChoices[menuIndex];
         if (chosen && missingProjectPaths.includes(chosen.projectPath))
-          add("error", `Project folder is missing: ${chosen.projectPath}. Restore it at this path, then reopen /resume.`);
+          add("error", `Project folder is missing: ${chosen.projectPath}. Restore it here or run pace reconnect "${chosen.projectPath}" "<new path>" in a terminal, then reopen /resume.`);
         else if (chosen) void activateSession(chosen);
       }
       return;
@@ -184,4 +204,5 @@ export function useAppInput(options: {
       return;
     }
   });
+  return cancelArmed;
 }

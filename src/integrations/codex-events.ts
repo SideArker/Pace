@@ -42,7 +42,7 @@ export function eventProgress(event: ThreadEvent): Progress | undefined {
       detail: item.error?.message, completed: event.type === "item.completed",
     };
   if (item.type === "todo_list")
-    return { kind: "activity", id: item.id, category: "plan", title: "Plan", detail: item.items.map(step => `${step.completed ? "✓" : "○"} ${step.text}`).join("\n"), completed: event.type === "item.completed" };
+    return { kind: "tasks", items: item.items.map(step => ({ text: step.text, completed: step.completed })) };
   if (item.type === "error") return { kind: "error", text: item.message };
   return undefined;
 }
@@ -82,7 +82,13 @@ export function appItemProgress(item: JsonRecord, event: string, project: string
     case "fileChange": return fileChangeProgress(item, completed, project);
     case "webSearch": return { kind: "activity", id, category: "search", title: `Web search: ${String(item.query ?? "")}`, completed };
     case "mcpToolCall": return { kind: "activity", id, category: "tool", title: `Tool ${String(item.server)}/${String(item.tool)}: ${String(item.status)}`, completed };
-    case "plan": return { kind: "activity", id, category: "plan", title: "Plan", detail: typeof item.text === "string" ? item.text : undefined, completed };
+    case "plan": {
+      const steps = Array.isArray(item.steps) ? item.steps.filter(isRecord) : [];
+      if (steps.length) return { kind: "tasks", items: steps.map(step => ({
+        text: String(step.step ?? step.text ?? ""), completed: step.status === "completed" || step.completed === true,
+      })).filter(step => step.text) };
+      return { kind: "activity", id, category: "plan", title: "Plan", detail: typeof item.text === "string" ? item.text : undefined, completed };
+    }
     default: return undefined;
   }
 }

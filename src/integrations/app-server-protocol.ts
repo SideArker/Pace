@@ -1,5 +1,5 @@
 import type { Usage } from "@openai/codex-sdk";
-import type { Route } from "../shared/types.js";
+import type { ApprovalMode, Route } from "../shared/types.js";
 import { artifactPrompt } from "../core/system/artifacts.js";
 import { isRecord } from "../shared/config.js";
 export function appUsage(value: unknown): Usage | undefined {
@@ -26,13 +26,16 @@ export function appServerThreadParams(
   route: Route,
   threadId: string | undefined,
   mode: "main" | "side",
+  approvalMode: ApprovalMode = "request-approval",
 ) {
+  const policy = approvalMode === "full-access" ? "never" : approvalMode === "limited" ? "untrusted" : "on-request";
+  const sandbox = approvalMode === "full-access" ? "danger-full-access" : approvalMode === "limited" ? "read-only" : "workspace-write";
   return {
     ...(threadId ? { threadId } : {}),
     ...(route.model ? { model: route.model } : {}),
     cwd,
-    approvalPolicy: mode === "side" ? "never" : "on-request",
-    sandbox: mode === "side" ? "read-only" : "workspace-write",
+    approvalPolicy: mode === "side" ? "never" : policy,
+    sandbox: mode === "side" ? "read-only" : sandbox,
     serviceName: "pace",
   };
 }
@@ -44,14 +47,18 @@ export function appServerTurnParams(
   threadId: string,
   mode: "main" | "side",
   trustedFolders: string[],
+  approvalMode: ApprovalMode = "request-approval",
 ) {
+  const policy = approvalMode === "full-access" ? "never" : approvalMode === "limited" ? "untrusted" : "on-request";
   return {
     threadId,
     input: [{ type: "text", text: mode === "side" ? prompt : artifactPrompt(prompt) }],
     cwd,
-    approvalPolicy: mode === "side" ? "never" : "on-request",
+    approvalPolicy: mode === "side" ? "never" : policy,
     sandboxPolicy: mode === "side"
       ? { type: "readOnly", networkAccess: false }
+      : approvalMode === "full-access" ? { type: "dangerFullAccess" }
+      : approvalMode === "limited" ? { type: "readOnly", networkAccess: false }
       : { type: "workspaceWrite", writableRoots: [cwd, ...trustedFolders], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false },
     ...(route.model ? { model: route.model } : {}),
     ...(route.effort ? { effort: route.effort } : {}),

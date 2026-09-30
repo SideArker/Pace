@@ -79,15 +79,25 @@ describe("activity transcript", () => {
     expect(output).not.toContain("3 thoughts");
   });
 
-  it("shows file diffs without expanding activity details", () => {
-    const output = renderToString(React.createElement(Transcript, {
-      lines: [{ id: 1, role: "activity", text: "Edited src/example.ts", spaceBefore: false,
-        activity: { category: "files", detail: "@@ -1 +1 @@\n-old\n+new", completed: false } }],
-      outputsExpanded: false, detailsExpanded: false,
+  it("collapses command, diff, and reasoning details until expanded", () => {
+    const lines: Line[] = [
+      { id: 1, role: "activity", text: "Ran: build", spaceBefore: false, activity: { category: "command", detail: "command output", completed: true } },
+      { id: 2, role: "activity", text: "Edited src/example.ts", spaceBefore: false, activity: { category: "files", detail: "@@ -1 +1 @@\n-old\n+new", completed: true } },
+      { id: 3, role: "activity", text: "Thinking", spaceBefore: false, activity: { category: "thinking", detail: "reasoning detail", completed: true } },
+    ];
+    const render = (expanded: boolean) => renderToString(React.createElement(Transcript, {
+      lines, outputsExpanded: expanded, detailsExpanded: expanded,
     }), { columns: 80 });
-    expect(output).toContain("Edited src/example.ts");
-    expect(output).toContain("-old");
-    expect(output).toContain("+new");
+    const collapsed = render(false);
+    expect(collapsed).toContain("Edited src/example.ts");
+    expect(collapsed).not.toContain("command output");
+    expect(collapsed).not.toContain("-old");
+    expect(collapsed).not.toContain("reasoning detail");
+    const expanded = render(true);
+    expect(expanded).toContain("command output");
+    expect(expanded).toContain("-old");
+    expect(expanded).toContain("+new");
+    expect(expanded).toContain("reasoning detail");
   });
 
   it("renders the full transcript for terminal history", () => {

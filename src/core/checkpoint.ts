@@ -1,5 +1,5 @@
 import type { Usage } from "@openai/codex-sdk";
-import type { CheckpointNote, Session, CheckpointRecord, CheckpointGeneration } from "../shared/types.js";
+import type { ApprovalMode, CheckpointNote, Session, CheckpointRecord, CheckpointGeneration } from "../shared/types.js";
 import type { CodexRunner, Progress } from "../integrations/codex.js";
 import { CodexRunError } from "../integrations/codex-types.js";
 import { costForUsage } from "./routing/pricing.js";
@@ -72,6 +72,7 @@ export async function createCheckpointIfDue(
   runner: CodexRunner,
   onProgress: (progress: Progress) => void | Promise<void>,
   signal?: AbortSignal,
+  approvalMode: ApprovalMode = "request-approval",
 ): Promise<CheckpointRecord | undefined> {
   if (!checkpointDue(session)) return undefined;
   const threadId = session.threadId!;
@@ -91,7 +92,7 @@ export async function createCheckpointIfDue(
     let answer: string | undefined;
     try {
       await onProgress({ kind: "status", text: attempt === 1 ? "Creating context checkpoint…" : "Correcting context checkpoint…" });
-      const execution = await runner.run(prompt, session.projectPath, session.route, threadId, onProgress, signal, "main");
+      const execution = await runner.run(prompt, session.projectPath, session.route, threadId, onProgress, signal, "main", [], approvalMode);
       if (execution.threadId !== threadId) throw new Error("Checkpoint changed Codex thread");
       usage = execution.usage;
       answer = execution.result;

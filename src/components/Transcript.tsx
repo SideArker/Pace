@@ -112,6 +112,8 @@ export function Transcript({
     }
   }
   const dividerLength = Math.max(20, Math.min(width - 4, 72));
+  const expanded = outputsExpanded || detailsExpanded;
+  const preview = livePreview && !expanded;
 
   return (
     <Box flexDirection="column">
@@ -154,22 +156,14 @@ export function Transcript({
                 <Text wrap={line.activity.category === "command" ? "truncate" : undefined} color={line.activity.category === "command" ? activityColors.command : line.activity.completed ? "#64748B" : activityColors[line.activity.category]} bold={line.activity.category === "command"}>
                   {line.activity.completed ? " " : "◌"} {activityIcon(line)} {activityTitle(line)}{line.thinkingCount ? ` · ${line.thinkingCount} thoughts` : ""}
                 </Text>
-                {line.activity.detail && line.activity.category !== "files" ? (
+                {line.activity.detail ? (
                   <Text dimColor>
-                    {(
-                      line.activity.category === "command"
-                        ? outputsExpanded
-                        : detailsExpanded
-                    )
-                      ? "▾"
-                      : "▸"}
+                    {expanded ? "▾" : "▸"}
                   </Text>
                 ) : null}
               </Box>
               {line.activity.detail &&
-              (line.activity.category === "files" || (line.activity.category === "command"
-                ? outputsExpanded
-                : detailsExpanded)) ? (
+              expanded ? (
                 <Box
                   marginLeft={2}
                   paddingLeft={1}
@@ -181,8 +175,8 @@ export function Transcript({
                   borderColor="#475569"
                 >
                   {line.activity.category === "files"
-                    ? <DiffDetail detail={line.activity.detail} livePreview={livePreview} />
-                    : <Text color="gray" wrap={livePreview ? "truncate" : "wrap"}>{livePreview ? line.activity.detail.slice(-500).split("\n").slice(-2).join("\n") : line.activity.detail.slice(-12000)}</Text>}
+                    ? <DiffDetail detail={line.activity.detail} livePreview={preview} />
+                    : <Text color="gray" wrap={preview ? "truncate" : "wrap"}>{preview ? line.activity.detail.slice(-500).split("\n").slice(-2).join("\n") : line.activity.detail.slice(-12000)}</Text>}
                 </Box>
               ) : null}
             </Box>

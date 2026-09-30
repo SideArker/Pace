@@ -1,5 +1,6 @@
 import type { Usage } from "@openai/codex-sdk";
 import type { Route } from "../shared/types.js";
+import { costForUsage } from "../core/routing/pricing.js";
 import type { UsageLimits, UsageWindow } from "../integrations/usage.js";
 
 const compact = (count: number) =>
@@ -35,6 +36,13 @@ export function modelName(route?: Route): string {
   const model = route?.model ?? "Codex default";
   const family = /^gpt-[\d.]+-(.+)$/.exec(model)?.[1];
   return family ? title(family) : model;
+}
+
+export function formatLiveUsage(usage: Usage, route: Route): string {
+  let cost: number | undefined;
+  try { cost = costForUsage(route, usage); }
+  catch { cost = undefined; }
+  return `${compact(usage.input_tokens)} input · ${compact(usage.output_tokens)} output${cost === undefined ? "" : ` · ~$${cost.toFixed(4)}`}`;
 }
 
 function routeSource(note?: string): string {
