@@ -1,0 +1,31 @@
+name: Windows PowerShell smoke
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  powershell:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Install and build
+        shell: pwsh
+        run: |
+          npm ci
+          npm run build
+          npm link
+      - name: Check CLI entrypoint and script error status
+        shell: pwsh
+        run: |
+          pace --help
+          if ($LASTEXITCODE -ne 0) { throw "pace --help failed: $LASTEXITCODE" }
+          pace sessions
+          if ($LASTEXITCODE -ne 0) { throw "pace sessions failed: $LASTEXITCODE" }
+          pace exec
+          if ($LASTEXITCODE -ne 2) { throw "pace exec expected exit 2, got $LASTEXITCODE" }
