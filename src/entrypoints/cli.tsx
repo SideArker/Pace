@@ -5,11 +5,24 @@ import { createRequire } from "node:module";
 import { access } from "node:fs/promises";
 import { constants } from "node:fs";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import { PaceStore } from "../core/sessions.js";
 import { VexRouter } from "../core/vex/client.js";
 import App from "../components/App.js";
 import { execTurn } from "../core/exec.js";
 import { getGitBranch } from "../core/system/git.js";
+
+export function runTerminalClear(): void {
+  try {
+    if (process.platform === "win32") {
+      spawnSync("cmd.exe", ["/c", "cls"], { stdio: "inherit" });
+    } else {
+      spawnSync("clear", [], { stdio: "inherit" });
+    }
+  } catch {
+    // fallback
+  }
+}
 
 const require = createRequire(import.meta.url);
 const version = (require("../../package.json") as { version: string }).version;
@@ -17,7 +30,7 @@ const args = process.argv.slice(2);
 if (args.includes("--version")) console.log(`pace ${version}`);
 else if (args.includes("--help"))
   console.log(
-    `Pace ${version} · independent Codex SDK terminal client\n\nUsage: pace [doctor|sessions|reconnect "old path" "new path"|exec "prompt"|--help|--version]\n\nInteractive commands: /help /models /auto /approval /tasks /task /new /resume /convo /compact /context /usage /btw <question> /artifacts /trust /skills /<skill> /stats /route /clear /exit\nSkills: /skills refreshes the default ~/.agents/skills folder; /skills enable|disable <name>; /skills <folder>|default|off\nBash: ! <command> or ! to toggle Bash mode\nInput: Shift/Ctrl/Alt+Enter or Ctrl+J for newline, arrows for history, Ctrl+O toggles command, diff, and reasoning details`,
+    `Pace ${version} · independent Codex SDK terminal client\n\nUsage: pace [doctor|sessions|reconnect "old path" "new path"|exec "prompt"|--help|--version]\n\nInteractive commands: /help /models /auto /approval /tasks /task /new /resume /convo /queue /compact /context /usage /btw <question> /artifacts /trust /skills /<skill> /stats /route /clear /exit\nSkills: /skills refreshes the default ~/.agents/skills folder; /skills enable|disable <name>; /skills <folder>|default|off\nBash: ! <command> or ! to toggle Bash mode\nInput: Shift/Ctrl/Alt+Enter or Ctrl+J for newline, arrows for history, Ctrl+O toggles command, diff, and reasoning details`,
   );
 else if (args[0] === "doctor") {
   const notices: string[] = [];
@@ -98,6 +111,7 @@ else if (args[0] === "doctor") {
   let instance: ReturnType<typeof render>;
   instance = render(<App onClear={() => {
     instance.clear();
+    runTerminalClear();
     process.stdout.write("\x1b[3J\x1b[2J\x1b[H");
   }} />, { kittyKeyboard: { mode: "auto" }, exitOnCtrlC: false });
 }

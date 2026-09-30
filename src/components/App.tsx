@@ -16,13 +16,14 @@ import { readUsageLimits, usageWarnings } from "../integrations/usage.js";
 import type { UsageLimits, UsageWarningLevels } from "../integrations/usage.js";
 import { Composer, commandToken } from "./Composer.js";
 import { ComposerFrame } from "./ComposerFrame.js";
+import { BottomPanel } from "./BottomPanel.js";
 import { QueuedMessages } from "./QueuedMessages.js";
 import { useAppInput } from "./useAppInput.js";
 
 import { Transcript, splitTranscript, type Line } from "./Transcript.js";
 import { HeaderLogo, HeaderStatus } from "./Header.js";
 import { UsageBar } from "./UsageBar.js";
-import { CommandMenu, ConversationPicker, ConvoMenu, ModelMenu, ResumeMenu, type ConversationChoice } from "./Menus.js";
+import { CommandMenu, ConversationPicker, ConvoMenu, ModelMenu, QueueMenu, ResumeMenu, type ConversationChoice } from "./Menus.js";
 import { resolve } from "node:path";
 import { createShellRunner, displayCommand, formatCommandActivity, oneOffShellCommand } from "./shell-runner.js";
 import { RunningProcesses, updateProcesses, type RunningProcess } from "./RunningProcesses.js";
@@ -39,6 +40,7 @@ const commands = [
   "/new",
   "/resume",
   "/convo",
+  "/queue",
   "/undo",
   "/usage",
   "/btw",
@@ -52,6 +54,7 @@ const commands = [
   "/compact",
   "/context",
   "/clear",
+  "/.clear",
   "/exit",
 ];
 const commandDescriptions: Record<string, string> = {
@@ -61,6 +64,7 @@ const commandDescriptions: Record<string, string> = {
   "/new": "Start a new conversation",
   "/resume": "Switch to a saved conversation",
   "/convo": "Browse and manage conversation turns",
+  "/queue": "View and edit queued messages",
   "/undo": "Undo the latest change",
   "/usage": "Refresh Codex account usage",
   "/btw": "Ask a side question about this conversation",
@@ -73,12 +77,13 @@ const commandDescriptions: Record<string, string> = {
   "/tasks": "Show agent tasks",
   "/compact": "Compact conversation context",
   "/context": "Show context usage",
-  "/clear": "Clear the conversation",
+  "/clear": "Clear the conversation and terminal",
+  "/.clear": "Clear the conversation and terminal",
   "/exit": "Quit Pace",
 };
 const modelCatalog = ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra"];
 const spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-export const normalizeNewCommand = (input: string) => input.trim().replace(/^\.\/(new|clear)(?=\s|$)/, "/$1");
+export const normalizeNewCommand = (input: string) => input.trim().replace(/^(?:\.\/|\/\.)(new|clear)(?=\s|$)/, "/$1");
 // Words shown beside the animated spinner during agent thinking.
 const thinkingWords = [
   "Pondering",
@@ -100,6 +105,28 @@ const orchestrator = new Orchestrator(store, runner, vex);
 export default function App({ onClear }: { onClear: () => void }) {
   const { exit } = useApp();
   const { stdout } = useStdout();
+  const [terminalDimensions, setTerminalDimensions] = useState(() => ({
+    columns: stdout?.columns ?? 80,
+    rows: stdout?.rows ?? 24,
+  }));
+
+  useEffect(() => {
+    const stream = stdout ?? process.stdout;
+    if (!stream) return;
+    const onResize = () => {
+      setTerminalDimensions({
+        columns: stream.columns ?? 80,
+        rows: stream.rows ?? 24,
+      });
+    };
+    stream.on?.("resize", onResize);
+    process.stdout?.on?.("resize", onResize);
+    return () => {
+      stream.off?.("resize", onResize);
+      process.stdout?.off?.("resize", onResize);
+    };
+  }, [stdout]);
+
   const [config, setConfig] = useState<Config>();
   const latestConfig = useRef<Config | undefined>(undefined);
   if (config) latestConfig.current = config;
@@ -118,6 +145,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const [transcriptRevision, setTranscriptRevision] = useState(0);
   const [usageLimits, setUsageLimits] = useState<UsageLimits>();
   const [usageError, setUsageError] = useState<string>();
+  const [usageWarning, setUsageWarning] = useState<string>();
   const usageRequestPending = useRef(false);
   const usageWarningLevels = useRef<UsageWarningLevels>({});
   const usageMounted = useRef(false);
@@ -137,6 +165,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   >();
   const [resumeMenu, setResumeMenu] = useState(false);
   const [convoMenu, setConvoMenu] = useState(false);
+  const [queueMenu, setQueueMenu] = useState(false);
   const [resumeChoices, setResumeChoices] = useState<Session[]>([]);
   const [resumeProcessIds, setResumeProcessIds] = useState<string[]>([]);
   const [missingProjectPaths, setMissingProjectPaths] = useState<string[]>([]);
@@ -162,20 +191,40 @@ export default function App({ onClear }: { onClear: () => void }) {
   const staticHistory = useRef<{ sessionId?: string; firstId?: number; key: number }>({ key: 0 });
   const busy = !!session && runningIds.includes(session.id);
   const queued = session ? promptQueue.current.list(session.id) : [];
+  const [showConversationsTab, setShowConversationsTab] = useState(false);
   const rememberSession = (target: Session) => setOpenSessions(old => {
     const index = old.findIndex(item => item.id === target.id);
-    if (index < 0) return [...old, target];
+    if (index < 0) return [target, ...old];
     return old.map((item, at) => at === index ? target : item);
   });
-  const forgetViewedSession = (sessionId?: string) => {
-    if (!sessionId || jobs.current.has(sessionId) || unreadCompletions.current.has(sessionId)) return;
-    setOpenSessions(old => old.filter(item => item.id !== sessionId));
+  const getSessionState = (sessionId: string): "running" | "approval" | "done" => {
+    if (runningIds.includes(sessionId) || jobs.current.has(sessionId)) return "running";
+    if (pendingApprovals.current.has(sessionId) || (activeSessionId.current === sessionId && !!approval)) return "approval";
+    return "done";
   };
-  const pickerChoices: ConversationChoice[] = openSessions.map(item => ({
+  const sortedSessions = useMemo(() => {
+    const getRank = (state: string) => {
+      if (state === "running") return 1;
+      if (state === "approval") return 2;
+      return 3; // done
+    };
+    return [...openSessions].sort((a, b) => {
+      const stateA = getSessionState(a.id);
+      const stateB = getSessionState(b.id);
+      const rankA = getRank(stateA);
+      const rankB = getRank(stateB);
+      if (rankA !== rankB) return rankA - rankB;
+      const timeA = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+      const timeB = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+      return timeB - timeA;
+    });
+  }, [openSessions, runningIds, approval]);
+  const pickerChoices: ConversationChoice[] = sortedSessions.map(item => ({
     id: item.id,
     title: item.title,
     prompt: item.turns[0]?.prompt ?? jobs.current.get(item.id)?.prompt ?? "",
-    state: pendingApprovals.current.has(item.id) ? "approval" : runningIds.includes(item.id) ? "running" : unreadCompletions.current.has(item.id) ? "done" : "ready",
+    state: getSessionState(item.id),
+    updatedAt: item.updatedAt,
   }));
   const stopSideQuestion = () => {
     const pending = sideAbort.current;
@@ -263,7 +312,11 @@ export default function App({ onClear }: { onClear: () => void }) {
         setUsageError(undefined);
         const warnings = usageWarnings(limits, usageWarningLevels.current);
         usageWarningLevels.current = warnings.levels;
-        for (const message of warnings.messages) add("info", message);
+        if (warnings.messages.length > 0) {
+          setUsageWarning(warnings.messages[0]);
+        } else if (!warnings.levels["5h"] && !warnings.levels["7d"]) {
+          setUsageWarning(undefined);
+        }
       })
       .catch(() => { if (usageMounted.current) setUsageError("Usage unavailable"); })
       .finally(() => { usageRequestPending.current = false; });
@@ -332,7 +385,12 @@ export default function App({ onClear }: { onClear: () => void }) {
       activeSessionId.current = fresh.id;
       sessionLines.current.set(fresh.id, preSessionLines.current);
       setSession(fresh);
-      rememberSession(fresh);
+      const saved = await localStore.list(project);
+      if (saved.length > 0) {
+        setOpenSessions([fresh, ...saved.filter(s => s.id !== fresh.id)]);
+      } else {
+        setOpenSessions([fresh]);
+      }
       for (const notice of notices) add("error", notice);
       setStatus("Ready · /help for commands");
     };
@@ -476,13 +534,12 @@ export default function App({ onClear }: { onClear: () => void }) {
       onClear();
       setSession(target);
       unreadCompletions.current.delete(target.id);
-      if (previousId !== target.id) forgetViewedSession(previousId);
       rememberSession(target);
       setResumeMenu(false);
       setConvoMenu(false);
       setPickerFocused(false);
-      const targetIndex = openSessions.findIndex(item => item.id === target.id);
-      setPickerIndex(targetIndex < 0 ? openSessions.length : targetIndex);
+      const targetIndex = sortedSessions.findIndex(item => item.id === target.id);
+      setPickerIndex(targetIndex < 0 ? 0 : targetIndex);
       setDraft(sessionDrafts.current.get(target.id) ?? "");
       setShowHeader(true);
       if (sessionLines.current.has(target.id)) setLines(sessionLines.current.get(target.id)!);
@@ -529,23 +586,40 @@ export default function App({ onClear }: { onClear: () => void }) {
     return () => { process.off("SIGINT", onSignal); };
   }, []);
   const focusPicker = () => {
-    if (openSessions.length < 2 || modelMenu || resumeMenu || convoMenu) return false;
-    const current = openSessions.findIndex(item => item.id === activeSessionId.current);
-    setPickerIndex((current + 1) % openSessions.length);
+    if (sortedSessions.length < 2 || modelMenu || convoMenu || queueMenu) return false;
+    const current = sortedSessions.findIndex(item => item.id === activeSessionId.current);
+    setPickerIndex(current >= 0 ? (current + 1) % sortedSessions.length : 0);
     setPickerFocused(true);
     return true;
   };
   const cancelArmed = useAppInput({
     interrupt, pickerFocused, setPickerFocused, pickerIndex, setPickerIndex,
-    openSessions, activateSession, approval, focusPicker, pendingApprovals,
+    openSessions: sortedSessions, activateSession, approval, focusPicker, pendingApprovals,
     activeSessionId, jobs, sideAbort, outputsExpanded, setOutputsExpanded,
     redrawTranscript: () => { onClear(); setTranscriptRevision(value => value + 1); },
     modelMenu, setModelMenu, menuModels,
     menuIndex, setMenuIndex, setMenuModel, toggleModel, toggleEffort,
     resumeMenu, setResumeMenu, resumeChoices, missingProjectPaths, add,
     convoMenu, setConvoMenu, session, store, setSession, renderSessionTurns,
-    setDraft, setHistory,
+    setDraft, setHistory, queueMenu, setQueueMenu, promptQueue, setQueueVersion,
   });
+  const handleQueuePop = () => {
+    if (!session) return false;
+    const popped = promptQueue.current.pop(session.id);
+    if (!popped) return false;
+    setQueueVersion(v => v + 1);
+    setDraft(popped);
+    add("info", `Editing queued message: ${popped.replace(/\s+/g, " ").slice(0, 80)}`);
+    return true;
+  };
+  const handleQueueDelete = () => {
+    if (!session) return false;
+    const popped = promptQueue.current.pop(session.id);
+    if (!popped) return false;
+    setQueueVersion(v => v + 1);
+    add("info", `Removed queued message: ${popped.replace(/\s+/g, " ").slice(0, 80)}`);
+    return true;
+  };
   const shell = createShellRunner({
     project,
     nextId,
@@ -651,7 +725,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       void askBtw(text.slice(4).trim());
       return;
     }
-    if (jobs.current.has(session.id) && !/^\/(?:new|clear|resume|help|exit|usage|stats|compact|context|route|artifacts|models|trust|skills|approval|tasks)(?:\s|$)/.test(text)) {
+    if (jobs.current.has(session.id) && !/^\/(?:new|clear|\.clear|queue|resume|help|exit|usage|stats|compact|context|route|artifacts|models|trust|skills|approval|tasks)(?:\s|$)/.test(text)) {
       if (text.startsWith("/") && !skillCommand(text, enabledSkills(skills, config))) {
         add("info", "This conversation is working. Use /new or /resume to switch conversations.");
         return;
@@ -675,7 +749,13 @@ export default function App({ onClear }: { onClear: () => void }) {
         if (session.routingMode === "manual") fresh.route = session.route;
         switchingSession.current = true;
         const previousId = activeSessionId.current;
-        if (previousId) sessionDrafts.current.set(previousId, "");
+        if (previousId) {
+          sessionDrafts.current.set(previousId, "");
+          if (session) {
+            session.updatedAt = new Date().toISOString();
+            void store.save(session).catch(() => {});
+          }
+        }
         activeSessionId.current = fresh.id;
         try {
           await store.save(fresh);
@@ -684,13 +764,19 @@ export default function App({ onClear }: { onClear: () => void }) {
           activeSessionId.current = fresh.id;
           sessionLines.current.set(fresh.id, []);
           setSession(fresh);
-          forgetViewedSession(previousId);
-          rememberSession(fresh);
+          setOpenSessions(old => {
+            const map = new Map<string, Session>();
+            if (session) map.set(session.id, session);
+            for (const s of old) map.set(s.id, s);
+            map.set(fresh.id, fresh);
+            return [...map.values()];
+          });
+          setShowConversationsTab(true);
           setLines([]);
           setDraft("");
           setHistory([]);
           setPickerFocused(false);
-          setPickerIndex(openSessions.length);
+          setPickerIndex(0);
           setShowHeader(true);
           setStatus("Ready");
           setApproval(undefined);
@@ -939,23 +1025,21 @@ export default function App({ onClear }: { onClear: () => void }) {
           add("error", "Type /resume to open the conversation picker.");
           return;
         }
-        const projects = await store.listProjects();
-        const processIds = [...jobs.current.keys()];
-        const choices = projects.flatMap(item => item.sessions);
-        for (const job of jobs.current.values()) {
-          const index = choices.findIndex(choice => choice.id === job.session.id);
-          if (index >= 0) choices[index] = job.session;
-          else choices.unshift(job.session);
-        }
-        if (!choices.length) {
+        const saved = await store.list(project);
+        if (!saved.length && openSessions.length <= 1) {
           add("info", "No saved conversations.");
           return;
         }
-        setResumeProcessIds(processIds);
-        setMissingProjectPaths(projects.filter(item => !item.exists).map(item => item.projectPath));
-        setResumeChoices(choices);
-        setResumeMenu(true);
-        setMenuIndex(0);
+        setOpenSessions(old => {
+          const map = new Map<string, Session>();
+          for (const s of old) map.set(s.id, s);
+          for (const s of saved) if (!map.has(s.id)) map.set(s.id, s);
+          for (const job of jobs.current.values()) map.set(job.session.id, job.session);
+          return [...map.values()];
+        });
+        setShowConversationsTab(true);
+        setPickerFocused(true);
+        setPickerIndex(0);
         return;
       }
       if (command === "/undo") {
@@ -984,6 +1068,59 @@ export default function App({ onClear }: { onClear: () => void }) {
         }
         setConvoMenu(true);
         setMenuIndex(session.turns.length - 1);
+        return;
+      }
+      if (command === "/queue") {
+        const currentQueued = promptQueue.current.list(session.id);
+        if (!currentQueued.length) {
+          add("info", "No messages currently queued.");
+          return;
+        }
+        if (parts[0] === "clear") {
+          const cleared = promptQueue.current.clear(session.id);
+          setQueueVersion(v => v + 1);
+          add("info", `Cleared ${cleared} queued message${cleared === 1 ? "" : "s"}.`);
+          return;
+        }
+        if (parts[0] === "pop" || (parts[0] === "edit" && !parts[1])) {
+          const popped = promptQueue.current.pop(session.id);
+          if (popped) {
+            setQueueVersion(v => v + 1);
+            setDraft(popped);
+            add("info", `Editing queued message: ${popped.replace(/\s+/g, " ").slice(0, 80)}`);
+          }
+          return;
+        }
+        if (parts[0] === "edit" || /^\d+$/.test(parts[0] ?? "")) {
+          const indexStr = parts[0] === "edit" ? parts[1] : parts[0];
+          const num = parseInt(indexStr ?? "", 10);
+          if (isNaN(num) || num < 1 || num > currentQueued.length) {
+            add("error", `Invalid queue index. Choose 1 to ${currentQueued.length}.`);
+            return;
+          }
+          const prompt = promptQueue.current.remove(session.id, num - 1);
+          if (prompt) {
+            setQueueVersion(v => v + 1);
+            setDraft(prompt);
+            add("info", `Editing queued message ${num}: ${prompt.replace(/\s+/g, " ").slice(0, 80)}`);
+          }
+          return;
+        }
+        if (parts[0] === "delete" || parts[0] === "rm") {
+          const num = parseInt(parts[1] ?? "", 10);
+          if (isNaN(num) || num < 1 || num > currentQueued.length) {
+            add("error", `Invalid queue index. Choose 1 to ${currentQueued.length}.`);
+            return;
+          }
+          const removed = promptQueue.current.remove(session.id, num - 1);
+          if (removed) {
+            setQueueVersion(v => v + 1);
+            add("info", `Removed queued message ${num}: ${removed.replace(/\s+/g, " ").slice(0, 80)}`);
+          }
+          return;
+        }
+        setQueueMenu(true);
+        setMenuIndex(currentQueued.length - 1);
         return;
       }
       if (!skillCommand(text, enabledSkills(skills, config)) || commands.includes(command)) {
@@ -1022,6 +1159,10 @@ export default function App({ onClear }: { onClear: () => void }) {
     staticState.firstId = lines[0]?.id;
   }
   staticState.sessionId = session?.id ?? staticState.sessionId;
+  const terminalColumns = terminalDimensions.columns;
+  const terminalRows = terminalDimensions.rows;
+  const contentWidth = Math.max(20, terminalColumns - 2);
+
   return (
     <Box flexDirection="column" paddingX={1}>
       <Static key={`${staticState.key}-${transcriptRevision}`} items={[
@@ -1029,17 +1170,19 @@ export default function App({ onClear }: { onClear: () => void }) {
         ...settledLines.map(group => ({ kind: "lines" as const, group })),
       ]}>
         {item => item.kind === "logo"
-          ? <HeaderLogo key="logo" width={stdout.columns ?? 80} />
-          : <Transcript key={item.group[0]?.id} lines={item.group} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} width={stdout.columns ?? 80} />}
+          ? <HeaderLogo key="logo" width={terminalColumns} />
+          : <Transcript key={item.group[0]?.id} lines={item.group} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} width={terminalColumns} />}
       </Static>
-      {showHeader ? <HeaderStatus project={project} vexState={vexState} width={stdout.columns ?? 80} /> : null}
-      <Transcript lines={liveLines.slice(-Math.max(1, Math.floor(((stdout.rows ?? 24) - 12) / 4)))} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} livePreview width={stdout.columns ?? 80} />
+      {showHeader ? <HeaderStatus project={project} vexState={vexState} width={terminalColumns} /> : null}
+      <Transcript lines={liveLines.slice(-Math.max(1, Math.floor(((terminalRows - 12) / 4))))} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} livePreview width={terminalColumns} />
       {modelMenu ? <ModelMenu mode={modelMenu} models={menuModels} selectedModel={menuModel} selectedIndex={menuIndex} config={config} /> : null}
-      {resumeMenu ? <ResumeMenu choices={resumeChoices} selectedIndex={menuIndex} runningIds={runningIds} processIds={resumeProcessIds} missingProjectPaths={missingProjectPaths} /> : null}
       {convoMenu && session ? <ConvoMenu turns={session.turns} selectedIndex={menuIndex} /> : null}
+      {queueMenu && session ? <QueueMenu prompts={queued} selectedIndex={menuIndex} /> : null}
       {runningIds.length || shellJobs ? (
       <Box gap={1}><Text color="#59E6A7" bold>{spinner[tick % spinner.length]}</Text><Text color="#38BDF8">{busy ? status === "Thinking" ? thinkingWords[Math.floor(tick / 30) % thinkingWords.length] : status : runningIds.length ? `${runningIds.length} background turn${runningIds.length === 1 ? "" : "s"} running` : "Ready"}</Text>{busy && session && liveUsage[session.id] ? <Text color="#94A3B8">· {liveUsage[session.id]}</Text> : null}{shellJobs ? <Text color="#FBBF24">· ⚡ {shellJobs} Bash command{shellJobs === 1 ? "" : "s"} running</Text> : null}</Box>
       ) : null}
+      <RunningProcesses processes={processes} now={Date.now()} />
+      <TaskPanel tasks={session?.tasks ?? []} />
       {approval ? (
         <Box flexDirection="column" borderStyle="round" borderColor="#FBBF24" paddingX={1}>
           <Text color="#FBBF24" bold>Approval required</Text>
@@ -1050,10 +1193,9 @@ export default function App({ onClear }: { onClear: () => void }) {
         </Box>
       ) : null}
       {cancelArmed ? <Text color="#FBBF24">Press Esc again to cancel the turn</Text> : null}
-      <QueuedMessages prompts={queued} />
-      <ComposerFrame width={stdout.columns ?? 80} session={session} shellMode={shellMode} approvalMode={config?.approvalMode}>
+      <ComposerFrame width={terminalColumns} session={session} shellMode={shellMode} approvalMode={config?.approvalMode}>
         <Composer key={session?.id} value={draft} onChange={value => { setDraft(value); setSelection(0); }} onSubmit={value => { void submit(value); }} history={history}
-          disabled={!session || !config || !!approval || !!modelMenu || resumeMenu || convoMenu || pickerFocused} shellMode={shellMode}
+          disabled={!session || !config || !!approval || !!modelMenu || resumeMenu || convoMenu || queueMenu || pickerFocused} shellMode={shellMode}
           completion={matches[selection] ?? matches[0]} completionStart={token?.start}
           onComplete={() => setDraft(token ? draft.slice(0, token.start) + (matches[selection] ?? matches[0] ?? token.prefix) : draft)}
           onHistory={direction => {
@@ -1062,14 +1204,27 @@ export default function App({ onClear }: { onClear: () => void }) {
             return true;
           }}
           onMoveDown={focusPicker}
-          placeholder={modelMenu || resumeMenu || convoMenu ? "Close menu to type" : shellMode ? "Bash command; ! returns to Pace" : vexState !== "connected" ? "Vex unavailable; manual turns work" : busy ? "Type next prompt to queue it" : "Ask Pace or type /"}
+          onQueuePop={handleQueuePop}
+          onDeleteQueued={handleQueueDelete}
+          placeholder={modelMenu || resumeMenu || convoMenu || queueMenu ? "Close menu to type" : shellMode ? "Bash command; ! returns to Pace" : vexState !== "connected" ? "Vex unavailable; manual turns work" : busy ? "Type next prompt to queue it" : "Ask Pace or type /"}
         />
       </ComposerFrame>
-      <RunningProcesses processes={processes} now={Date.now()} />
-      <TaskPanel tasks={session?.tasks ?? []} />
-      {runningIds.length > 0 && openSessions.length > 1 ? <ConversationPicker choices={pickerChoices} activeId={activeSessionId.current} selectedIndex={pickerIndex} focused={pickerFocused} /> : null}
-      <UsageBar limits={usageLimits} error={usageError} />
-      {!modelMenu && !resumeMenu && !convoMenu && matches.length > 0 ? <CommandMenu matches={matches} descriptions={commandDescriptionsWithSkills} selectedIndex={selection} /> : null}
+      {usageWarning ? <Text color="#FBBF24">{usageWarning}</Text> : null}
+      {!modelMenu && !resumeMenu && !convoMenu && !queueMenu && matches.length > 0 ? <CommandMenu matches={matches} descriptions={commandDescriptionsWithSkills} selectedIndex={selection} /> : null}
+      <BottomPanel
+        width={contentWidth}
+        height={terminalRows}
+        conversations={{
+          choices: pickerChoices,
+          activeId: activeSessionId.current,
+          selectedIndex: pickerIndex,
+          focused: pickerFocused,
+        }}
+        showConversations={showConversationsTab || sortedSessions.length > 1 || pickerFocused}
+        queuedPrompts={queued}
+        usageLimits={usageLimits}
+        usageError={usageError}
+      />
     </Box>
   );
 }

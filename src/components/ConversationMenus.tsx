@@ -7,38 +7,75 @@ export type ConversationChoice = {
   title?: string;
   prompt: string;
   state: "ready" | "running" | "approval" | "done";
+  updatedAt?: string;
 };
+
+export function sortConversations<T extends { state: "ready" | "running" | "approval" | "done"; updatedAt?: string }>(
+  items: T[],
+): T[] {
+  const getRank = (state: string): number => {
+    if (state === "running") return 1;
+    if (state === "approval") return 2;
+    return 3; // done | ready
+  };
+
+  return [...items].sort((a, b) => {
+    const rankA = getRank(a.state);
+    const rankB = getRank(b.state);
+    if (rankA !== rankB) return rankA - rankB;
+
+    const timeA = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+    const timeB = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+    return timeB - timeA;
+  });
+}
 
 export function menuWindow(length: number, selectedIndex: number, size = 5): { start: number; end: number } {
   const start = Math.max(0, Math.min(selectedIndex - Math.floor(size / 2), length - size));
   return { start, end: Math.min(start + size, length) };
 }
 
-export function ConversationPicker({ choices, activeId, selectedIndex, focused }: {
+export function ConversationPicker({
+  choices,
+  activeId,
+  selectedIndex,
+  focused,
+  width,
+  maxItems = 5,
+  marginTop = 0,
+}: {
   choices: ConversationChoice[];
   activeId?: string;
   selectedIndex: number;
   focused: boolean;
+  width?: number;
+  maxItems?: number;
+  marginTop?: number;
 }) {
   const anchor = focused ? selectedIndex : Math.max(0, choices.findIndex(choice => choice.id === activeId));
-  const { start } = menuWindow(choices.length, anchor);
+  const { start } = menuWindow(choices.length, anchor, maxItems);
+  const showHints = width === undefined || width >= 50;
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={focused ? "#38BDF8" : "#475569"} paddingX={1} marginTop={1}>
-      <Text color="#94A3B8" bold>Conversations <Text dimColor>· ↓ from input to select · Enter switch · Esc back</Text></Text>
-      {choices.slice(start, start + 5).map((choice, offset) => {
+    <Box flexDirection="column" borderStyle="round" borderColor={focused ? "#38BDF8" : "#475569"} paddingX={1} width={width} marginTop={marginTop}>
+      <Text color="#94A3B8" bold wrap="truncate">
+        Conversations {showHints ? <Text dimColor>· ↓ to select · Enter switch · Esc back</Text> : null}
+      </Text>
+      {choices.slice(start, start + maxItems).map((choice, offset) => {
         const selected = focused && start + offset === selectedIndex;
         const current = choice.id === activeId;
         const prompt = (choice.title || choice.prompt).replace(/\s+/g, " ").trim();
+        const stateColor = choice.state === "approval" ? "#FBBF24" : choice.state === "running" ? "#38BDF8" : choice.state === "done" ? "#59E6A7" : "#64748B";
+        const stateLabel = choice.state === "approval" ? "approve" : choice.state === "running" ? "running" : choice.state === "done" ? "done" : current ? "current" : "ready";
         return (
           <Box key={choice.id} gap={1}>
             <Text color={selected ? "#38BDF8" : "#64748B"}>{selected ? "▶" : " "}</Text>
             <Text color={current ? "#59E6A7" : "#94A3B8"}>{choice.id.slice(0, 8)}</Text>
-            <Text color={choice.state === "approval" ? "#FBBF24" : choice.state === "running" ? "#38BDF8" : choice.state === "done" ? "#59E6A7" : "#64748B"}>{choice.state === "approval" ? "approval" : choice.state === "running" ? "running" : choice.state === "done" ? "done" : current ? "current" : "ready"}</Text>
+            <Text color={stateColor}>{stateLabel}</Text>
             <Text color={selected ? "white" : "#CBD5E1"} wrap="truncate">{prompt.slice(0, 60) || "New conversation"}</Text>
           </Box>
         );
       })}
-      {choices.length > 5 ? <Text color="#64748B">{start + 1}–{Math.min(start + 5, choices.length)} of {choices.length}</Text> : null}
+      {choices.length > maxItems ? <Text color="#64748B">{start + 1}–{Math.min(start + maxItems, choices.length)} of {choices.length}</Text> : null}
     </Box>
   );
 }
@@ -116,6 +153,46 @@ export function ConvoMenu({
       {turns.length > 5 ? <Text color="#64748B">{start + 1}–{end} of {turns.length}</Text> : null}
       <Box marginTop={1}>
         <Text color="#64748B">↑/↓ select · Enter edit from here · Backspace/d delete · Esc close</Text>
+      </Box>
+    </Box>
+  );
+}
+
+export function QueueMenu({
+  prompts,
+  selectedIndex,
+}: {
+  prompts: readonly string[];
+  selectedIndex: number;
+}) {
+  const { start, end } = menuWindow(prompts.length, selectedIndex);
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor="#FBBF24" paddingX={1} marginTop={1}>
+      <Text color="#FBBF24" bold>
+        Queued messages ({prompts.length})
+      </Text>
+      {prompts.slice(start, end).map((prompt, offset) => {
+        const index = start + offset;
+        const selected = index === selectedIndex;
+        const cleanPrompt = prompt.replace(/\s+/g, " ").trim();
+        const shortPrompt = cleanPrompt.length > 50 ? `${cleanPrompt.slice(0, 47)}…` : cleanPrompt;
+        return (
+          <Box key={index} gap={1}>
+            <Text color={selected ? "#59E6A7" : "gray"} bold={selected}>
+              {selected ? "▶" : " "}
+            </Text>
+            <Text color={selected ? "#38BDF8" : "#94A3B8"} bold={selected}>
+              #{index + 1}
+            </Text>
+            <Text color={selected ? "white" : "#CBD5E1"} bold={selected}>
+              {shortPrompt}
+            </Text>
+          </Box>
+        );
+      })}
+      {prompts.length > 5 ? <Text color="#64748B">{start + 1}–{end} of {prompts.length}</Text> : null}
+      <Box marginTop={1}>
+        <Text color="#64748B">↑/↓ select · Enter edit in composer · Alt+Del/Backspace/d delete · Esc close</Text>
       </Box>
     </Box>
   );

@@ -1,16 +1,45 @@
 import React from "react";
 import { renderToString, Text } from "ink";
 import { expect, it } from "vitest";
-import { Composer, commandRanges, commandToken, inputColumns, isNewlineKey, paceGradient, verticalCursor } from "../src/components/Composer.js";
+import { Composer, commandRanges, commandToken, deleteWordBackward, deleteWordForward, inputColumns, isAltBackspaceKey, isAltDeleteKey, isNewlineKey, paceGradient, verticalCursor } from "../src/components/Composer.js";
 import { ComposerFrame } from "../src/components/ComposerFrame.js";
 import { newSession } from "../src/core/sessions.js";
 import { normalizeNewCommand } from "../src/components/App.js";
 
-it("treats ./new as a new conversation command", () => {
+it("treats ./new, /.new, ./clear, and /.clear as conversation commands", () => {
   expect(normalizeNewCommand("./new")).toBe("/new");
   expect(normalizeNewCommand(" ./new ")).toBe("/new");
   expect(normalizeNewCommand("./new extra")).toBe("/new extra");
   expect(normalizeNewCommand("./newfile")).toBe("./newfile");
+  expect(normalizeNewCommand("/.clear")).toBe("/clear");
+  expect(normalizeNewCommand(" /.clear ")).toBe("/clear");
+  expect(normalizeNewCommand("./clear")).toBe("/clear");
+  expect(normalizeNewCommand("/.new")).toBe("/new");
+});
+
+it("deletes words forward and backward with word boundary awareness", () => {
+  expect(deleteWordForward("hello world", 0)).toEqual({ value: " world", cursor: 0 });
+  expect(deleteWordForward("hello world", 5)).toEqual({ value: "hello", cursor: 5 });
+  expect(deleteWordForward("hello ./world", 5)).toEqual({ value: "helloworld", cursor: 5 });
+  expect(deleteWordForward("hello", 5)).toEqual({ value: "hello", cursor: 5 });
+
+  expect(deleteWordBackward("hello world", 11)).toEqual({ value: "hello ", cursor: 6 });
+  expect(deleteWordBackward("hello world  ", 13)).toEqual({ value: "hello ", cursor: 6 });
+  expect(deleteWordBackward("hello", 5)).toEqual({ value: "", cursor: 0 });
+  expect(deleteWordBackward("hello", 0)).toEqual({ value: "hello", cursor: 0 });
+});
+
+it("recognizes Alt+Delete and Alt+Backspace combinations across formats", () => {
+  expect(isAltDeleteKey("", { delete: true, meta: true, ctrl: false })).toBe(true);
+  expect(isAltDeleteKey("", { delete: true, meta: false, ctrl: true })).toBe(true);
+  expect(isAltDeleteKey("\x1b[3;3~", { delete: false, meta: false, ctrl: false })).toBe(true);
+  expect(isAltDeleteKey("d", { delete: false, meta: true, ctrl: false })).toBe(true);
+  expect(isAltDeleteKey("", { delete: true, meta: false, ctrl: false })).toBe(false);
+
+  expect(isAltBackspaceKey("", { backspace: true, meta: true, ctrl: false })).toBe(true);
+  expect(isAltBackspaceKey("\x1b\x7f", { backspace: false, meta: false, ctrl: false })).toBe(true);
+  expect(isAltBackspaceKey("w", { backspace: false, meta: false, ctrl: true })).toBe(true);
+  expect(isAltBackspaceKey("", { backspace: true, meta: false, ctrl: false })).toBe(false);
 });
 
 it("maps the PACE gradient across terminal columns", () => {
@@ -74,7 +103,7 @@ it("frames input with command help and compact routing mode below it", () => {
   expect(output).toContain("newline");
   expect(output).toContain("Shift");
   const lines = output.split("\n");
-  expect(lines.filter(line => line.includes("───"))).toHaveLength(1);
+  expect(lines.filter(line => line.includes("───"))).toHaveLength(2);
   expect(lines.findIndex(line => line.includes("/help shortcuts"))).toBe(lines.findIndex(line => line.includes("/help for commands")) + 1);
 });
 

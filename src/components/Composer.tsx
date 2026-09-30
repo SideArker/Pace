@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Box, Text, useInput, usePaste, useStdout } from "ink";
 import { letterGradients } from "./Transcript.js";
 
@@ -61,6 +61,39 @@ export function commandRanges(value: string): { start: number; end: number }[] {
   });
 }
 
+export function deleteWordForward(value: string, cursor: number): { value: string; cursor: number } {
+  if (cursor >= value.length) return { value, cursor };
+  const after = value.slice(cursor);
+  const match = /^(\s*[\p{L}\p{N}_]+|\s*[^\s\p{L}\p{N}_]+|\s+)/u.exec(after);
+  const count = match ? match[0].length : 1;
+  return {
+    value: value.slice(0, cursor) + value.slice(cursor + count),
+    cursor,
+  };
+}
+
+export function deleteWordBackward(value: string, cursor: number): { value: string; cursor: number } {
+  if (cursor <= 0) return { value, cursor: 0 };
+  const before = value.slice(0, cursor);
+  const match = /([\p{L}\p{N}_]+\s*|[^\s\p{L}\p{N}_]+\s*|\s+)$/u.exec(before);
+  const count = match ? match[0].length : 1;
+  const newCursor = Math.max(0, cursor - count);
+  return {
+    value: value.slice(0, newCursor) + value.slice(cursor),
+    cursor: newCursor,
+  };
+}
+
+export function isAltDeleteKey(input: string, key: { delete?: boolean; meta?: boolean; ctrl?: boolean }): boolean {
+  return !!((key.delete && (key.meta || key.ctrl))
+    || input === "\x1b[3;3~" || input === "\x1b\x1b[3~" || input === "\x1b[3;5~" || (key.meta && input === "d"));
+}
+
+export function isAltBackspaceKey(input: string, key: { backspace?: boolean; meta?: boolean; ctrl?: boolean }): boolean {
+  return !!((key.backspace && (key.meta || key.ctrl))
+    || input === "\x1b\x7f" || input === "\x1b\b" || (key.ctrl && input === "w"));
+}
+
 type Props = {
   value: string;
   onChange: (value: string) => void;
@@ -74,11 +107,30 @@ type Props = {
   onComplete: () => void;
   onHistory?: (direction: "up" | "down") => boolean;
   onMoveDown?: () => boolean;
+  onQueuePop?: () => boolean;
+  onDeleteQueued?: () => boolean;
+  width?: number;
 };
 
-export function Composer({ value, onChange, onSubmit, history, disabled, shellMode, placeholder, completion, completionStart, onComplete, onHistory, onMoveDown }: Props) {
+export function Composer({ value, onChange, onSubmit, history, disabled, shellMode, placeholder, completion, completionStart, onComplete, onHistory, onMoveDown, onQueuePop, onDeleteQueued, width }: Props) {
   const { stdout } = useStdout();
-  const terminalWidth = stdout.columns ?? 80;
+  const [terminalWidth, setTerminalWidth] = useState(width ?? stdout?.columns ?? 80);
+
+  useEffect(() => {
+    if (width !== undefined) {
+      setTerminalWidth(width);
+      return;
+    }
+    const stream = stdout ?? process.stdout;
+    if (!stream) return;
+    const onResize = () => setTerminalWidth(stream.columns ?? 80);
+    stream.on?.("resize", onResize);
+    process.stdout?.on?.("resize", onResize);
+    return () => {
+      stream.off?.("resize", onResize);
+      process.stdout?.off?.("resize", onResize);
+    };
+  }, [width, stdout]);
   const [cursor, setCursor] = useState(0);
   const [historyIndex, setHistoryIndex] = useState<number>();
   const [savedDraft, setSavedDraft] = useState("");
@@ -95,6 +147,7 @@ export function Composer({ value, onChange, onSubmit, history, disabled, shellMo
       const nextCursor = verticalCursor(value, cursor, key.upArrow ? "up" : "down");
       if (nextCursor !== undefined) { setCursor(nextCursor); return; }
       if (onHistory?.(key.upArrow ? "up" : "down")) return;
+      if (key.upArrow && !value && onQueuePop?.()) return;
       if (key.downArrow && historyIndex === undefined && onMoveDown?.()) return;
       if (!history.length) return;
       const next = key.upArrow ? Math.min((historyIndex ?? history.length) - 1, history.length - 1) : Math.min((historyIndex ?? history.length) + 1, history.length);
@@ -122,6 +175,29 @@ export function Composer({ value, onChange, onSubmit, history, disabled, shellMo
     if (key.rightArrow) { setCursor(Math.min(value.length, cursor + 1)); return; }
     if (key.home) { setCursor(value.lastIndexOf("\n", cursor - 1) + 1); return; }
     if (key.end) { const end = value.indexOf("\n", cursor); setCursor(end < 0 ? value.length : end); return; }
+    if (isAltDeleteKey(input, key)) {
+      if (!value) {
+        if (onDeleteQueued?.()) return;
+      }
+      if (cursor < value.length) {
+        const next = deleteWordForward(value, cursor);
+        onChange(next.value);
+        setCursor(next.cursor);
+      } else if (cursor > 0) {
+        const next = deleteWordBackward(value, cursor);
+        onChange(next.value);
+        setCursor(next.cursor);
+      }
+      return;
+    }
+    if (isAltBackspaceKey(input, key)) {
+      if (cursor > 0) {
+        const next = deleteWordBackward(value, cursor);
+        onChange(next.value);
+        setCursor(next.cursor);
+      }
+      return;
+    }
     if (key.backspace || key.delete) {
       if (key.backspace && cursor > 0) { onChange(value.slice(0, cursor - 1) + value.slice(cursor)); setCursor(cursor - 1); }
       if (key.delete && cursor < value.length) onChange(value.slice(0, cursor) + value.slice(cursor + 1));

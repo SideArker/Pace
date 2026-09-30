@@ -22,4 +22,24 @@ describe("PromptQueue", () => {
     expect(queue.list("first")).toEqual([]);
     expect(queue.take("second")).toBe("other");
   });
+
+  it("supports inspecting, editing, removing, and popping queued prompts", () => {
+    const queue = new PromptQueue();
+    queue.add("sess", "prompt 1");
+    queue.add("sess", "prompt 2");
+    queue.add("sess", "prompt 3");
+
+    expect(queue.get("sess", 1)).toBe("prompt 2");
+    expect(queue.set("sess", 1, "prompt 2 edited")).toBe(true);
+    expect(queue.get("sess", 1)).toBe("prompt 2 edited");
+
+    expect(queue.pop("sess")).toBe("prompt 3");
+    expect(queue.list("sess")).toEqual(["prompt 1", "prompt 2 edited"]);
+
+    expect(queue.remove("sess", 0)).toBe("prompt 1");
+    expect(queue.list("sess")).toEqual(["prompt 2 edited"]);
+
+    expect(queue.remove("sess", 5)).toBeUndefined();
+    expect(queue.set("sess", 5, "nope")).toBe(false);
+  });
 });

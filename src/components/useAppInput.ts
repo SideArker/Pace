@@ -4,6 +4,8 @@ import type { ApprovalDecision, Progress } from "../integrations/codex.js";
 import { EFFORTS } from "../shared/config.js";
 import type { Session } from "../shared/types.js";
 import { PaceStore, rewindConversation, deleteConversationTurn, undoConversationTurn } from "../core/sessions.js";
+import type { PromptQueue } from "../core/prompt-queue.js";
+import { isAltDeleteKey } from "./Composer.js";
 import type { Line } from "./Transcript.js";
 import type { PendingApproval, TurnJob } from "./turn-runner.js";
 
@@ -51,6 +53,10 @@ export function useAppInput(options: {
   renderSessionTurns: (session: Session) => void;
   setDraft: Dispatch<SetStateAction<string>>;
   setHistory: Dispatch<SetStateAction<string[]>>;
+  queueMenu?: boolean;
+  setQueueMenu?: Dispatch<SetStateAction<boolean>>;
+  promptQueue?: MutableRefObject<PromptQueue>;
+  setQueueVersion?: Dispatch<SetStateAction<number>>;
 }) {
   const {
     interrupt, pickerFocused, setPickerFocused, pickerIndex, setPickerIndex,
@@ -60,7 +66,7 @@ export function useAppInput(options: {
     setMenuIndex, setMenuModel, toggleModel, toggleEffort, resumeMenu,
     setResumeMenu, resumeChoices, missingProjectPaths, add, convoMenu,
     setConvoMenu, session, store, setSession, renderSessionTurns, setDraft,
-    setHistory,
+    setHistory, queueMenu, setQueueMenu, promptQueue, setQueueVersion,
   } = options;
   const lastEscape = useRef<{ sessionId: string; at: number } | undefined>(undefined);
   const escapeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -90,7 +96,7 @@ export function useAppInput(options: {
   };
   useInput((input, key) => {
     if (!key.escape) clearEscape();
-    else if (pickerFocused || modelMenu || resumeMenu || convoMenu) clearEscape();
+    else if (pickerFocused || modelMenu || resumeMenu || convoMenu || queueMenu) clearEscape();
     if (key.ctrl && input === "c") { interrupt(); return; }
     if (pickerFocused) {
       if (key.escape || key.tab) setPickerFocused(false);
@@ -113,7 +119,7 @@ export function useAppInput(options: {
       else if (key.escape) handleCancelEscape();
       return;
     }
-    if (key.escape && !modelMenu && !resumeMenu && !convoMenu && !pickerFocused) {
+    if (key.escape && !modelMenu && !resumeMenu && !convoMenu && !queueMenu && !pickerFocused) {
       if (handleCancelEscape()) return;
     }
     if (key.ctrl && (input.toLowerCase() === "o" || input === "\x0f")) {
@@ -187,6 +193,45 @@ export function useAppInput(options: {
         if (session.turns.length === 0) setConvoMenu(false);
         else setMenuIndex(Math.min(menuIndex, session.turns.length - 1));
         add("info", `Deleted turn ${menuIndex + 1}.`);
+      }
+      return;
+    }
+    if (queueMenu && promptQueue && setQueueMenu && setQueueVersion) {
+      const sessionId = session?.id ?? activeSessionId.current ?? "";
+      const queuedPrompts = promptQueue.current.list(sessionId);
+      if (key.escape || !queuedPrompts.length) {
+        setQueueMenu(false);
+        return;
+      }
+      if (key.upArrow || key.downArrow || key.tab) {
+        setMenuIndex((value) =>
+          (value + (key.upArrow ? -1 : 1) + queuedPrompts.length) % queuedPrompts.length,
+        );
+        return;
+      }
+      if (key.return) {
+        const target = promptQueue.current.remove(sessionId, menuIndex);
+        setQueueVersion((v) => v + 1);
+        setQueueMenu(false);
+        if (target) {
+          setDraft(target);
+          add("info", `Editing queued message ${menuIndex + 1}. Press Enter to submit.`);
+        }
+        return;
+      }
+      if (key.delete || key.backspace || input === "d" || isAltDeleteKey(input, key)) {
+        const removed = promptQueue.current.remove(sessionId, menuIndex);
+        setQueueVersion((v) => v + 1);
+        const remaining = promptQueue.current.list(sessionId);
+        if (!remaining.length) {
+          setQueueMenu(false);
+        } else {
+          setMenuIndex(Math.min(menuIndex, remaining.length - 1));
+        }
+        if (removed) {
+          add("info", `Deleted queued message ${menuIndex + 1}.`);
+        }
+        return;
       }
       return;
     }
