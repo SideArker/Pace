@@ -16,6 +16,7 @@ import {
 import { costForUsage, pricedModels } from "./routing/pricing.js";
 import { PaceStore } from "./sessions.js";
 import { addUsage, awaitRouting, handoffPrompt, retainedConversationPrompt, structuredHandoff } from "./orchestrator-helpers.js";
+import { runPlanningStage } from "./workflow-stages.js";
 import { artifactSnapshot, changedArtifacts } from "./system/artifacts.js";
 import { validRoute } from "../shared/config.js";
 import { existingFolder } from "./system/folders.js";
@@ -286,85 +287,10 @@ export class Orchestrator {
       );
       signal?.throwIfAborted();
       if (auto && (shape === "scout" || shape === "plan_execute")) {
-        const objective =
-          shape === "scout"
-            ? prompts.objectives.scout
-            : prompts.objectives.plan;
-        const stageModels =
-          shape === "scout"
-            ? enabled.filter((model) => model.model === "gpt-6-luna")
-            : enabled;
-        if (!stageModels.length)
-          throw new Error("Vex chose a Luna scout, but Luna is not enabled");
-        const sideRoute = chosenRoute(
-          (
-            await choose(
-              stageRequest(
-                request,
-                routingTurns,
-                stageModels,
-                objective,
-                undefined,
-                enabled,
-                prompts,
-              ),
-              objective,
-            )
-          ).choice,
-          stageModels,
-        );
-        signal?.throwIfAborted();
-        onProgress({ kind: "route", route: sideRoute });
-        routeMessage(sideRoute, shape === "scout" ? "the scout" : "planning");
-        systemMessage(
-          `This task will split into two stages: ${shape === "scout" ? "a read-only scout" : "planning"}, then completion.`,
-        );
-        onProgress({
-          kind: "status",
-          text: `${objective}: ${sideRoute.model} · ${sideRoute.effort}`,
+        handoff = await runPlanningStage({
+          shape, request, routingTurns, enabled, prompts, choose, runner: this.runner,
+          session, signal, onProgress, routeMessage, systemMessage, stages,
         });
-        const basePrompt = handoffPrompt(shape, request, routingTurns, prompts);
-        let previousResult: string | undefined;
-        let handoffError: unknown;
-        for (let attempt = 0; attempt < 2; attempt++) {
-          const correction = previousResult
-            ? `\n\nYour previous report was rejected (${String(handoffError)}). Rewrite it as exactly one JSON object following the required handoff schema. Previous report:\n${previousResult.slice(0, 10_000)}`
-            : "";
-          const stageStart = performance.now();
-          const side = await this.runner.run(
-            `${basePrompt}${correction}`,
-            session.projectPath,
-            sideRoute,
-            undefined,
-            (progress) => {
-              if (progress.kind === "activity") onProgress(progress);
-            },
-            signal,
-            "side",
-          );
-          signal?.throwIfAborted();
-          const sideStage: StageRecord = {
-            objective,
-            route: sideRoute,
-            durationMs: Math.round(performance.now() - stageStart),
-            usage: side.usage,
-            estimatedCostUsd: costForUsage(sideRoute, side.usage),
-          };
-          stages.push(sideStage);
-          try {
-            handoff = structuredHandoff(side.result);
-            sideStage.handoff = handoff;
-            break;
-          } catch (error) {
-            previousResult = side.result;
-            handoffError = error;
-            if (attempt === 1) throw error;
-            onProgress({
-              kind: "status",
-              text: "Correcting the read-only report format...",
-            });
-          }
-        }
       }
       if (auto) {
         const objective =

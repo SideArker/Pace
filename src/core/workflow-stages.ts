@@ -1,0 +1,111 @@
+import type { ModelOption, Route, Session, TurnSummary } from "../shared/types.js";
+import type { CodexRunner, Progress } from "../integrations/codex.js";
+import type { RoutingDecision } from "./routing/router.js";
+import { stageRequest, type VexRequest } from "./vex/client.js";
+import type { RoutingPrompts } from "./routing/routing-prompts.js";
+import type { StageRecord } from "./orchestrator.js";
+import { chosenRoute } from "./routing/router.js";
+import { costForUsage } from "./routing/pricing.js";
+import { handoffPrompt, structuredHandoff } from "./orchestrator-helpers.js";
+export async function runPlanningStage({
+  shape, request, routingTurns, enabled, prompts, choose, runner, session,
+  signal, onProgress, routeMessage, systemMessage, stages,
+}: {
+  shape: "scout" | "plan_execute";
+  request: string;
+  routingTurns: TurnSummary[];
+  enabled: ModelOption[];
+  prompts: RoutingPrompts;
+  choose: (request: VexRequest, objective: string) => Promise<RoutingDecision>;
+  runner: CodexRunner;
+  session: Pick<Session, "projectPath">;
+  signal?: AbortSignal;
+  onProgress: (progress: Progress) => void;
+  routeMessage: (route: Route, stage?: string) => void;
+  systemMessage: (text: string) => void;
+  stages: StageRecord[];
+}): Promise<string> {
+  let handoff = "";
+  if (shape === "scout" || shape === "plan_execute") {
+        const objective =
+          shape === "scout"
+            ? prompts.objectives.scout
+            : prompts.objectives.plan;
+        const stageModels =
+          shape === "scout"
+            ? enabled.filter((model) => model.model === "gpt-6-luna")
+            : enabled;
+        if (!stageModels.length)
+          throw new Error("Vex chose a Luna scout, but Luna is not enabled");
+        const sideRoute = chosenRoute(
+          (
+            await choose(
+              stageRequest(
+                request,
+                routingTurns,
+                stageModels,
+                objective,
+                undefined,
+                enabled,
+                prompts,
+              ),
+              objective,
+            )
+          ).choice,
+          stageModels,
+        );
+        signal?.throwIfAborted();
+        onProgress({ kind: "route", route: sideRoute });
+        routeMessage(sideRoute, shape === "scout" ? "the scout" : "planning");
+        systemMessage(
+          `This task will split into two stages: ${shape === "scout" ? "a read-only scout" : "planning"}, then completion.`,
+        );
+        onProgress({
+          kind: "status",
+          text: `${objective}: ${sideRoute.model} · ${sideRoute.effort}`,
+        });
+        const basePrompt = handoffPrompt(shape, request, routingTurns, prompts);
+        let previousResult: string | undefined;
+        let handoffError: unknown;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const correction = previousResult
+            ? `\n\nYour previous report was rejected (${String(handoffError)}). Rewrite it as exactly one JSON object following the required handoff schema. Previous report:\n${previousResult.slice(0, 10_000)}`
+            : "";
+          const stageStart = performance.now();
+          const side = await runner.run(
+            `${basePrompt}${correction}`,
+            session.projectPath,
+            sideRoute,
+            undefined,
+            (progress) => {
+              if (progress.kind === "activity") onProgress(progress);
+            },
+            signal,
+            "side",
+          );
+          signal?.throwIfAborted();
+          const sideStage: StageRecord = {
+            objective,
+            route: sideRoute,
+            durationMs: Math.round(performance.now() - stageStart),
+            usage: side.usage,
+            estimatedCostUsd: costForUsage(sideRoute, side.usage),
+          };
+          stages.push(sideStage);
+          try {
+            handoff = structuredHandoff(side.result);
+            sideStage.handoff = handoff;
+            break;
+          } catch (error) {
+            previousResult = side.result;
+            handoffError = error;
+            if (attempt === 1) throw error;
+            onProgress({
+              kind: "status",
+              text: "Correcting the read-only report format...",
+            });
+          }
+        }
+      }
+  return handoff;
+}
