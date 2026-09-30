@@ -123,6 +123,62 @@ export class PaceStore {
     return projects.sort((a, b) =>
       (b.sessions[0]?.updatedAt ?? "").localeCompare(a.sessions[0]?.updatedAt ?? ""));
   }
+  /** Move sessions from a missing project path to an existing project directory.
+   * The original directory is retained outside session discovery as a rollback copy. */
+  async reconnectProject(from: string, to: string): Promise<number> {
+    const oldProject = normalizeProject(from);
+    const newProject = normalizeProject(to);
+    if (oldProject === newProject) throw new Error("Choose a different project path");
+    if (await stat(oldProject).then(() => true).catch(error => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    })) throw new Error("The original project path still exists");
+    if (!await stat(newProject).then(info => info.isDirectory()).catch(() => false))
+      throw new Error("The new project path must be an existing directory");
+    const source = this.sessionDir(oldProject);
+    const target = this.sessionDir(newProject);
+    if (await stat(target).then(() => true).catch(error => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    })) throw new Error("The new project already has saved sessions");
+    const files = await readdir(source);
+    const sessionFiles = files.filter(name => /^[0-9a-f-]{36}\.json$/.test(name));
+    if (!sessionFiles.length) throw new Error("No saved sessions at the original project path");
+    const sessions: Session[] = [];
+    for (const file of sessionFiles) {
+      const value: unknown = JSON.parse(await readFile(join(source, file), "utf8"));
+      const session = parseSession(value, oldProject);
+      if (!session || `${session.id}.json` !== file) throw new Error(`Invalid saved session: ${file}`);
+      sessions.push({ ...session, projectPath: newProject });
+    }
+    let activeId: string | undefined;
+    if (files.includes("active.json")) {
+      const active: unknown = JSON.parse(await readFile(join(source, "active.json"), "utf8"));
+      if (!isRecord(active) || typeof active.id !== "string" || !sessions.some(item => item.id === active.id))
+        throw new Error("Invalid active session at the original project path");
+      activeId = active.id;
+    }
+    const root = join(this.baseDir, "sessions");
+    const staged = join(root, `.reconnect-${randomUUID()}`);
+    const archiveRoot = join(this.baseDir, "reconnected");
+    const archive = join(archiveRoot, `${projectKey(oldProject)}-${randomUUID()}`);
+    await mkdir(staged, { recursive: true });
+    try {
+      for (const session of sessions) await atomicJson(join(staged, `${session.id}.json`), session);
+      if (activeId) await atomicJson(join(staged, "active.json"), { id: activeId });
+      await mkdir(archiveRoot, { recursive: true });
+      await rename(source, archive);
+      try {
+        await rename(staged, target);
+      } catch (error) {
+        await rename(archive, source);
+        throw error;
+      }
+      return sessions.length;
+    } finally {
+      await rm(staged, { recursive: true, force: true }).catch(() => {});
+    }
+  }
   async latest(project: string): Promise<Session | undefined> {
     const sessions = await this.list(project);
     try {

@@ -17,7 +17,7 @@ const args = process.argv.slice(2);
 if (args.includes("--version")) console.log(`pace ${version}`);
 else if (args.includes("--help"))
   console.log(
-    `Pace ${version} · independent Codex SDK terminal client\n\nUsage: pace [doctor|sessions|exec "prompt"|--help|--version]\n\nInteractive commands: /help /models /model <name> [effort] /auto /new /resume /compact /usage /btw <question> /artifacts /trust /skills /<skill> /route /stats /clear /exit\nSkills: /skills refreshes the default ~/.agents/skills folder; /skills enable|disable <name>; /skills <folder>|default|off\nBash: ! <command> or ! to toggle Bash mode\nInput: Shift/Ctrl/Alt+Enter or Ctrl+J for newline, arrows for history, Ctrl+O reasoning and command output`,
+    `Pace ${version} · independent Codex SDK terminal client\n\nUsage: pace [doctor|sessions|reconnect "old path" "new path"|exec "prompt"|--help|--version]\n\nInteractive commands: /help /models /auto /approval /tasks /task /new /resume /convo /compact /context /usage /btw <question> /artifacts /trust /skills /<skill> /stats /route /clear /exit\nSkills: /skills refreshes the default ~/.agents/skills folder; /skills enable|disable <name>; /skills <folder>|default|off\nBash: ! <command> or ! to toggle Bash mode\nInput: Shift/Ctrl/Alt+Enter or Ctrl+J for newline, arrows for history, Ctrl+O toggles command, diff, and reasoning details`,
   );
 else if (args[0] === "doctor") {
   const notices: string[] = [];
@@ -74,6 +74,19 @@ else if (args[0] === "doctor") {
     for (const session of project.sessions) {
       const prompt = session.turns.at(-1)?.prompt.replace(/\s+/g, " ").trim() || "(empty)";
       console.log(`  ${session.id.slice(0, 8)} · ${session.updatedAt.slice(0, 16).replace("T", " ")} · ${prompt.slice(0, 60)}`);
+    }
+  }
+} else if (args[0] === "reconnect") {
+  if (args.length !== 3) {
+    console.error('Usage: pace reconnect "old path" "new path"');
+    process.exitCode = 2;
+  } else {
+    try {
+      const count = await new PaceStore().reconnectProject(args[1]!, args[2]!);
+      console.log(`Reconnected ${count} conversation${count === 1 ? "" : "s"} to ${args[2]}.`);
+    } catch (error) {
+      console.error(`Could not reconnect project: ${String(error)}`);
+      process.exitCode = 1;
     }
   }
 } else if (args[0] === "exec") {
