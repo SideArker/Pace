@@ -1,14 +1,14 @@
 import type { ModelOption, Route, Session, TurnSummary } from "../shared/types.js";
 import type { CodexRunner, Progress } from "../integrations/codex.js";
 import type { RoutingDecision } from "./routing/router.js";
-import { stageRequest, type VexRequest } from "./vex/client.js";
+import { stageRequest, type RoutingState, type VexRequest } from "./vex/client.js";
 import type { RoutingPrompts } from "./routing/routing-prompts.js";
 import type { StageRecord } from "./orchestrator.js";
 import { chosenRoute } from "./routing/router.js";
 import { costForUsage } from "./routing/pricing.js";
 import { handoffPrompt, structuredHandoff } from "./orchestrator-helpers.js";
 export async function runPlanningStage({
-  shape, request, routingTurns, enabled, prompts, choose, runner, session,
+  shape, request, routingTurns, enabled, prompts, routingState, choose, runner, session,
   signal, onProgress, routeMessage, systemMessage, stages,
 }: {
   shape: "scout" | "plan_execute";
@@ -16,6 +16,7 @@ export async function runPlanningStage({
   routingTurns: TurnSummary[];
   enabled: ModelOption[];
   prompts: RoutingPrompts;
+  routingState?: RoutingState;
   choose: (request: VexRequest, objective: string) => Promise<RoutingDecision>;
   runner: CodexRunner;
   session: Pick<Session, "projectPath">;
@@ -48,6 +49,7 @@ export async function runPlanningStage({
                 undefined,
                 enabled,
                 prompts,
+                routingState,
               ),
               objective,
             )
@@ -78,7 +80,7 @@ export async function runPlanningStage({
             sideRoute,
             undefined,
             (progress) => {
-              if (progress.kind === "activity") onProgress(progress);
+              if (progress.kind === "activity" || progress.kind === "usage") onProgress(progress);
             },
             signal,
             "side",

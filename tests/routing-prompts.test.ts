@@ -29,9 +29,23 @@ it("creates an editable routing file and applies changes to Vex requests", async
   const stage = stageRequest("work", [], models, "complete", undefined, models, prompts);
   expect(shape.question).toBe("Choose my workflow");
   expect(shape.options[0]?.description).toBe("Use one agent");
-  expect(stage.constraints).toBe("Choose the least costly route");
+  expect(stage.constraints).toContain("Choose the least costly route");
+  expect(stage.constraints).toContain("full remaining deliverable");
   expect((stage.context.availableModels as { capability: string }[])[0]?.capability).toBe("Custom Sol description");
   expect(JSON.parse(await readFile(path, "utf8"))).toEqual(edited);
+});
+
+it("refreshes the untouched older default while preserving edited prompt files", async () => {
+  dir = await mkdtemp(join(tmpdir(), "pace-routing-prompts-"));
+  const legacy = await readFile(new URL("./fixtures/routing-prompts-v1.json", import.meta.url), "utf8");
+  const path = join(dir, routingPromptFile);
+  await writeFile(path, legacy);
+  expect(loadRoutingPrompts(dir)).toEqual(DEFAULT_ROUTING_PROMPTS);
+  expect(JSON.parse(await readFile(path, "utf8"))).toEqual(DEFAULT_ROUTING_PROMPTS);
+  const edited = structuredClone(DEFAULT_ROUTING_PROMPTS);
+  edited.workflow.question = "My custom routing question";
+  await writeFile(path, JSON.stringify(edited));
+  expect(loadRoutingPrompts(dir).workflow.question).toBe("My custom routing question");
 });
 
 it("rejects malformed routing text with the field name", async () => {

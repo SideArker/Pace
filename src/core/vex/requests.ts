@@ -1,4 +1,4 @@
-import type { ModelOption, TurnSummary } from "../../shared/types.js";
+import type { ModelOption, Route, TurnSummary } from "../../shared/types.js";
 import { PRICE_SNAPSHOT, modelRates } from "../routing/pricing.js";
 import { routeChoices, type RoutingChoice } from "../routing/router.js";
 import {
@@ -12,6 +12,11 @@ export type VexRequest = {
   constraints: string;
   decisionType: "routing";
 };
+export type RoutingState = {
+  previousRoute?: Route;
+  openTasks?: string[];
+  hasCodexThread?: boolean;
+};
 export class VexDiagnosticError extends Error {
   constructor(readonly stage: "discovery" | "startup" | "connection" | "tool validation", cause: unknown) {
     super(`${stage}: ${String(cause)}`, { cause });
@@ -22,12 +27,14 @@ function taskContext(
   turns: TurnSummary[],
   models: ModelOption[],
   prompts: RoutingPrompts,
+  state?: RoutingState,
 ) {
   return {
     originalRequest: prompt,
     recentConversation: turns
-      .slice(-6)
-      .map((turn) => ({ user: turn.prompt, assistant: turn.result })),
+      .slice(-10)
+      .map((turn) => ({ user: turn.prompt, assistant: turn.result, ...(turn.failed ? { failed: true } : {}) })),
+    ...(state ? { conversationState: state } : {}),
     availableModels: models.map((model) => ({
       id: model.model,
       capability:
@@ -56,6 +63,7 @@ export function shapeRequest(
   turns: TurnSummary[],
   models: ModelOption[],
   prompts = DEFAULT_ROUTING_PROMPTS,
+  state?: RoutingState,
 ): VexRequest {
   const configuredChoices = Object.entries(prompts.workflow.choices).map(
     ([id, description]) => ({ id, description }),
@@ -65,10 +73,10 @@ export function shapeRequest(
     : configuredChoices.filter((choice) => choice.id !== "scout");
   return {
     question: prompts.workflow.question,
-    context: taskContext(prompt, turns, models, prompts),
+    context: taskContext(prompt, turns, models, prompts, state),
     options,
     decisionType: "routing",
-    constraints: `${prompts.workflow.constraints}\n\nPace routing rule: when the user names a concrete command and target, treat it as actionable and choose single rather than clarify.`,
+    constraints: `${prompts.workflow.constraints}\n\nPace routing rule: resolve the latest user's requested outcome using recentConversation and conversationState before comparing workflows. Treat the latest user turn as authoritative for changes of scope or permission. Use prior unfinished work as context, and do not infer task size from the length of the latest message. Clarify only when the conversation lacks an actionable referent. A concrete command and target are actionable even when the command is read-only.`,
   };
 }
 export function stageRequest(
@@ -79,17 +87,18 @@ export function stageRequest(
   handoff?: string,
   availableModels = models,
   prompts = DEFAULT_ROUTING_PROMPTS,
+  state?: RoutingState,
 ): VexRequest {
   const options = routeChoices(models);
   return {
     question: prompts.stage.question,
     context: {
-      ...taskContext(prompt, turns, availableModels, prompts),
+      ...taskContext(prompt, turns, availableModels, prompts, state),
       stageObjective: objective,
       ...(handoff ? { priorStageHandoff: handoff } : {}),
     },
     options,
     decisionType: "routing",
-    constraints: prompts.stage.constraints,
+    constraints: `${prompts.stage.constraints}\n\nPace routing rule: first infer the full remaining deliverable from recentConversation, conversationState, and any priorStageHandoff. A read-only handoff records preparation and remaining steps; it is not completion of an implementation request. Judge model and effort for the work this stage must still perform, not the wording or length of the latest user message. Cost breaks ties only among routes likely to complete it at the stated quality target.`,
   };
 }

@@ -57,7 +57,7 @@ export function handoffPrompt(
       ? prompts.handoff.scoutObjective
       : prompts.handoff.planObjective;
   const conversation = turns
-    .slice(-6)
+    .slice(-10)
     .map((turn) => ({ user: turn.prompt, assistant: turn.result }));
   return `${objective} ${prompts.handoff.instructions}\n\n${prompts.handoff.recentConversationLabel}\n${JSON.stringify(conversation)}\n\n${prompts.handoff.originalRequestLabel}\n${request}`;
 }

@@ -9,7 +9,7 @@ import {
 } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { VexDiagnosticError, type VexRequest } from "./requests.js";
-export { shapeChoices, shapeRequest, stageRequest, type VexRequest } from "./requests.js";
+export { shapeChoices, shapeRequest, stageRequest, type RoutingState, type VexRequest } from "./requests.js";
 export { VexDiagnosticError } from "./requests.js";
 import type { ModelOption, TurnSummary } from "../../shared/types.js";
 import { PRICE_SNAPSHOT, modelRates } from "../routing/pricing.js";
@@ -21,6 +21,9 @@ import {
 
 const require = createRequire(import.meta.url);
 export function vexServerPath(): string | undefined {
+  if (process.env.VEX_SERVER_PATH && existsSync(process.env.VEX_SERVER_PATH)) {
+    return process.env.VEX_SERVER_PATH;
+  }
   try {
     const resolved = fileURLToPath(import.meta.resolve("@sidearker/vex-mcp"));
     if (existsSync(resolved)) return resolved;
@@ -33,10 +36,17 @@ export function vexServerPath(): string | undefined {
       "dist",
       "index.js",
     );
-    return existsSync(path) ? path : undefined;
+    if (existsSync(path)) return path;
   } catch {
-    return undefined;
+    // Fallback if package.json resolution fails
   }
+  try {
+    const localSibling = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "Vex", "dist", "index.js");
+    if (existsSync(localSibling)) return localSibling;
+  } catch {
+    // Local sibling not found
+  }
+  return undefined;
 }
 
 export class VexRouter {
@@ -64,8 +74,38 @@ export class VexRouter {
             ...(process.env.OPENROUTER_API_KEY
               ? { OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY }
               : {}),
+            ...(process.env.TYPESAFE_API_KEY
+              ? { TYPESAFE_API_KEY: process.env.TYPESAFE_API_KEY }
+              : {}),
+            ...(process.env.JEV_API_KEY
+              ? { JEV_API_KEY: process.env.JEV_API_KEY }
+              : {}),
             ...(process.env.VEX_STATS_PATH
               ? { VEX_STATS_PATH: process.env.VEX_STATS_PATH }
+              : {}),
+            ...(process.env.JEV_STATS_PATH
+              ? { JEV_STATS_PATH: process.env.JEV_STATS_PATH }
+              : {}),
+            ...(process.env.TYPESAFE_BASE_URL
+              ? { TYPESAFE_BASE_URL: process.env.TYPESAFE_BASE_URL }
+              : {}),
+            ...(process.env.OPENROUTER_BASE_URL
+              ? { OPENROUTER_BASE_URL: process.env.OPENROUTER_BASE_URL }
+              : {}),
+            ...(process.env.TYPESAFE_MODEL
+              ? { TYPESAFE_MODEL: process.env.TYPESAFE_MODEL }
+              : {}),
+            ...(process.env.OPENROUTER_MODEL
+              ? { OPENROUTER_MODEL: process.env.OPENROUTER_MODEL }
+              : {}),
+            ...(process.env.JEV_MODEL
+              ? { JEV_MODEL: process.env.JEV_MODEL }
+              : {}),
+            ...(process.env.JEV_PROVIDER
+              ? { JEV_PROVIDER: process.env.JEV_PROVIDER }
+              : {}),
+            ...(process.env.VEX_PROVIDER
+              ? { VEX_PROVIDER: process.env.VEX_PROVIDER }
               : {}),
           },
         });

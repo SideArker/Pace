@@ -1,4 +1,5 @@
 import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -130,9 +131,18 @@ export function parseRoutingPrompts(value: unknown): RoutingPrompts {
 }
 
 const defaultText = readFileSync(defaultPath, "utf8");
+// The first shipped editable default. Refresh only this exact file, never user edits.
+const legacyDefaultSha256 = "d4ab14ad9720473b296e2456111b859c226eae99f1a3dd580d57c319dc8441d9";
 export const DEFAULT_ROUTING_PROMPTS = parseRoutingPrompts(
   JSON.parse(defaultText),
 );
+
+export function completionObjective(shape: string, prompts: RoutingPrompts): string {
+  if (shape === "single") return prompts.objectives.single;
+  if (shape === "plan_execute")
+    return `${prompts.objectives.afterHandoff}. The previous stage produced a read-only plan; this stage must implement the requested change and verify it.`;
+  return prompts.objectives.afterHandoff;
+}
 
 export function loadRoutingPrompts(
   baseDir = join(homedir(), ".pace"),
@@ -145,7 +155,12 @@ export function loadRoutingPrompts(
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
   }
   try {
-    return parseRoutingPrompts(JSON.parse(readFileSync(path, "utf8")));
+    let content = readFileSync(path, "utf8");
+    if (createHash("sha256").update(content.replace(/\r\n/g, "\n")).digest("hex") === legacyDefaultSha256) {
+      writeFileSync(path, defaultText, "utf8");
+      content = defaultText;
+    }
+    return parseRoutingPrompts(JSON.parse(content));
   } catch (error) {
     throw new Error(`Cannot load ${path}: ${String(error)}`);
   }

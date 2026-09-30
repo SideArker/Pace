@@ -1,24 +1,24 @@
 {
   "version": 1,
   "workflow": {
-    "question": "Using the original request and recent conversation, which Codex workflow completes the latest requested deliverable at the least total Codex cost while meeting Sol High quality?",
-    "constraints": "Infer requested deliverable from original words and conversation. For follow-up questions, use the most recent relevant user and assistant turns to resolve pronouns and omitted nouns. Ask for clarification only if no actionable interpretation follows from that context; uncertainty between plausible interpretations is not enough when one clear referent exists. A concrete command and target, such as asking to use PowerShell to read README.md, is actionable and should use single. A complex topic alone does not imply implementation. A request only for a plan must choose single, scout, or clarify; never plan_execute. Scout requires enabled Luna. Compare expected total Codex cost of every stage. Ignore Vex cost.",
+    "question": "Using the latest user request, recent conversation, and task state, which Codex workflow can complete the actual requested deliverable at the least total Codex cost while meeting Sol High quality?",
+    "constraints": "First resolve the latest user's intent in conversation: identify the referenced task, what was already done, what remains, and whether the latest turn asks for an answer, a plan, or action. A short follow-up can authorize substantial implementation; a previous plan-only limit does not forbid implementation requested in a later turn. A request to continue means carry forward unfinished work if the conversation identifies it. Do not infer workload from message length. Ask for clarification only if no actionable referent or outcome can be inferred. A concrete command and target are actionable. A complex topic alone does not imply implementation. A request only for a plan must choose single, scout, or clarify; never plan_execute. Scout requires enabled Luna. Compare expected total Codex cost of every stage that meets the quality target. Ignore Vex cost.",
     "choices": {
-      "single": "One Codex agent completes requested deliverable. Prefer for self-contained answers and focused repository lookups that Luna can inspect and answer cheaply in one pass. Compare its full cost with both scout stages.",
+      "single": "One Codex agent completes the resolved deliverable. Prefer for self-contained answers and focused repository lookups that Luna can answer cheaply in one pass. A brief message in an ongoing task is not necessarily a brief deliverable. Compare its full cost with both scout stages.",
       "scout": "Luna read-only scout identifies relevant files, behavior, and tests; second agent completes the request from a structured handoff. Use when broad or uncertain repository exploration can materially reduce completion-agent work. Include both stages in total Codex cost.",
       "plan_execute": "Planning agent produces actionable plan; execution agent completes requested implementation. Use only when user requests implementation and planning improves quality and total cost.",
       "clarify": "Ask user to clarify requested outcome when deliverable cannot be determined from original request and conversation."
     }
   },
   "stage": {
-    "question": "Which supported Codex model and effort together can meet Sol High quality for this stage at the least expected Codex cost?",
-    "constraints": "Choose one valid model and effort pair. Sol High is the quality target, not a required model. For short self-contained answers, consider Luna Low first when it can meet that quality; do not pay for Sol merely because it is the baseline. Account for stage scope and expected token use at current prices. Reasoning output is part of output cost. Use prior handoff when supplied. Do not turn a plan-only request into implementation."
+    "question": "Which supported Codex model and effort can complete this stage's resolved work at Sol High quality for the least expected Codex cost?",
+    "constraints": "Choose one valid model and effort pair after resolving the actual remaining work from the conversation and prior handoff. A read-only scout or planning report identifies work; it does not perform edits or verification. Sol High is the quality target, not a required model. Use Luna Low for short self-contained answers, narrow reading, or other work it can finish at that quality. Do not choose it merely because the latest message is short when the referenced task needs edits, verification, or sustained follow-through. Consider the scope, uncertainty, expected token use, and capability needed to finish the deliverable. Cost matters only among routes likely to finish at the quality target. Reasoning output is part of output cost. Do not turn a plan-only request into implementation unless the latest request asks for it."
   },
   "objectives": {
     "scout": "Read-only repository scout",
     "plan": "Read-only implementation plan",
-    "single": "Complete the original user request",
-    "afterHandoff": "Complete the original user request using the prior structured handoff"
+    "single": "Complete the latest user request as resolved from conversation",
+    "afterHandoff": "Complete the latest user request as resolved from conversation and the prior structured handoff"
   },
   "modelCapabilities": {
     "gpt-6-luna": "efficient direct factual answers, focused work, repository scouting, and straightforward plans",

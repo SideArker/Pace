@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile, appendFile, stat } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { PaceStore } from "../core/sessions.js";
-import { loadRoutingPrompts } from "../core/routing/routing-prompts.js";
+import { completionObjective, loadRoutingPrompts } from "../core/routing/routing-prompts.js";
 import { pricedModels, PRICE_SNAPSHOT } from "../core/routing/pricing.js";
 import {
   chosenRoute,
@@ -181,10 +181,7 @@ export async function main() {
                 },
               );
             }
-            const objective =
-              shape === "single"
-                ? prompts.objectives.single
-                : prompts.objectives.afterHandoff;
+            const objective = completionObjective(shape, prompts);
             const completionRequest = stageRequest(
               item.prompt,
               turns,
@@ -244,4 +241,3 @@ export async function main() {
     else process.env.VEX_STATS_PATH = previousStatsPath;
   }
 }
-

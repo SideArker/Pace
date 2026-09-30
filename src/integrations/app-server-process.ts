@@ -21,6 +21,8 @@ function codexCommand(): string {
   return join(dirname(packagePath), "bin", "codex.js");
 }
 
+import { VEX_ENV_VARS } from "./codex-options.js";
+
 export function serverArgs(): string[] {
   const serverPath = vexServerPath();
   const args = [
@@ -30,7 +32,7 @@ export function serverArgs(): string[] {
   if (serverPath) args.unshift(
     "--config", `mcp_servers.vex.command=${tomlString(process.execPath)}`,
     "--config", `mcp_servers.vex.args=[${[serverPath, "mcp", "serve"].map(tomlString).join(", ")}]`,
-    "--config", `mcp_servers.vex.env_vars=[${(process.env.VEX_STATS_PATH ? ["OPENROUTER_API_KEY", "VEX_STATS_PATH"] : ["OPENROUTER_API_KEY"]).map(tomlString).join(", ")}]`,
+    "--config", `mcp_servers.vex.env_vars=[${VEX_ENV_VARS.map(tomlString).join(", ")}]`,
   );
   return args;
 }

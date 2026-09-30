@@ -4,6 +4,8 @@ import { chosenRoute, routeChoices, validateDecision } from '../src/core/routing
 import { costForUsage, PRICE_SNAPSHOT } from '../src/core/routing/pricing.js';
 import { shapeRequest, stageRequest } from '../src/core/vex/client.js';
 import { parseRoutingSuite, summarizeRouting } from '../src/entrypoints/routing-benchmark.js';
+import { handoffPrompt } from '../src/core/orchestrator-helpers.js';
+import { DEFAULT_ROUTING_PROMPTS } from '../src/core/routing/routing-prompts.js';
 
 it('sends original request, recent conversation, all valid pairs, capabilities, and prices', () => {
   const prompt = 'Plan a payment system. Do not implement it.';
@@ -18,6 +20,23 @@ it('sends original request, recent conversation, all valid pairs, capabilities, 
   expect(shape.decisionType).toBe('routing');
   expect(shape.constraints).toContain('plan must choose single, scout, or clarify');
   expect(shapeRequest(prompt, turns, DEFAULT_CONFIG.models.filter(model => model.model !== 'gpt-6-luna')).options.map(option => option.id)).not.toContain('scout');
+});
+
+it('gives Vex full route choice and task context for paraphrased follow-ups', () => {
+  const turns = [{ prompt: 'Plan a CSV export. Do not edit yet.', result: 'Add a writer, CLI flag, and tests.', at: '2026-09-30' }];
+  const state = { previousRoute: { model: 'gpt-6-luna', effort: 'low' } as const, openTasks: ['Implement CSV writer'], hasCodexThread: true };
+  for (const prompt of ['Implement this', 'Please turn that plan into working code', 'Go ahead with the changes']) {
+    const shape = shapeRequest(prompt, turns, DEFAULT_CONFIG.models, undefined, state);
+    const stage = stageRequest(prompt, turns, DEFAULT_CONFIG.models, 'Complete task', undefined, DEFAULT_CONFIG.models, undefined, state);
+    expect(shape.context).toMatchObject({ originalRequest: prompt, recentConversation: [{ user: turns[0]!.prompt, assistant: turns[0]!.result }], conversationState: state });
+    expect(shape.constraints).toContain('do not infer task size from the length');
+    expect(stage.constraints).toContain('full remaining deliverable');
+    expect(stage.options).toEqual(routeChoices(DEFAULT_CONFIG.models));
+  }
+  expect(shapeRequest('Start fresh', [], DEFAULT_CONFIG.models).context).not.toHaveProperty('followUp');
+  const tenTurns = Array.from({ length: 10 }, (_, index) => ({ prompt: `Task detail ${index}`, result: `Progress ${index}`, at: '2026-09-30' }));
+  expect(shapeRequest('Proceed', tenTurns, DEFAULT_CONFIG.models).context.recentConversation).toHaveLength(10);
+  expect(handoffPrompt('scout', 'Proceed', tenTurns, DEFAULT_ROUTING_PROMPTS)).toContain('Task detail 0');
 });
 
 it('accepts narrow leads and exact ties, rejects invalid or inconsistent choices', () => {

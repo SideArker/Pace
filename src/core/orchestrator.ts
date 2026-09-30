@@ -31,6 +31,7 @@ import {
 } from "./system/skills.js";
 import {
   DEFAULT_ROUTING_PROMPTS,
+  completionObjective,
   loadRoutingPrompts,
   type RoutingPrompts,
 } from "./routing/routing-prompts.js";
@@ -46,6 +47,7 @@ export type StageRecord = {
 export type RoutingRecord = {
   objective: string;
   choice: string;
+  choiceLabel?: string;
   confidence: number;
   probabilities: Record<string, number>;
   attempts: number;
@@ -152,6 +154,11 @@ export class Orchestrator {
         : turn;
     });
     const enabled = config.models.filter((model) => model.enabled !== false);
+    const routingState = {
+      previousRoute: session.route,
+      openTasks: (session.tasks ?? []).filter(task => !task.completed).map(task => task.text),
+      hasCodexThread: !!session.threadId,
+    };
     const save = async () => {
       try {
         await this.store.save(session, activateOnSave);
@@ -196,6 +203,7 @@ export class Orchestrator {
           routing.push({
             objective,
             choice: decision.choice,
+            choiceLabel: request.options.find(option => option.id === decision.choice)?.description,
             confidence: decision.confidence,
             probabilities: decision.probabilities,
             attempts: attempt,
@@ -246,7 +254,7 @@ export class Orchestrator {
         onProgress({ kind: "status", text: "Choosing workflow..." });
         shape = (
           await choose(
-            shapeRequest(request, routingTurns, enabled, prompts),
+            shapeRequest(request, routingTurns, enabled, prompts, routingState),
             "workflow",
           )
         ).choice;
@@ -288,15 +296,12 @@ export class Orchestrator {
       signal?.throwIfAborted();
       if (auto && (shape === "scout" || shape === "plan_execute")) {
         handoff = await runPlanningStage({
-          shape, request, routingTurns, enabled, prompts, choose, runner: this.runner,
+          shape, request, routingTurns, enabled, prompts, routingState, choose, runner: this.runner,
           session, signal, onProgress, routeMessage, systemMessage, stages,
         });
       }
       if (auto) {
-        const objective =
-          shape === "single"
-            ? prompts.objectives.single
-            : prompts.objectives.afterHandoff;
+        const objective = completionObjective(shape, prompts);
         route = chosenRoute(
           (
             await choose(
@@ -308,6 +313,7 @@ export class Orchestrator {
                 handoff,
                 enabled,
                 prompts,
+                routingState,
               ),
               objective,
             )
@@ -341,7 +347,7 @@ export class Orchestrator {
         text: `${note}: ${route.model ?? "Codex default"} · ${route.effort ?? "default"}`,
       });
       const executionPrompt = handoff
-        ? `${skillPrompt(prompt, skills, session.activeSkills, session.skillOptions)}\n\n${prompts.handoff.reportInstruction}\n${handoff}`
+        ? `${skillPrompt(prompt, skills, session.activeSkills, session.skillOptions)}${shape === "plan_execute" ? "\n\nThe previous stage only prepared a read-only plan. Carry out the requested implementation and verification now." : ""}\n\n${prompts.handoff.reportInstruction}\n${handoff}`
         : skillPrompt(
             prompt,
             skills,
@@ -367,6 +373,7 @@ export class Orchestrator {
         signal,
         "main",
         trustedFolders,
+        config.approvalMode,
       );
       signal?.throwIfAborted();
       stages.push({
