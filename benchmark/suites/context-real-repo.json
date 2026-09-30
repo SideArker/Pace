@@ -1,0 +1,34 @@
+{
+  "cases": [
+    {
+      "id": "scout-repair-same-thread",
+      "repository": ".",
+      "ref": "ee2aaa954baba91f86f6b21979dc9f6bbf72ae33",
+      "setup": [
+        "Inspect the read-only scout and planning handoff in src/core/workflow-stages.ts, the report parser in src/core/orchestrator-helpers.ts, and the relevant tests in tests/execution.test.ts. Do not edit files yet. Explain how an invalid report is retried and where usage, cost, and the completion context boundary are enforced. Keep file references in your answer for a later implementation turn.",
+        "Correction for the upcoming implementation: the malformed-report repair must continue the same scout Codex thread, since that thread has the original tool observations. The completion agent must still receive only the validated structured report. Keep both attempts visible in stage usage and cost. Do not edit yet."
+      ],
+      "followups": [
+        "Implement the bounded same-thread repair of a malformed read-only scout or planning report. Make the smallest coherent changes across source and tests. Run the relevant tests and build. Preserve the earlier report-only completion boundary and record both attempts' usage and estimated cost.",
+        "I also need the failure path covered: after the one repair, a second invalid report must stop before completion and leave both attempts visible. Add or strengthen a focused test for this while preserving the constraints we established."
+      ],
+      "checks": [["npm", "run", "build"], ["npm", "test", "--", "tests/execution.test.ts"]],
+      "rubric": "Inspect source and diff. The second side-mode run must receive the first scout thread ID, while the first run starts fresh. Each attempt has a stage record and usage/cost when returned. Repeated invalid output fails before main completion. Main completion receives only validated report, never the scout transcript. Tests must exercise same-thread repair, failure, and stage accounting. No unrelated changes."
+    },
+    {
+      "id": "targeted-clarification",
+      "repository": ".",
+      "ref": "ee2aaa954baba91f86f6b21979dc9f6bbf72ae33",
+      "setup": [
+        "Inspect the Vex clarify path in src/core/orchestrator.ts, how recent turns reach routing in src/core/vex/requests.ts, and related tests. Do not edit files. Explain how a vague request and a follow-up with a known referent are handled today, citing the relevant code.",
+        "Correction for implementation later: retain Vex's forced and validated workflow choice. When it chooses clarify, ask for the actual missing outcome or referent using the request and recent conversation. Do not start Codex for that clarify turn. A clear follow-up should still proceed normally. Do not edit yet."
+      ],
+      "followups": [
+        "Implement a targeted clarification question for Vex's clarify choice. Cover an isolated ambiguous request and a follow-up whose earlier turn names a file. Keep the routing decision validated and keep the no-Codex clarify behavior. Add focused tests and run them plus the build.",
+        "One more case: for 'Change that file too' after a previous turn mentions two distinct files, ask which file rather than asking for a generic deliverable. Preserve the earlier behavior and update tests."
+      ],
+      "checks": [["npm", "run", "build"], ["npm", "test", "--", "tests/execution.test.ts"]],
+      "rubric": "Inspect answers and diff. Clarification is specific to the missing outcome or file; ambiguous 'that file' after two files asks which file. Clear follow-ups proceed. Vex choice remains forced and validated and no Codex turn starts for clarify. Focused tests demonstrate these scenarios. No unrelated changes."
+    }
+  ]
+}

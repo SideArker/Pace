@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,16 +17,20 @@ type Arm = "resume" | "fresh_replay" | "compact_resume" | "fresh_checkpoint";
 const arms: Arm[] = ["resume", "fresh_replay", "compact_resume", "fresh_checkpoint"];
 type Case = {
   id: string;
-  files: Record<string, string>;
+  files?: Record<string, string>;
+  repository?: string;
+  ref?: string;
   setup: string[];
   followups: string[];
-  check: string;
+  check?: string;
+  checks?: string[][];
   rubric: string;
 };
-type Stage = { kind: string; prompt: string; answer?: string; usage?: Usage; estimatedCostUsd?: number; durationMs: number; error?: string; threadId?: string; approvalsDeclined?: number; lastProgress?: string };
+type Stage = { kind: string; prompt: string; answer?: string; usage?: Usage; estimatedCostUsd?: number; durationMs: number; error?: string; threadId?: string; requestedThreadId?: string; approvalsDeclined?: number; lastProgress?: string };
 type Run = {
-  id: string; repeat: number; arm: Arm; route: Route; fixture: string;
-  stages: Stage[]; check?: { passed: boolean; output: string };
+  id: string; repeat: number; arm: Arm; route: Route; fixture: string; sourceCommit?: string;
+  setupStatus?: string; setupStateMatched?: boolean; switchThreadValidated?: boolean;
+  stages: Stage[]; check?: { passed: boolean; output: string }; checks?: { command: string[]; passed: boolean; output: string }[];
   diff?: string; error?: string; totalEstimatedCostUsd?: number;
   totalDurationMs: number; rubric: string;
 };
@@ -47,10 +51,12 @@ function options() {
   const route: Route = { model: values.get("--model") ?? "gpt-6-sol", effort: (values.get("--effort") ?? "medium") as Route["effort"] };
   const arm = values.get("--arm");
   if (arm && !arms.includes(arm as Arm)) throw new Error(`Unknown arm ${arm}`);
+  const selectedArms = values.get("--arms")?.split(",") as Arm[] | undefined;
+  if (selectedArms && (!selectedArms.length || selectedArms.some(value => !arms.includes(value)))) throw new Error("--arms contains an unknown arm");
   return {
     suite: resolve(values.get("--suite") ?? "benchmark/suites/context-quality.json"),
     out: resolve(values.get("--out") ?? `benchmark/results/context-quality-${new Date().toISOString().replace(/[:.]/g, "-")}`),
-    selected: values.get("--case"), repeat, route, arm: arm as Arm | undefined, turnTimeoutMinutes,
+    selected: values.get("--case"), repeat, route, selectedArms: selectedArms ?? (arm ? [arm as Arm] : arms), turnTimeoutMinutes,
   };
 }
 
@@ -66,7 +72,19 @@ async function command(file: string, args: string[], cwd: string) {
 
 async function fixture(task: Case): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "pace-context-quality-"));
-  for (const [name, content] of Object.entries(task.files)) {
+  if (task.repository) {
+    const source = resolve(task.repository);
+    const cloned = await command("git", ["clone", "--quiet", "--no-hardlinks", source, root], process.cwd());
+    if (!cloned.passed) throw new Error(`Repository clone failed: ${cloned.output}`);
+    const checked = await command("git", ["checkout", "--quiet", task.ref ?? "HEAD"], root);
+    if (!checked.passed) throw new Error(`Repository checkout failed: ${checked.output}`);
+    if (source === process.cwd()) {
+      await symlink(resolve("node_modules"), join(root, "node_modules"), "dir");
+      await appendFile(join(root, ".git", "info", "exclude"), "\nnode_modules\n");
+    }
+    return root;
+  }
+  for (const [name, content] of Object.entries(task.files ?? {})) {
     if (name.startsWith("/") || name.startsWith("\\") || name.split(/[\\/]/).includes("..")) throw new Error(`Unsafe fixture path ${name}`);
     const path = join(root, name);
     await mkdir(dirname(path), { recursive: true });
@@ -103,7 +121,7 @@ async function runArm(task: Case, repetition: number, arm: Arm, route: Route, ou
   const history: { user: string; assistant: string }[] = [];
   const runTurn = async (kind: string, prompt: string, resume: boolean) => {
     const started = performance.now();
-    const stage: Stage = { kind, prompt, durationMs: 0, approvalsDeclined: 0 };
+    const stage: Stage = { kind, prompt, durationMs: 0, approvalsDeclined: 0, requestedThreadId: resume ? threadId : undefined };
     run.stages.push(stage);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), turnTimeoutMinutes * 60_000);
@@ -133,7 +151,18 @@ async function runArm(task: Case, repetition: number, arm: Arm, route: Route, ou
     }
   };
   try {
+    if (task.repository) {
+      const commit = await command("git", ["rev-parse", "HEAD"], root);
+      if (!commit.passed) throw new Error(`Could not resolve source commit: ${commit.output}`);
+      run.sourceCommit = commit.output.trim();
+    }
     for (const prompt of task.setup) history.push({ user: prompt, assistant: await runTurn("setup", prompt, !!threadId) });
+    const beforeSwitchThreadId = threadId;
+    const setupStatus = await command("git", ["status", "--porcelain", "--untracked-files=all"], root);
+    if (!setupStatus.passed) throw new Error(`Could not read setup status: ${setupStatus.output}`);
+    run.setupStatus = setupStatus.output;
+    run.setupStateMatched = setupStatus.output === "";
+    if (!run.setupStateMatched) throw new Error(`Setup changed repository state: ${setupStatus.output}`);
     let firstPrompt = task.followups[0]!;
     if (arm === "compact_resume") {
       const compact = await runner.compact(threadId!, root, route, () => {});
@@ -161,8 +190,21 @@ async function runArm(task: Case, repetition: number, arm: Arm, route: Route, ou
     }
     for (let index = 0; index < task.followups.length; index++)
       await runTurn(`followup-${index + 1}`, index === 0 ? firstPrompt : task.followups[index]!, !!threadId);
-    const check = await command(process.execPath, ["--input-type=module", "-e", task.check], root);
-    run.check = check;
+    const firstFollowup = run.stages.find(stage => stage.kind === "followup-1")!;
+    const fresh = arm === "fresh_replay" || arm === "fresh_checkpoint";
+    run.switchThreadValidated = fresh
+      ? firstFollowup.requestedThreadId === undefined && firstFollowup.threadId !== beforeSwitchThreadId
+      : firstFollowup.requestedThreadId === beforeSwitchThreadId && firstFollowup.threadId === beforeSwitchThreadId;
+    if (!run.switchThreadValidated) throw new Error(`Unexpected thread transition in ${arm}`);
+    if (task.checks) {
+      run.checks = [];
+      for (const [file, ...args] of task.checks) {
+        const check = await command(file!, args, root);
+        run.checks.push({ command: [file!, ...args], ...check });
+      }
+      run.check = { passed: run.checks.every(check => check.passed), output: run.checks.map(check => `${check.command.join(" ")}: ${check.output}`).join("\n") };
+    } else if (task.check) run.check = await command(process.execPath, ["--input-type=module", "-e", task.check], root);
+    else throw new Error("Case has no checks");
     await command("git", ["add", "-N", "."], root);
     const diff = await command("git", ["diff", "--", "."], root);
     run.diff = diff.output;
@@ -188,6 +230,7 @@ async function main() {
   if (!Array.isArray(suite.cases) || !suite.cases.length) throw new Error("Suite has no cases");
   const cases = suite.cases.filter(item => !opts.selected || item.id === opts.selected);
   if (!cases.length) throw new Error("No matching case");
+  await mkdir(dirname(opts.out), { recursive: true });
   await mkdir(opts.out, { recursive: false });
   const sourceFiles = [fileURLToPath(import.meta.url), resolve("src/integrations/app-server-runner.ts"), resolve("src/core/checkpoint.ts")];
   const source = Buffer.concat(await Promise.all(sourceFiles.map(file => readFile(file))));
@@ -199,13 +242,14 @@ async function main() {
     repeat: opts.repeat, turnTimeoutMinutes: opts.turnTimeoutMinutes, priceSnapshot: PRICE_SNAPSHOT, runId: randomUUID() }, null, 2) + "\n");
   const runs: Run[] = [];
   for (const task of cases) for (let repetition = 1; repetition <= opts.repeat; repetition++) {
-    const order = (repetition % 2 ? arms : [...arms].reverse()).filter(arm => !opts.arm || arm === opts.arm);
+    const order = (repetition % 2 ? arms : [...arms].reverse()).filter(arm => opts.selectedArms.includes(arm));
     for (const arm of order) {
       console.log(`${task.id} ${repetition}/${opts.repeat} ${arm}`);
       const result = await runArm(task, repetition, arm, opts.route, opts.out, opts.turnTimeoutMinutes);
       runs.push(result);
       await writeFile(join(opts.out, "summary.json"), JSON.stringify({
         runs: runs.map(run => ({ id: run.id, repeat: run.repeat, arm: run.arm, checkPassed: run.check?.passed ?? false,
+          setupStateMatched: run.setupStateMatched, switchThreadValidated: run.switchThreadValidated,
           error: run.error, totalEstimatedCostUsd: run.totalEstimatedCostUsd, totalDurationMs: run.totalDurationMs })),
         note: "Checks are automatic gates. Review each answer and diff against its rubric before comparing quality or savings.",
       }, null, 2) + "\n");

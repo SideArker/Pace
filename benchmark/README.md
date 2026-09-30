@@ -10,7 +10,7 @@ Benchmarks answer three different questions. Keep their results separate.
 
 ## Source layout
 
-- `suites/routing-suite.json`: 60-case development set for shape and stage choices.
+- `suites/routing-suite.json`: 63-case development set for shape and stage choices.
 - `suites/routing-holdout.json`: 24-case holdout; do not tune against it.
 - `suites/pilot.json`: short executed comparison.
 - `suites/validation.json`: 12 executed tasks on a fixed Pace commit.
