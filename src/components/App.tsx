@@ -15,7 +15,8 @@ import { formatTurnFooter, modelName } from "./turn-format.js";
 import { readUsageLimits } from "../integrations/usage.js";
 import type { UsageLimits } from "../integrations/usage.js";
 import { Composer, commandToken } from "./Composer.js";
-import { Header, Transcript, splitTranscript, type Line } from "./Transcript.js";
+import { Transcript, splitTranscript, type Line } from "./Transcript.js";
+import { HeaderLogo, HeaderStatus } from "./Header.js";
 import { UsageBar } from "./UsageBar.js";
 import { CommandMenu, ConversationPicker, ConvoMenu, ModelMenu, ResumeMenu, type ConversationChoice } from "./Menus.js";
 import { resolve } from "node:path";
@@ -117,6 +118,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const shells = useRef(new Set<{ kill: () => boolean }>());
   const lastInterruptAt = useRef(0);
   const switchingSession = useRef(false);
+  const staticHistory = useRef<{ sessionId?: string; firstId?: number; key: number }>({ key: 0 });
   const busy = !!session && runningIds.includes(session.id);
   const queued = session ? promptQueue.current.list(session.id) : [];
   const rememberSession = (target: Session) => setOpenSessions(old => {
@@ -1024,12 +1026,28 @@ const shell = createShellRunner({
     setStatusFor, showApproval, setSession, setVexState, refreshUsage, setQueueVersion,
   });
   const { history: settledLines, live: liveLines } = useMemo(() => splitTranscript(lines), [lines]);
+  const staticState = staticHistory.current;
+  if (session?.id && staticState.sessionId && session.id !== staticState.sessionId) {
+    staticState.key++;
+    staticState.firstId = lines[0]?.id;
+  } else if (staticState.firstId !== undefined && staticState.firstId !== lines[0]?.id) {
+    staticState.key++;
+    staticState.firstId = lines[0]?.id;
+  } else if (staticState.firstId === undefined) {
+    staticState.firstId = lines[0]?.id;
+  }
+  staticState.sessionId = session?.id ?? staticState.sessionId;
   return (
     <Box flexDirection="column" paddingX={1}>
-      <Static key={`${session?.id ?? "startup"}:${lines[0]?.id ?? "empty"}`} items={settledLines}>
-        {group => <Transcript key={group[0]?.id} lines={group} outputsExpanded detailsExpanded width={stdout.columns ?? 80} />}
+      <Static key={staticState.key} items={[
+        ...(showHeader ? [{ kind: "logo" as const }] : []),
+        ...settledLines.map(group => ({ kind: "lines" as const, group })),
+      ]}>
+        {item => item.kind === "logo"
+          ? <HeaderLogo key="logo" width={stdout.columns ?? 80} />
+          : <Transcript key={item.group[0]?.id} lines={item.group} outputsExpanded detailsExpanded width={stdout.columns ?? 80} />}
       </Static>
-      {showHeader ? <Header project={project} vexState={vexState} width={stdout.columns ?? 80} session={session} /> : null}
+      {showHeader ? <HeaderStatus project={project} vexState={vexState} width={stdout.columns ?? 80} session={session} /> : null}
       <Transcript lines={liveLines.slice(-Math.max(1, Math.floor(((stdout.rows ?? 24) - 12) / 4)))} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} livePreview width={stdout.columns ?? 80} />
       {modelMenu ? <ModelMenu mode={modelMenu} models={menuModels} selectedModel={menuModel} selectedIndex={menuIndex} config={config} /> : null}
       {resumeMenu ? <ResumeMenu choices={resumeChoices} selectedIndex={menuIndex} runningIds={runningIds} processIds={resumeProcessIds} missingProjectPaths={missingProjectPaths} /> : null}

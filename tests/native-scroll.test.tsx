@@ -3,6 +3,7 @@ import React from "react";
 import { Box, render, Static, Text } from "ink";
 import { describe, expect, it } from "vitest";
 import { splitTranscript, Transcript, type Line } from "../src/components/Transcript.js";
+import { HeaderLogo } from "../src/components/Header.js";
 
 class TerminalOutput extends Writable {
   isTTY = true;
@@ -19,7 +20,9 @@ class TerminalOutput extends Writable {
 function View({ lines, status }: { lines: Line[]; status: string }) {
   const { history, live } = splitTranscript(lines);
   return <Box flexDirection="column">
-    <Static items={history}>{group => <Transcript key={group[0]?.id} lines={group} outputsExpanded detailsExpanded />}</Static>
+    <Static items={[{ kind: "logo" as const }, ...history.map(group => ({ kind: "lines" as const, group }))]}>
+      {item => item.kind === "logo" ? <HeaderLogo key="logo" width={80} /> : <Transcript key={item.group[0]?.id} lines={item.group} outputsExpanded detailsExpanded />}
+    </Static>
     <Transcript lines={live.slice(-3)} outputsExpanded={false} detailsExpanded={false} livePreview />
     <Text>{status}</Text>
   </Box>;
@@ -50,6 +53,7 @@ describe("native terminal history", () => {
     }
 
     const output = stdout.writes.join("");
+    expect(output.indexOf("Previous question")).toBeGreaterThan(output.indexOf("█"));
     expect(output.match(/Previous question/g)).toHaveLength(1);
     expect(output).toContain("</> build");
     expect(output).not.toContain("\u001b[2J");

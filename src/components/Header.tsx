@@ -27,20 +27,7 @@ const paceMicroLetters = [
 
 export const letterGradients = ["#59E6A7", "#4ADE80", "#2DD4BF", "#38BDF8"] as const;
 
-export function Header({
-  project,
-  vexState,
-  width,
-  session,
-}: {
-  project: string;
-  vexState: "connecting" | "connected" | "failed";
-  width: number;
-  session?: Session;
-}) {
-  const branch = useMemo(() => getGitBranch(project), [project]);
-  const dividerLength = Math.max(20, Math.min(width - 4, 72));
-
+export function HeaderLogo({ width }: { width: number }) {
   return (
     <Box flexDirection="column" marginBottom={1}>
       {width >= 42 ? (
@@ -72,6 +59,26 @@ export function Header({
           ⚡ PACE
         </Text>
       )}
+    </Box>
+  );
+}
+
+export function HeaderStatus({
+  project,
+  vexState,
+  width,
+  session,
+}: {
+  project: string;
+  vexState: "connecting" | "connected" | "failed";
+  width: number;
+  session?: Session;
+}) {
+  const branch = useMemo(() => getGitBranch(project), [project]);
+  const dividerLength = Math.max(20, Math.min(width - 4, 72));
+
+  return (
+    <Box flexDirection="column" marginBottom={1}>
 
       <Box gap={1} marginTop={1} flexWrap="wrap">
         <Text color="#A7F3D0" bold>
@@ -117,4 +124,8 @@ export function Header({
       </Box>
     </Box>
   );
+}
+
+export function Header(props: Parameters<typeof HeaderStatus>[0]) {
+  return <Box flexDirection="column"><HeaderLogo width={props.width} /><HeaderStatus {...props} /></Box>;
 }
