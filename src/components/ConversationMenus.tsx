@@ -1,9 +1,11 @@
 import React from "react";
 import { Box, Text } from "ink";
 import type { TurnSummary } from "../shared/types.js";
+import type { ApprovalMode } from "../shared/types.js";
 
 export type ConversationChoice = {
   id: string;
+  section?: "pace" | "saved";
   title?: string;
   prompt: string;
   state: "ready" | "running" | "approval" | "done";
@@ -30,6 +32,18 @@ export function sortConversations<T extends { state: "ready" | "running" | "appr
   });
 }
 
+export function sectionConversations<T extends { id: string; state: "ready" | "running" | "approval" | "done"; updatedAt?: string }>(
+  items: T[], thisPaceIds: ReadonlySet<string>,
+): (T & { section: "pace" | "saved" })[] {
+  const current = sortConversations(items.filter(item => thisPaceIds.has(item.id)));
+  const saved = items.filter(item => !thisPaceIds.has(item.id)).sort((a, b) =>
+    (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
+  return [
+    ...current.map(item => ({ ...item, section: "pace" as const })),
+    ...saved.map(item => ({ ...item, section: "saved" as const })),
+  ];
+}
+
 export function menuWindow(length: number, selectedIndex: number, size = 5): { start: number; end: number } {
   const start = Math.max(0, Math.min(selectedIndex - Math.floor(size / 2), length - size));
   return { start, end: Math.min(start + size, length) };
@@ -53,31 +67,66 @@ export function ConversationPicker({
   marginTop?: number;
 }) {
   const anchor = focused ? selectedIndex : Math.max(0, choices.findIndex(choice => choice.id === activeId));
-  const { start } = menuWindow(choices.length, anchor, maxItems);
+  const pace = choices.map((choice, index) => ({ choice, index })).filter(({ choice }) => (choice.section ?? "pace") === "pace");
+  const saved = choices.map((choice, index) => ({ choice, index })).filter(({ choice }) => choice.section === "saved");
+  const paceLimit = saved.length ? Math.min(pace.length, Math.max(1, Math.ceil(maxItems / 2))) : maxItems;
+  const savedLimit = pace.length ? Math.max(1, maxItems - paceLimit) : maxItems;
+  const windowFor = (items: typeof pace, limit: number) => {
+    const selected = items.findIndex(item => item.index === anchor);
+    const waiting = !focused ? items.findIndex(item => item.choice.state === "approval" && item.choice.id !== activeId) : -1;
+    const { start } = menuWindow(items.length, Math.max(0, waiting >= 0 ? waiting : selected), limit);
+    return items.slice(start, start + limit);
+  };
+  const visiblePace = windowFor(pace, paceLimit);
+  const visibleSaved = windowFor(saved, savedLimit);
   const showHints = width === undefined || width >= 50;
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={focused ? "#38BDF8" : "#475569"} paddingX={1} width={width} marginTop={marginTop}>
       <Text color="#94A3B8" bold wrap="truncate">
         Conversations {showHints ? <Text dimColor>· ↓ to select · Enter switch · Esc back</Text> : null}
       </Text>
-      {choices.slice(start, start + maxItems).map((choice, offset) => {
-        const selected = focused && start + offset === selectedIndex;
+      {(["pace", "saved"] as const).map(section => {
+        const visible = section === "pace" ? visiblePace : visibleSaved;
+        const count = section === "pace" ? pace.length : saved.length;
+        return <React.Fragment key={section}>
+          <Text color="#64748B" bold>{section === "pace" ? "This pace" : "Saved conversations"} ({count})</Text>
+          {visible.map(({ choice, index }) => {
+        const selected = focused && index === selectedIndex;
         const current = choice.id === activeId;
         const prompt = (choice.title || choice.prompt).replace(/\s+/g, " ").trim();
         const stateColor = choice.state === "approval" ? "#FBBF24" : choice.state === "running" ? "#38BDF8" : choice.state === "done" ? "#59E6A7" : "#64748B";
         const stateLabel = choice.state === "approval" ? "approve" : choice.state === "running" ? "running" : choice.state === "done" ? "done" : current ? "current" : "ready";
         return (
           <Box key={choice.id} gap={1}>
-            <Text color={selected ? "#38BDF8" : "#64748B"}>{selected ? "▶" : " "}</Text>
-            <Text color={current ? "#59E6A7" : "#94A3B8"}>{choice.id.slice(0, 8)}</Text>
-            <Text color={stateColor}>{stateLabel}</Text>
+            <Box flexShrink={0}><Text color={selected ? "#38BDF8" : "#64748B"}>{selected ? "▶" : " "}</Text></Box>
+            <Box flexShrink={0}><Text color={current ? "#59E6A7" : "#94A3B8"}>{choice.id.slice(0, 8)}</Text></Box>
+            <Box flexShrink={0}><Text color={stateColor}>{stateLabel}</Text></Box>
             <Text color={selected ? "white" : "#CBD5E1"} wrap="truncate">{prompt.slice(0, 60) || "New conversation"}</Text>
           </Box>
         );
+          })}
+        </React.Fragment>;
       })}
-      {choices.length > maxItems ? <Text color="#64748B">{start + 1}–{Math.min(start + maxItems, choices.length)} of {choices.length}</Text> : null}
+      {choices.length > visiblePace.length + visibleSaved.length ? <Text color="#64748B">Showing {visiblePace.length + visibleSaved.length} of {choices.length}</Text> : null}
     </Box>
   );
+}
+
+export function ApprovalModeMenu({ selectedIndex, currentMode }: { selectedIndex: number; currentMode: ApprovalMode }) {
+  const modes: { id: ApprovalMode; description: string }[] = [
+    { id: "request-approval", description: "Sandboxed turns; ask for risky commands" },
+    { id: "limited", description: "Read-only turns; ask before each typed Bash command" },
+    { id: "full-access", description: "Unrestricted Codex turns; typed Bash still blocks destructive patterns" },
+  ];
+  return <Box flexDirection="column" borderStyle="round" borderColor="#FBBF24" paddingX={1} marginTop={1}>
+    <Text color="#FBBF24" bold>Approval mode</Text>
+    {modes.map((mode, index) => <Box key={mode.id} gap={1}>
+      <Text color={index === selectedIndex ? "#59E6A7" : "#64748B"}>{index === selectedIndex ? "▶" : " "}</Text>
+      <Text color={index === selectedIndex ? "white" : "#CBD5E1"}>{mode.id}{mode.id === currentMode ? " (current)" : ""}</Text>
+      <Text color="#64748B">{mode.description}</Text>
+    </Box>)}
+    <Text color="#64748B">↑/↓ select · Enter save · Esc close</Text>
+  </Box>;
 }
 
 export function CommandMenu({
@@ -192,7 +241,7 @@ export function QueueMenu({
       })}
       {prompts.length > 5 ? <Text color="#64748B">{start + 1}–{end} of {prompts.length}</Text> : null}
       <Box marginTop={1}>
-        <Text color="#64748B">↑/↓ select · Enter edit in composer · Alt+Del/Backspace/d delete · Esc close</Text>
+        <Text color="#64748B">↑/↓ select · → edit in composer · Alt+Del/Backspace/d delete · Esc close</Text>
       </Box>
     </Box>
   );

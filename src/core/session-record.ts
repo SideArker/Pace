@@ -85,6 +85,13 @@ export function parseSession(value: unknown, project: string): Session | undefin
         typeof turn.at === "string" &&
         (turn.route === undefined || (isRecord(turn.route) && (turn.route.model === undefined || typeof turn.route.model === "string") && (turn.route.effort === undefined || EFFORTS.includes(turn.route.effort as (typeof EFFORTS)[number])))) &&
         (turn.routeNote === undefined || typeof turn.routeNote === "string") &&
+        (turn.activities === undefined || (Array.isArray(turn.activities) && turn.activities.length <= 200 && turn.activities.every((activity: unknown) =>
+          isRecord(activity) && ["thinking", "command", "files", "tool", "search", "plan"].includes(String(activity.category)) &&
+          typeof activity.text === "string" && activity.text.length <= 2000 &&
+          (activity.detail === undefined || (typeof activity.detail === "string" && activity.detail.length <= 12000)) &&
+          (activity.outcome === undefined || activity.outcome === "success" || activity.outcome === "failure") &&
+          (activity.durationMs === undefined || nonnegative(activity.durationMs)) &&
+          (activity.tokens === undefined || nonnegative(activity.tokens))))) &&
         (turn.durationMs === undefined || (typeof turn.durationMs === "number" && Number.isFinite(turn.durationMs) && turn.durationMs >= 0)) &&
         (turn.usage === undefined || isUsage(turn.usage)) &&
         (turn.estimatedCostUsd === undefined || nonnegative(turn.estimatedCostUsd)) &&

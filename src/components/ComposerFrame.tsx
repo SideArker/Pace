@@ -22,9 +22,9 @@ export function ComposerFrame({ children, width, session, shellMode, approvalMod
   const details = `${contextLabel(session)} · ${mode} · ${approval}`;
   const wide = width >= 112;
   const hints = (
-    <Box flexDirection={wide ? "row" : "column"} gap={wide ? 2 : 0}>
-      {width >= 72 ? <Text color="#64748B" wrap="truncate">/help for commands · type ! to run commands</Text> : null}
-      <Text color="#64748B" wrap="truncate">/help shortcuts · Shift+Enter newline</Text>
+    <Box flexDirection={wide ? "row" : "column"} justifyContent={wide ? "space-between" : "flex-start"} width="100%">
+      <Text color="#64748B" wrap="truncate">/help shortcuts · Shift+Enter newline · Alt+V image</Text>
+      {width >= 72 ? <Text color="#64748B" wrap="truncate">type ! to run commands</Text> : null}
     </Box>
   );
   return (

@@ -7,7 +7,17 @@ function windowLabel(window: UsageWindow): string {
   return minutes === null ? "Window" : minutes % 1440 === 0 ? `${minutes / 1440}d` : minutes % 60 === 0 ? `${minutes / 60}h` : `${minutes}m`;
 }
 
-function Meter({ label, window, compact }: { label: string; window: UsageWindow; compact?: boolean }) {
+function Meter({
+  label,
+  window,
+  compact,
+  showUsed = true,
+}: {
+  label: string;
+  window: UsageWindow;
+  compact?: boolean;
+  showUsed?: boolean;
+}) {
   const used = Math.max(0, Math.min(100, window.usedPercent));
   const left = 100 - used;
   const blocks = Math.round(left / (compact ? 10 : 5));
@@ -16,17 +26,21 @@ function Meter({ label, window, compact }: { label: string; window: UsageWindow;
 
   return (
     <Box gap={1}>
-      <Text color="#94A3B8" bold>
+      <Box flexShrink={0}><Text color="#94A3B8" bold>
         [{label}]
-      </Text>
-      <Text>
+      </Text></Box>
+      <Box flexShrink={0}><Text>
         <Text color={barColor}>{"█".repeat(blocks)}</Text>
         <Text color="#334155">{"█".repeat(empty)}</Text>
-      </Text>
-      <Text color={barColor} bold>
+      </Text></Box>
+      <Box flexShrink={0}><Text color={barColor} bold>
         {left.toFixed(0)}% left
-      </Text>
-      <Text color="#64748B">({used.toFixed(0)}% used)</Text>
+      </Text></Box>
+      {showUsed ? (
+        <Box flexShrink={0}><Text color="#64748B">
+          ({used.toFixed(0)}% used)
+        </Text></Box>
+      ) : null}
     </Box>
   );
 }
@@ -43,11 +57,12 @@ export function UsageBar({
   marginTop?: number;
 }) {
   const compact = width !== undefined && width < 50;
+  const showUsed = width === undefined || width >= 42;
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="#334155" paddingX={1} width={width} marginTop={marginTop}>
       <Text color="#59E6A7" bold>◈ Codex Usage</Text>
-      {limits?.primary ? <Meter label={windowLabel(limits.primary)} window={limits.primary} compact={compact} /> : null}
-      {limits?.secondary ? <Meter label={windowLabel(limits.secondary)} window={limits.secondary} compact={compact} /> : null}
+      {limits?.primary ? <Meter label={windowLabel(limits.primary)} window={limits.primary} compact={compact} showUsed={showUsed} /> : null}
+      {limits?.secondary ? <Meter label={windowLabel(limits.secondary)} window={limits.secondary} compact={compact} showUsed={showUsed} /> : null}
       {error && (limits?.primary || limits?.secondary) ? <Text color="gray">{error} · showing last reading</Text> : null}
       {!limits?.primary && !limits?.secondary ? (
         <Text color="gray">{error ?? "Loading usage…"}</Text>

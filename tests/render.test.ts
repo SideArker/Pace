@@ -53,12 +53,11 @@ describe("activity transcript", () => {
 
   it("keeps thinking in the transcript and compacts completed commands", () => {
     const first = render();
-    expect(first).toContain("Thinking");
-    expect(first).not.toContain("✔");
+    expect(first).toContain("□ ◆ Thought");
     expect(first).not.toContain("Ran:");
-    expect(first).toContain(">_ PS (PowerShell): rg -n foo src (exit 0)");
+    expect(first).toContain("■ ◆ PS(rg -n foo src)");
     expect(first).not.toContain("Output");
-    expect(render(true)).toContain("Thinking");
+    expect(render(true)).toContain("■ ◆ Thought");
   });
 
   it("groups adjacent thoughts while keeping every summary available", () => {
@@ -71,12 +70,12 @@ describe("activity transcript", () => {
       ],
       outputsExpanded: false, detailsExpanded: true,
     }), { columns: 80 });
-    expect(output).toContain("2 thoughts");
+    expect(output).toContain("Thought");
     expect(output).toContain("First clue");
     expect(output).toContain("Second clue");
-    expect(output).toContain("</> rg foo");
+    expect(output).toContain("Bash(rg foo)");
     expect(output).toContain("After command");
-    expect(output).not.toContain("3 thoughts");
+    expect(output.match(/◆ Thought/g)).toHaveLength(2);
   });
 
   it("collapses command, diff, and reasoning details until expanded", () => {
@@ -89,7 +88,7 @@ describe("activity transcript", () => {
       lines, outputsExpanded: expanded, detailsExpanded: expanded,
     }), { columns: 80 });
     const collapsed = render(false);
-    expect(collapsed).toContain("Edited src/example.ts");
+    expect(collapsed).toContain("Edit(src/example.ts)");
     expect(collapsed).not.toContain("command output");
     expect(collapsed).not.toContain("-old");
     expect(collapsed).not.toContain("reasoning detail");
@@ -98,6 +97,19 @@ describe("activity transcript", () => {
     expect(expanded).toContain("-old");
     expect(expanded).toContain("+new");
     expect(expanded).toContain("reasoning detail");
+  });
+
+  it("shows action outcomes and measured thought time and tokens", () => {
+    const output = renderToString(React.createElement(Transcript, {
+      lines: [
+        { id: 1, role: "activity", text: "Thinking", spaceBefore: false, activity: { category: "thinking", completed: true, durationMs: 2300, tokens: 42 } },
+        { id: 2, role: "activity", text: "Failed: Bash: false (exit 1)", spaceBefore: false, activity: { category: "command", completed: true, outcome: "failure" } },
+        { id: 3, role: "activity", text: "Edited src/file.ts", spaceBefore: false, activity: { category: "files", completed: true, outcome: "success" } },
+      ], outputsExpanded: false, detailsExpanded: false,
+    }), { columns: 80 });
+    expect(output).toContain("Thought for 2.3 seconds, 42 tokens");
+    expect(output).toContain("■ ◆ Bash(false)");
+    expect(output).toContain("■ ◆ Edit(src/file.ts)");
   });
 
   it("renders the full transcript for terminal history", () => {
@@ -177,5 +189,24 @@ describe("Markdown transcript", () => {
     expect(output).toContain("const answer = 42;");
     expect(output).not.toContain("## Plan");
     expect(output).not.toContain("```ts");
+  });
+
+  it("wraps long user prompts within the specified width without overflowing", () => {
+    const prompt = "This is a long user prompt describing a bug with line wrapping and random newlines in the chatbox display.";
+    const width = 45;
+    const output = renderToString(React.createElement(Transcript, {
+      lines: [{ id: 1, role: "you", text: prompt, spaceBefore: false }],
+      outputsExpanded: false, detailsExpanded: false,
+      width,
+    }), { columns: 80 });
+
+    const clean = output.replace(/\u001b\[[0-9;]*[a-zA-Z]/g, "");
+    const lines = clean.split("\n").filter(l => l.trim().length > 0);
+    expect(lines.length).toBeGreaterThan(1);
+    for (const line of lines) {
+      expect(line.length).toBeLessThanOrEqual(width);
+    }
+    expect(clean).toContain("❯ You");
+    expect(clean).toContain("chatbox display.");
   });
 });

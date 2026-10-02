@@ -20,6 +20,9 @@ export type BottomPanelProps = {
   usageError?: string;
 };
 
+export const TWO_COLUMN_MIN_WIDTH = 78;
+export const THREE_COLUMN_MIN_WIDTH = 118;
+
 export function BottomPanel({
   width,
   height,
@@ -84,7 +87,7 @@ export function BottomPanel({
 
   // Case 2: Two panels (Priority 1/2 + Usage)
   if (panels.length === 2) {
-    if (width >= 56) {
+    if (width >= TWO_COLUMN_MIN_WIDTH) {
       const gap = 1;
       const col1Width = Math.floor((width - gap) / 2);
       const col2Width = width - col1Width - gap;
@@ -104,7 +107,7 @@ export function BottomPanel({
   }
 
   // Case 3: Three panels (Conversations + Queued + Usage)
-  if (width >= 96) {
+  if (width >= THREE_COLUMN_MIN_WIDTH) {
     const gap = 1;
     const colWidth = Math.floor((width - gap * 2) / 3);
     const lastWidth = width - colWidth * 2 - gap * 2;
@@ -118,7 +121,7 @@ export function BottomPanel({
   }
 
   // Intermediate width: 2 columns on top, Usage on bottom
-  if (width >= 56) {
+  if (width >= TWO_COLUMN_MIN_WIDTH) {
     const gap = 1;
     const col1Width = Math.floor((width - gap) / 2);
     const col2Width = width - col1Width - gap;

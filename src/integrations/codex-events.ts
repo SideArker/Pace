@@ -5,6 +5,21 @@ import { isAbsolute, relative } from "node:path";
 
 type JsonRecord = Record<string, unknown>;
 
+function toolTitle(server: string, tool: string, args: unknown): string {
+  let input: JsonRecord = isRecord(args) ? args : {};
+  if (typeof args === "string") {
+    try {
+      const parsed: unknown = JSON.parse(args);
+      if (isRecord(parsed)) input = parsed;
+    } catch { /* Display tool name when arguments are not JSON. */ }
+  }
+  const target = [input.path, input.file_path, input.filePath, input.command, input.cmd, input.query]
+    .find(value => typeof value === "string");
+  const name = /read/i.test(tool) ? "Read" : /edit|write|patch/i.test(tool) ? "Edit"
+    : /exec|command|shell|bash/i.test(tool) ? "Bash" : /search/i.test(tool) ? "Search" : "Tool";
+  return `${name}(${target ?? `${server}/${tool}`})`;
+}
+
 export function eventProgress(event: ThreadEvent): Progress | undefined {
   if (event.type === "error") return { kind: "error", text: event.message };
   if (event.type === "turn.failed")
@@ -27,19 +42,22 @@ export function eventProgress(event: ThreadEvent): Progress | undefined {
       kind: "activity", id: item.id, category: "command",
       title: `${item.status === "in_progress" ? "Running" : item.status === "failed" ? "Failed" : "Ran"}: ${item.command}${item.exit_code === undefined ? "" : ` (exit ${item.exit_code})`}`,
       detail: item.aggregated_output, completed: event.type === "item.completed",
+      outcome: item.status === "failed" || (item.exit_code !== undefined && item.exit_code !== 0) ? "failure" : "success",
     };
   if (item.type === "file_change")
     return {
       kind: "activity", id: item.id, category: "files",
-      title: `${item.status === "failed" ? "Failed to edit" : "Edited"} ${item.changes.length} file${item.changes.length === 1 ? "" : "s"}`,
+      title: `${item.status === "failed" ? "Failed to edit" : "Edited"} ${item.changes.length === 1 ? item.changes[0]!.path : `${item.changes.length} files`}`,
       detail: item.changes.map(change => `${change.kind} ${change.path}`).join("\n"), completed: event.type === "item.completed",
+      outcome: item.status === "failed" ? "failure" : "success",
     };
   if (item.type === "web_search")
     return { kind: "activity", id: item.id, category: "search", title: `Web search: ${item.query}`, completed: event.type === "item.completed" };
   if (item.type === "mcp_tool_call")
     return {
-      kind: "activity", id: item.id, category: "tool", title: `Tool ${item.server}/${item.tool}: ${item.status}`,
+      kind: "activity", id: item.id, category: "tool", title: toolTitle(item.server, item.tool, item.arguments),
       detail: item.error?.message, completed: event.type === "item.completed",
+      outcome: item.status === "failed" || item.error ? "failure" : "success",
     };
   if (item.type === "todo_list")
     return { kind: "tasks", items: item.items.map(step => ({ text: step.text, completed: step.completed })) };
@@ -64,6 +82,7 @@ export function fileChangeProgress(item: JsonRecord, completed: boolean, project
       return changes.length === 1 ? diff || `${String(change.kind)} ${path}` : `${path}\n${diff || String(change.kind)}`;
     }).join("\n\n"),
     completed,
+    outcome: item.status === "failed" ? "failure" : "success",
   };
 }
 
@@ -78,10 +97,11 @@ export function appItemProgress(item: JsonRecord, event: string, project: string
       title: `${completed ? item.status === "failed" || item.status === "declined" ? "Failed" : "Ran" : "Running"}: ${String(item.command ?? "command")}${typeof item.exitCode === "number" ? ` (exit ${item.exitCode})` : ""}`,
       detail: typeof item.aggregatedOutput === "string" ? item.aggregatedOutput : undefined,
       completed,
+      outcome: item.status === "failed" || item.status === "declined" || (typeof item.exitCode === "number" && item.exitCode !== 0) ? "failure" : "success",
     };
     case "fileChange": return fileChangeProgress(item, completed, project);
     case "webSearch": return { kind: "activity", id, category: "search", title: `Web search: ${String(item.query ?? "")}`, completed };
-    case "mcpToolCall": return { kind: "activity", id, category: "tool", title: `Tool ${String(item.server)}/${String(item.tool)}: ${String(item.status)}`, completed };
+    case "mcpToolCall": return { kind: "activity", id, category: "tool", title: toolTitle(String(item.server ?? "unknown"), String(item.tool ?? "unknown"), item.arguments), completed, outcome: item.status === "failed" || item.error ? "failure" : "success" };
     case "plan": {
       const steps = Array.isArray(item.steps) ? item.steps.filter(isRecord) : [];
       if (steps.length) return { kind: "tasks", items: steps.map(step => ({

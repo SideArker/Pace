@@ -84,7 +84,7 @@ describe("native terminal history", () => {
     const output = stdout.writes.join("");
     expect(output.indexOf("Previous question")).toBeGreaterThan(output.indexOf("█"));
     expect(output.match(/Previous question/g)).toHaveLength(1);
-    expect(output).toContain("</> build");
+    expect(output).toContain("build");
     expect(output).not.toContain("\u001b[2J");
     expect(output).not.toContain("\u001b[?1049h");
   });

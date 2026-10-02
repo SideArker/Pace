@@ -23,6 +23,10 @@ export type Line = {
     category: "thinking" | "command" | "files" | "tool" | "search" | "plan";
     detail?: string;
     completed: boolean;
+    outcome?: "success" | "failure";
+    startedAt?: number;
+    durationMs?: number;
+    tokens?: number;
   };
   sourceId?: string;
 };
@@ -52,26 +56,26 @@ const activityColors = {
   plan: "magenta",
 } as const;
 
-const activityIcons = {
-  thinking: "✧",
-  command: "</>",
-  files: "◇",
-  tool: "⚙",
-  search: "🔍",
-  plan: "📋",
-} as const;
-
 function activityTitle(line: Line): string {
-  if (line.activity?.category === "command") {
-    return line.text.replace(/^(?:Running|Ran): /, "");
+  const activity = line.activity!;
+  const text = line.text.replace(/^(?:Running|Ran|Failed): /, "");
+  if (activity.category === "thinking") {
+    const duration = activity.durationMs ?? (activity.startedAt ? Date.now() - activity.startedAt : undefined);
+    return `Thought${duration === undefined ? "" : ` for ${Math.max(0, Math.round(duration / 100) / 10)} seconds`}${activity.tokens === undefined ? "" : `, ${activity.tokens} tokens`}`;
   }
-  return line.text;
-}
-
-function activityIcon(line: Line): string {
-  return line.activity?.category === "command" && /^(?:(?:Running|Ran|Failed): )?PS \(PowerShell\):/.test(line.text)
-    ? ">_"
-    : activityIcons[line.activity!.category];
+  if (activity.category === "command") {
+    const command = text.replace(/ \(exit [^)]+\)$/, "");
+    const shell = /^(?:PS \(PowerShell\)|PS): ([\s\S]*)$/.exec(command);
+    const bash = /^Bash: ([\s\S]*)$/.exec(command);
+    const body = shell?.[1] ?? bash?.[1] ?? command;
+    const read = /^(?:cat|head|tail)\s+([^|;&]+)$/.exec(body);
+    if (read && !read[1]!.trim().startsWith("-")) return `Read(${read[1]!.trim()})`;
+    return `${shell ? "PS" : "Bash"}(${body})`;
+  }
+  if (activity.category === "files") return `Edit(${text.replace(/^(?:Edited|Failed to edit)\s+/, "")})`;
+  if (activity.category === "search") return `Search(${text.replace(/^Web search:\s*/, "")})`;
+  if (activity.category === "tool") return /^(?:Read|Edit|Bash|Search|Tool)\(/.test(text) ? text : `Tool(${text.replace(/^Tool\s+/, "").replace(/:\s*(?:in_progress|completed|failed)$/, "")})`;
+  return text;
 }
 
 function DiffDetail({ detail, livePreview }: { detail: string; livePreview: boolean }) {
@@ -105,6 +109,9 @@ export function Transcript({
         activity: {
           ...line.activity,
           detail: [previous.activity.detail, line.activity.detail].filter(Boolean).join("\n\n") || undefined,
+          startedAt: previous.activity.startedAt,
+          durationMs: previous.activity.durationMs === undefined && line.activity.durationMs === undefined ? undefined : (previous.activity.durationMs ?? 0) + (line.activity.durationMs ?? 0),
+          tokens: previous.activity.tokens === undefined && line.activity.tokens === undefined ? undefined : (previous.activity.tokens ?? 0) + (line.activity.tokens ?? 0),
         },
       };
     } else {
@@ -116,50 +123,64 @@ export function Transcript({
   const preview = livePreview && !expanded;
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" width={width}>
       {displayLines.map((line) => (
         <Box
           key={line.id}
           flexDirection="column"
           marginTop={line.spaceBefore ? 1 : 0}
+          width={width}
         >
           {line.role === "you" ? (
-            <Box gap={1}>
-              <Text color="#38BDF8" bold>
-                ❯ You
-              </Text>
-              <Box flexShrink={1}>
+            <Box gap={1} width={width}>
+              <Box flexShrink={0}>
+                <Text color="#38BDF8" bold>
+                  ❯ You
+                </Text>
+              </Box>
+              <Box flexGrow={1} flexShrink={1}>
                 <MarkdownText source={line.text} color="white" />
               </Box>
             </Box>
           ) : line.role === "codex" ? (
-            <Box gap={1}>
-              <Text color="#59E6A7" bold>
-                ◆ Pace
-              </Text>
-              <Box flexShrink={1}>
+            <Box gap={1} width={width}>
+              <Box flexShrink={0}>
+                <Text color="#59E6A7" bold>
+                  ◆ Pace
+                </Text>
+              </Box>
+              <Box flexGrow={1} flexShrink={1}>
                 <MarkdownText source={line.text} />
               </Box>
             </Box>
           ) : line.role === "side" ? (
-            <Box gap={1}>
-              <Text color="#E879F9" bold>
-                ◇ Btw{" "}
-              </Text>
-              <Box flexShrink={1}>
+            <Box gap={1} width={width}>
+              <Box flexShrink={0}>
+                <Text color="#E879F9" bold>
+                  ◇ Btw{" "}
+                </Text>
+              </Box>
+              <Box flexGrow={1} flexShrink={1}>
                 <MarkdownText source={line.text} color="#F5D0FE" />
               </Box>
             </Box>
           ) : line.role === "activity" && line.activity ? (
-            <Box flexDirection="column">
-              <Box gap={1} marginLeft={line.activity.category === "command" ? 0 : 1}>
-                <Text wrap={line.activity.category === "command" ? "truncate" : undefined} color={line.activity.category === "command" ? activityColors.command : line.activity.completed ? "#64748B" : activityColors[line.activity.category]} bold={line.activity.category === "command"}>
-                  {line.activity.completed ? " " : "◌"} {activityIcon(line)} {activityTitle(line)}{line.thinkingCount ? ` · ${line.thinkingCount} thoughts` : ""}
-                </Text>
-                {line.activity.detail ? (
-                  <Text dimColor>
-                    {expanded ? "▾" : "▸"}
+            <Box flexDirection="column" width={width}>
+              <Box gap={1} width={width}>
+                <Box flexShrink={0}>
+                  <Text color={!line.activity.completed ? "#64748B" : line.activity.outcome === "failure" ? "#F87171" : "#59E6A7"}>{line.activity.completed ? "■" : "□"}</Text>
+                </Box>
+                <Box flexShrink={1}>
+                  <Text wrap={line.activity.category === "command" ? "truncate" : undefined} color={activityColors[line.activity.category]} bold={line.activity.category === "command"}>
+                    ◆ {activityTitle(line)}
                   </Text>
+                </Box>
+                {line.activity.detail ? (
+                  <Box flexShrink={0}>
+                    <Text dimColor>
+                      {expanded ? "▾" : "▸"}
+                    </Text>
+                  </Box>
                 ) : null}
               </Box>
               {line.activity.detail &&
@@ -173,6 +194,7 @@ export function Transcript({
                   borderTop={false}
                   borderBottom={false}
                   borderColor="#475569"
+                  width={width ? Math.max(10, width - 2) : undefined}
                 >
                   {line.activity.category === "files"
                     ? <DiffDetail detail={line.activity.detail} livePreview={preview} />
@@ -183,34 +205,46 @@ export function Transcript({
           ) : line.role === "divider" ? (
             <Text color="#334155">{"─".repeat(dividerLength)}</Text>
           ) : line.role === "meta" ? (
-            <Box marginLeft={1}>
+            <Box marginLeft={1} width={width ? Math.max(10, width - 1) : undefined}>
               <Text color="#64748B">{line.text}</Text>
             </Box>
           ) : line.role === "artifact" ? (
-            <Box gap={1}>
-              <Text color="#C084FC" bold>
-                📦 Artifact:
-              </Text>
-              <Text color="#DDD6FE" underline>
-                {line.text}
-              </Text>
+            <Box gap={1} width={width}>
+              <Box flexShrink={0}>
+                <Text color="#C084FC" bold>
+                  📦 Artifact:
+                </Text>
+              </Box>
+              <Box flexGrow={1} flexShrink={1}>
+                <Text color="#DDD6FE" underline wrap="truncate">
+                  {line.text}
+                </Text>
+              </Box>
             </Box>
           ) : line.role === "error" ? (
-            <Box gap={1}>
-              <Text color="#F87171" bold>
-                ✖ Pace:
-              </Text>
-              <Box flexShrink={1}>
+            <Box gap={1} width={width}>
+              <Box flexShrink={0}>
+                <Text color="#F87171" bold>
+                  ✖ Pace:
+                </Text>
+              </Box>
+              <Box flexGrow={1} flexShrink={1}>
                 <MarkdownText source={line.text} color="#EF4444" />
               </Box>
             </Box>
           ) : line.role === "system" ? (
-            <Box gap={1}>
-              <Text color="#A78BFA" bold>◆ System</Text>
-              <Text color="#C4B5FD">{line.text}</Text>
+            <Box gap={1} width={width}>
+              <Box flexShrink={0}>
+                <Text color="#A78BFA" bold>◆ System</Text>
+              </Box>
+              <Box flexGrow={1} flexShrink={1}>
+                <Text color="#C4B5FD">{line.text}</Text>
+              </Box>
             </Box>
           ) : (
-            <Text color="gray">{line.text}</Text>
+            <Box width={width}>
+              <Text color="gray">{line.text}</Text>
+            </Box>
           )}
         </Box>
       ))}

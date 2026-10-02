@@ -10,6 +10,14 @@ export type ModelOption = {
 export type Route = { model?: string; effort?: Effort };
 export type ApprovalMode = "full-access" | "request-approval" | "limited";
 export type Task = { id: string; text: string; completed: boolean; source: "user" | "agent" };
+export type TurnActivity = {
+  category: "thinking" | "command" | "files" | "tool" | "search" | "plan";
+  text: string;
+  detail?: string;
+  outcome?: "success" | "failure";
+  durationMs?: number;
+  tokens?: number;
+};
 export type ContextMeasurement = {
   tokens: number;
   windowTokens: number;
@@ -31,6 +39,7 @@ export type TurnSummary = {
   route?: Route;
   routeNote?: string;
   systemMessages?: string[];
+  activities?: TurnActivity[];
   durationMs?: number;
   artifacts?: string[];
   usage?: Usage;

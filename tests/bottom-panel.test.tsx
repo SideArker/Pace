@@ -163,4 +163,95 @@ describe("BottomPanel dynamic multi-column dock", () => {
       expect(line.length).toBeLessThanOrEqual(terminalWidth);
     }
   });
+
+  it("stacks panels vertically when window width is constrained below TWO_COLUMN_MIN_WIDTH", () => {
+    const output = renderToString(
+      React.createElement(BottomPanel, {
+        width: 65,
+        height: 24,
+        conversations: {
+          choices: [
+            { id: "08ce3944-1111", prompt: "New conversation", state: "done" },
+            { id: "dfe73a14-2222", prompt: "Thinking About A Good Way To Handle This", state: "done" },
+          ],
+          selectedIndex: 0,
+          focused: false,
+        },
+        usageLimits: {
+          primary: { usedPercent: 0, windowDurationMins: 300 },
+          secondary: { usedPercent: 15, windowDurationMins: 10080 },
+        },
+      }),
+      { columns: 65 },
+    );
+
+    // Stacking vertically means Conversations appears above Codex Usage in separate full-width blocks
+    const convoIndex = output.indexOf("Conversations");
+    const usageIndex = output.indexOf("◈ Codex Usage");
+    expect(convoIndex).toBeGreaterThan(-1);
+    expect(usageIndex).toBeGreaterThan(-1);
+
+    // Ensure conversation IDs are not split across lines
+    expect(output).toContain("08ce3944");
+    expect(output).toContain("dfe73a14");
+
+    // Both panels are present and meters are intact
+    expect(output).toContain("100% left");
+    expect(output).toContain("85% left");
+  });
+
+  it("stacks all 3 panels vertically when width is below TWO_COLUMN_MIN_WIDTH", () => {
+    const output = renderToString(
+      React.createElement(BottomPanel, {
+        width: 60,
+        height: 24,
+        showConversations: true,
+        conversations: {
+          choices: [
+            { id: "aaaa-1111", prompt: "Convo 1", state: "ready" },
+          ],
+          selectedIndex: 0,
+          focused: false,
+        },
+        queuedPrompts: ["npm run build"],
+        usageLimits: {
+          primary: { usedPercent: 50, windowDurationMins: 300 },
+        },
+      }),
+      { columns: 60 },
+    );
+
+    const convoIndex = output.indexOf("Conversations");
+    const queueIndex = output.indexOf("Queued messages");
+    const usageIndex = output.indexOf("◈ Codex Usage");
+
+    expect(convoIndex).toBeLessThan(queueIndex);
+    expect(queueIndex).toBeLessThan(usageIndex);
+  });
+
+  it("uses 2-column top with full-width bottom for 3 panels when width is between 78 and 118", () => {
+    const output = renderToString(
+      React.createElement(BottomPanel, {
+        width: 90,
+        height: 24,
+        showConversations: true,
+        conversations: {
+          choices: [
+            { id: "aaaa-1111", prompt: "Convo 1", state: "ready" },
+          ],
+          selectedIndex: 0,
+          focused: false,
+        },
+        queuedPrompts: ["npm run build"],
+        usageLimits: {
+          primary: { usedPercent: 50, windowDurationMins: 300 },
+        },
+      }),
+      { columns: 90 },
+    );
+
+    expect(output).toContain("Conversations");
+    expect(output).toContain("Queued messages");
+    expect(output).toContain("◈ Codex Usage");
+  });
 });
