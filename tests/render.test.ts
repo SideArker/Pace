@@ -147,6 +147,13 @@ describe("activity transcript", () => {
 });
 
 describe("Markdown transcript", () => {
+  const renderMarkdown = (text: string, width = 80) => renderToString(React.createElement(Transcript, {
+    lines: [{ id: 1, role: "codex", text, spaceBefore: false }],
+    outputsExpanded: false, detailsExpanded: false, width,
+  }), { columns: width });
+
+  const withoutAnsi = (text: string) => text.replace(/\u001b\]8;;[^\u001b]*\u001b\\/g, "").replace(/\u001b\[[0-9;]*m/g, "");
+
   it("emits a terminal hyperlink for Markdown links", () => {
     const output = renderToString(React.createElement(Transcript, {
       lines: [{ id: 1, role: "codex", text: "Read [docs](https://example.com/page).", spaceBefore: false }],
@@ -189,6 +196,46 @@ describe("Markdown transcript", () => {
     expect(output).toContain("const answer = 42;");
     expect(output).not.toContain("## Plan");
     expect(output).not.toContain("```ts");
+  });
+
+  it("renders headings, rules, nested lists, tasks, and code blocks in one message", () => {
+    const output = withoutAnsi(renderMarkdown("### Important\n\n---\n- first\n  - nested\n1. ordered\n- [x] done\n- [ ] todo\n```md\n- literal\n### literal\n```"));
+    expect(output).toContain("▎ Important");
+    expect(output).toMatch(/─{20,}/);
+    expect(output).toContain("• first");
+    expect(output).toContain("  • nested");
+    expect(output).toContain("1. ordered");
+    expect(output).toContain("☑ done");
+    expect(output).toContain("☐ todo");
+    expect(output).toContain("- literal");
+    expect(output).toContain("### literal");
+  });
+
+  it("renders aligned tables and keeps them within the transcript width", () => {
+    const output = withoutAnsi(renderMarkdown("| Name | Count |\n| :--- | ---: |\n| **Apples** | 12 |\n| Pears | 3 |", 48));
+    expect(output).toContain("┌");
+    expect(output).toContain("Name");
+    expect(output).toContain("Apples");
+    expect(output).toContain("Pears");
+    expect(output).toContain("└");
+    const tableLines = output.split("\n").filter(line => /[┌└│├]/.test(line));
+    expect(tableLines).toHaveLength(6);
+    const rows = tableLines.filter(line => line.includes("│"));
+    expect(new Set(rows.map(line => line.indexOf("│", 8))).size).toBe(1);
+    for (const line of tableLines) expect(line.length).toBeLessThanOrEqual(48);
+  });
+
+  it("shortens wide table cells in a narrow terminal", () => {
+    const output = withoutAnsi(renderMarkdown("| First column | Second column |\n| --- | --- |\n| a very long value | another very long value |", 32));
+    expect(output).toContain("┌");
+    for (const line of output.split("\n")) expect(line.length).toBeLessThanOrEqual(32);
+  });
+
+  it("shows every table value when the terminal is too narrow for columns", () => {
+    const output = withoutAnsi(renderMarkdown("| A | B | C | D |\n| --- | --- | --- | --- |\n| one | two | three | four |", 25));
+    expect(output).toContain("A: one");
+    expect(output).toContain("D: four");
+    for (const line of output.split("\n")) expect(line.length).toBeLessThanOrEqual(25);
   });
 
   it("wraps long user prompts within the specified width without overflowing", () => {

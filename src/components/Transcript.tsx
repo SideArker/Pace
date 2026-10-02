@@ -139,7 +139,7 @@ export function Transcript({
                 </Text>
               </Box>
               <Box flexGrow={1} flexShrink={1}>
-                <MarkdownText source={line.text} color="white" />
+                <MarkdownText source={line.text} color="white" width={Math.max(10, width - 10)} />
               </Box>
             </Box>
           ) : line.role === "codex" ? (
@@ -150,7 +150,7 @@ export function Transcript({
                 </Text>
               </Box>
               <Box flexGrow={1} flexShrink={1}>
-                <MarkdownText source={line.text} />
+                <MarkdownText source={line.text} width={Math.max(10, width - 10)} />
               </Box>
             </Box>
           ) : line.role === "side" ? (
@@ -161,7 +161,7 @@ export function Transcript({
                 </Text>
               </Box>
               <Box flexGrow={1} flexShrink={1}>
-                <MarkdownText source={line.text} color="#F5D0FE" />
+                <MarkdownText source={line.text} color="#F5D0FE" width={Math.max(10, width - 10)} />
               </Box>
             </Box>
           ) : line.role === "activity" && line.activity ? (
@@ -229,7 +229,7 @@ export function Transcript({
                 </Text>
               </Box>
               <Box flexGrow={1} flexShrink={1}>
-                <MarkdownText source={line.text} color="#EF4444" />
+                <MarkdownText source={line.text} color="#EF4444" width={Math.max(10, width - 10)} />
               </Box>
             </Box>
           ) : line.role === "system" ? (
