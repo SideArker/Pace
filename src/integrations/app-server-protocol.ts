@@ -1,6 +1,6 @@
 import type { Usage } from "@openai/codex-sdk";
 import type { ApprovalMode, Route } from "../shared/types.js";
-import { artifactPrompt } from "../core/system/artifacts.js";
+import { turnImageInput } from "./image-input.js";
 import { isRecord } from "../shared/config.js";
 export function appUsage(value: unknown): Usage | undefined {
   if (!isRecord(value)) return undefined;
@@ -52,7 +52,7 @@ export function appServerTurnParams(
   const policy = approvalMode === "full-access" ? "never" : approvalMode === "limited" ? "untrusted" : "on-request";
   return {
     threadId,
-    input: [{ type: "text", text: mode === "side" ? prompt : artifactPrompt(prompt) }],
+    input: turnImageInput(prompt, mode),
     cwd,
     approvalPolicy: mode === "side" ? "never" : policy,
     sandboxPolicy: mode === "side"

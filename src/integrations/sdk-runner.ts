@@ -1,11 +1,11 @@
 import { Codex, type CodexOptions, type ThreadEvent, type ThreadOptions, type Usage } from "@openai/codex-sdk";
 import type { Route } from "../shared/types.js";
 import { realpath } from "node:fs/promises";
-import { artifactPrompt } from "../core/system/artifacts.js";
 import { vexServerPath } from "../core/vex/client.js";
 import type { CodexRunner, Execution, Progress } from "./codex-types.js";
 import { codexOptions } from "./codex-options.js";
 import { eventProgress } from "./codex-events.js";
+import { turnImageInput } from "./image-input.js";
 /** Direct TypeScript SDK runner retained for SDK-focused integrations. */
 export class SdkRunner implements CodexRunner {
   private codex: Codex;
@@ -37,7 +37,10 @@ export class SdkRunner implements CodexRunner {
       additionalDirectories: mode === "main" ? trustedFolders : [],
     };
     const thread = threadId ? this.codex.resumeThread(threadId, options) : this.codex.startThread(options);
-    const { events } = await thread.runStreamed(mode === "side" ? prompt : artifactPrompt(prompt), { signal });
+    const input = turnImageInput(prompt, mode).map(item => item.type === "localImage"
+      ? { type: "local_image" as const, path: item.path }
+      : item);
+    const { events } = await thread.runStreamed(input, { signal });
     let result = "";
     let completed = false;
     let failure: string | undefined;

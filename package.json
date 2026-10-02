@@ -17,7 +17,7 @@
   "main": "index.js",
   "scripts": {
     "test": "vitest run --pool=threads --maxWorkers=1 --no-isolate",
-    "dev": "tsx src/entrypoints/cli.tsx",
+    "dev": "tsx src/entrypoints/cli.ts",
     "build": "tsc",
     "start": "node dist/entrypoints/cli.js",
     "benchmark": "tsx benchmark/runner/workflows.ts",
