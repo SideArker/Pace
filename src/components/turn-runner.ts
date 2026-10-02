@@ -1,5 +1,5 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
-import type { Config, Route, Session } from "../shared/types.js";
+import type { Config, Route, Session, TurnActivity } from "../shared/types.js";
 import type { CodexRunner, Progress } from "../integrations/codex.js";
 import { Orchestrator, VexUnavailableError } from "../core/orchestrator.js";
 import { PaceStore } from "../core/sessions.js";
@@ -20,7 +20,7 @@ export type { TurnJob, PendingApproval };
 
 export function createTurnRunner({
   turnSequence, activeSessionId, jobs, promptQueue, titleAborts, pendingApprovals, unreadCompletions,
-  runner, orchestrator, store, rememberSession, setRunningIds, addFor, activityFor, setStatusFor,
+  runner, orchestrator, store, rememberSession, onTurnStart, setRunningIds, addFor, activityFor, recordThoughtUsage, resetThoughtUsage, getTurnActivities, setStatusFor,
   showApproval, setSession, setVexState, refreshUsage, setQueueVersion, setProcesses, setLiveUsage, getConfig,
 }: {
   turnSequence: MutableRefObject<number>;
@@ -34,9 +34,13 @@ export function createTurnRunner({
   orchestrator: Orchestrator;
   store: PaceStore;
   rememberSession: (session: Session) => void;
+  onTurnStart: (sessionId: string) => void;
   setRunningIds: Dispatch<SetStateAction<string[]>>;
   addFor: AddLine;
   activityFor: (sessionId: string, event: Extract<Progress, { kind: "activity" }>) => void;
+  recordThoughtUsage: (sessionId: string, turnId: number, total: number) => void;
+  resetThoughtUsage: (sessionId: string) => void;
+  getTurnActivities: (sessionId: string, turnId: number) => TurnActivity[];
   setStatusFor: Status;
   showApproval: (request: Extract<Progress, { kind: "approval" }>, sessionId?: string, owner?: AbortController) => void;
   setSession: Dispatch<SetStateAction<Session | undefined>>;
@@ -53,6 +57,9 @@ export function createTurnRunner({
     const controller = new AbortController();
     const turnId = ++turnSequence.current;
     const sessionId = turnSession.id;
+    const previousTurn = turnSession.turns.at(-1);
+    resetThoughtUsage(sessionId);
+    onTurnStart(sessionId);
     rememberSession(turnSession);
     jobs.current.set(sessionId, { session: turnSession, controller, prompt: text });
     setRunningIds([...jobs.current.keys()]);
@@ -96,11 +103,14 @@ export function createTurnRunner({
           }
           if (progress.kind === "route") {
             activeRoute = progress.route;
+            resetThoughtUsage(sessionId);
             setLiveUsage(old => ({ ...old, [sessionId]: "" }));
             setStatusFor(sessionId, `Using ${modelName(progress.route)}…`);
           }
-          if (progress.kind === "usage")
+          if (progress.kind === "usage") {
             setLiveUsage(old => ({ ...old, [sessionId]: formatLiveUsage(progress.usage, activeRoute) }));
+            recordThoughtUsage(sessionId, turnId, progress.usage.reasoning_output_tokens);
+          }
           if (progress.kind === "system") addFor(sessionId, "system", progress.text);
           if (progress.kind === "activity") {
             activityFor(sessionId, { ...progress, id: `turn-${turnId}-${progress.id}` });
@@ -162,12 +172,19 @@ export function createTurnRunner({
         setStatusFor(sessionId, "Failed");
       }
     } finally {
+      const lastTurn = turnSession.turns.at(-1);
+      if (lastTurn && lastTurn !== previousTurn) {
+        const activities = getTurnActivities(sessionId, turnId);
+        if (activities.length) lastTurn.activities = activities;
+      }
       setLiveUsage(old => {
         const updated = { ...old };
         delete updated[sessionId];
         return updated;
       });
-      if (tasksChanged) await store.save(turnSession, () => activeSessionId.current === sessionId).catch(() => {});
+      if (tasksChanged || lastTurn?.activities?.length) {
+        await store.save(turnSession, () => activeSessionId.current === sessionId).catch(() => {});
+      }
       setProcesses(old => old.filter(item => !item.id.startsWith(`turn-${turnId}-`)));
       const pending = pendingApprovals.current.get(sessionId);
       if (pending?.owner === controller) pending.respond("decline");
@@ -175,6 +192,9 @@ export function createTurnRunner({
       if (activeSessionId.current !== sessionId) unreadCompletions.current.add(sessionId);
       rememberSession(turnSession);
       setRunningIds([...jobs.current.keys()]);
+      if (typeof performance !== "undefined" && typeof performance.clearMeasures === "function") {
+        try { performance.clearMeasures(); } catch {}
+      }
       const next = promptQueue.current.take(sessionId);
       if (next !== undefined) {
         setQueueVersion(value => value + 1);

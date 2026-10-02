@@ -15,6 +15,7 @@ import { formatTurnFooter, modelName } from "./turn-format.js";
 import { readUsageLimits, usageWarnings } from "../integrations/usage.js";
 import type { UsageLimits, UsageWarningLevels } from "../integrations/usage.js";
 import { Composer, commandToken } from "./Composer.js";
+import { saveClipboardImage } from "./pasted-images.js";
 import { ComposerFrame } from "./ComposerFrame.js";
 import { BottomPanel } from "./BottomPanel.js";
 import { QueuedMessages } from "./QueuedMessages.js";
@@ -23,11 +24,12 @@ import { useAppInput } from "./useAppInput.js";
 import { Transcript, splitTranscript, type Line } from "./Transcript.js";
 import { HeaderLogo, HeaderStatus } from "./Header.js";
 import { UsageBar } from "./UsageBar.js";
-import { CommandMenu, ConversationPicker, ConvoMenu, ModelMenu, QueueMenu, ResumeMenu, type ConversationChoice } from "./Menus.js";
+import { ApprovalModeMenu, CommandMenu, ConversationPicker, ConvoMenu, ModelMenu, QueueMenu, ResumeMenu, sectionConversations, type ConversationChoice } from "./Menus.js";
 import { resolve } from "node:path";
 import { createShellRunner, displayCommand, formatCommandActivity, oneOffShellCommand } from "./shell-runner.js";
 import { RunningProcesses, updateProcesses, type RunningProcess } from "./RunningProcesses.js";
 import { TaskPanel } from "./TaskPanel.js";
+import { conversationState } from "./approval-state.js";
 import { taskSummary } from "../core/tasks.js";
 import { createTurnRunner, type PendingApproval, type TurnJob } from "./turn-runner.js";
 import { costForUsage } from "../core/routing/pricing.js";
@@ -40,7 +42,6 @@ const commands = [
   "/new",
   "/resume",
   "/convo",
-  "/queue",
   "/undo",
   "/usage",
   "/btw",
@@ -64,7 +65,6 @@ const commandDescriptions: Record<string, string> = {
   "/new": "Start a new conversation",
   "/resume": "Switch to a saved conversation",
   "/convo": "Browse and manage conversation turns",
-  "/queue": "View and edit queued messages",
   "/undo": "Undo the latest change",
   "/usage": "Refresh Codex account usage",
   "/btw": "Ask a side question about this conversation",
@@ -83,7 +83,7 @@ const commandDescriptions: Record<string, string> = {
 };
 const modelCatalog = ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra"];
 const spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-export const normalizeNewCommand = (input: string) => input.trim().replace(/^(?:\.\/|\/\.)(new|clear)(?=\s|$)/, "/$1");
+export const normalizeNewCommand = (input: string) => input.trim().replace(/^(?:\.\/|\/\.)(new|clear|approval)(?=\s|$)/, "/$1");
 // Words shown beside the animated spinner during agent thinking.
 const thinkingWords = [
   "Pondering",
@@ -133,6 +133,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const [skills, setSkills] = useState<Skill[]>([]);
   const [session, setSession] = useState<Session>();
   const [openSessions, setOpenSessions] = useState<Session[]>([]);
+  const thisPaceIds = useRef(new Set<string>());
   const [pickerFocused, setPickerFocused] = useState(false);
   const [pickerIndex, setPickerIndex] = useState(0);
   const [lines, setLines] = useState<Line[]>([]);
@@ -157,6 +158,8 @@ export default function App({ onClear }: { onClear: () => void }) {
   const [processes, setProcesses] = useState<RunningProcess[]>([]);
   const [liveUsage, setLiveUsage] = useState<Record<string, string>>({});
   const [approval, setApproval] = useState<Extract<Progress, { kind: "approval" }>>();
+  const [pendingRevision, setPendingRevision] = useState(0);
+  const [approvalMenu, setApprovalMenu] = useState(false);
   const [vexState, setVexState] = useState<
     "connecting" | "connected" | "failed"
   >("connecting");
@@ -178,6 +181,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const [, setQueueVersion] = useState(0);
   const activeSessionId = useRef<string | undefined>(undefined);
   const sessionLines = useRef(new Map<string, Line[]>());
+  const lastReasoningTokens = useRef(new Map<string, number>());
   const sessionDrafts = useRef(new Map<string, string>());
   const preSessionLines = useRef<Line[]>([]);
   const sessionStatuses = useRef(new Map<string, string>());
@@ -198,33 +202,22 @@ export default function App({ onClear }: { onClear: () => void }) {
     return old.map((item, at) => at === index ? target : item);
   });
   const getSessionState = (sessionId: string): "running" | "approval" | "done" => {
-    if (runningIds.includes(sessionId) || jobs.current.has(sessionId)) return "running";
-    if (pendingApprovals.current.has(sessionId) || (activeSessionId.current === sessionId && !!approval)) return "approval";
-    return "done";
+    return conversationState(
+      runningIds.includes(sessionId) || jobs.current.has(sessionId),
+      pendingApprovals.current.has(sessionId) || (activeSessionId.current === sessionId && !!approval),
+    );
   };
-  const sortedSessions = useMemo(() => {
-    const getRank = (state: string) => {
-      if (state === "running") return 1;
-      if (state === "approval") return 2;
-      return 3; // done
-    };
-    return [...openSessions].sort((a, b) => {
-      const stateA = getSessionState(a.id);
-      const stateB = getSessionState(b.id);
-      const rankA = getRank(stateA);
-      const rankB = getRank(stateB);
-      if (rankA !== rankB) return rankA - rankB;
-      const timeA = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
-      const timeB = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
-      return timeB - timeA;
-    });
-  }, [openSessions, runningIds, approval]);
+  const sortedSessions = useMemo(() => sectionConversations(
+    openSessions.map(item => ({ ...item, state: getSessionState(item.id) })), thisPaceIds.current,
+  ), [openSessions, runningIds, approval, pendingRevision]);
+  const backgroundApprovals = [...pendingApprovals.current.keys()].filter(id => id !== activeSessionId.current);
   const pickerChoices: ConversationChoice[] = sortedSessions.map(item => ({
     id: item.id,
     title: item.title,
     prompt: item.turns[0]?.prompt ?? jobs.current.get(item.id)?.prompt ?? "",
     state: getSessionState(item.id),
     updatedAt: item.updatedAt,
+    section: item.section,
   }));
   const stopSideQuestion = () => {
     const pending = sideAbort.current;
@@ -253,9 +246,16 @@ export default function App({ onClear }: { onClear: () => void }) {
   const activityFor = (sessionId: string, event: Extract<Progress, { kind: "activity" }>) => {
     const old = sessionLines.current.get(sessionId) ?? [];
     const sourceId = event.id;
+    const previous = old.find(line => line.sourceId === sourceId);
+    const startedAt = previous?.activity?.startedAt ?? Date.now();
     const display = event.category === "command" ? formatCommandActivity(event.title, event.detail) : { title: event.title, detail: event.detail };
     if (event.category === "command") setProcesses(old => updateProcesses(old, sessionId, event, Date.now()));
-    const update = { text: display.title, activity: { category: event.category, detail: display.detail, completed: event.completed } };
+    const update = { text: display.title, activity: {
+      category: event.category, detail: display.detail, completed: event.completed,
+      outcome: event.outcome ?? (event.completed && /^(?:Failed|Failed to edit):?\b/.test(event.title) ? "failure" : undefined),
+      startedAt, durationMs: event.completed ? Date.now() - startedAt : undefined,
+      tokens: previous?.activity?.tokens,
+    } };
     const index = old.findIndex(line => line.sourceId === sourceId);
     const updated: Line[] = index < 0
       ? [...old, { id: nextId.current++, role: "activity", sourceId, spaceBefore: false, ...update }]
@@ -265,6 +265,21 @@ export default function App({ onClear }: { onClear: () => void }) {
   };
   const activity = (event: Extract<Progress, { kind: "activity" }>) => {
     if (activeSessionId.current) activityFor(activeSessionId.current, event);
+  };
+  const recordThoughtUsage = (sessionId: string, turnId: number, total: number) => {
+    const previous = lastReasoningTokens.current.get(sessionId) ?? 0;
+    lastReasoningTokens.current.set(sessionId, total);
+    const delta = total >= previous ? total - previous : total;
+    if (delta < 0) return;
+    const old = sessionLines.current.get(sessionId) ?? [];
+    let index = old.length - 1;
+    while (index >= 0 && !(old[index]?.activity?.category === "thinking" && old[index]?.sourceId?.startsWith(`turn-${turnId}-`))) index--;
+    if (index < 0) return;
+    const updated = old.map((line, at) => at === index ? {
+      ...line, activity: { ...line.activity!, tokens: (line.activity?.tokens ?? 0) + delta },
+    } : line);
+    sessionLines.current.set(sessionId, updated);
+    if (activeSessionId.current === sessionId) setLines(updated);
   };
   const setStatusFor = (sessionId: string, value: string) => {
     sessionStatuses.current.set(sessionId, value);
@@ -278,12 +293,14 @@ export default function App({ onClear }: { onClear: () => void }) {
     const pending: PendingApproval = { ...request, owner, respond: (decision: ApprovalDecision) => {
       if (pendingApprovals.current.get(sessionId)?.id !== request.id) return;
       pendingApprovals.current.delete(sessionId);
+      setPendingRevision(value => value + 1);
       if (activeSessionId.current === sessionId) setApproval(undefined);
       request.respond(decision);
       addFor(sessionId, "info", decision === "accept" ? "Approved once." : "Declined.");
       setStatusFor(sessionId, decision === "accept" ? "Resuming" : "Stopped command");
     } };
     pendingApprovals.current.set(sessionId, pending);
+    setPendingRevision(value => value + 1);
     if (activeSessionId.current === sessionId) setApproval(pending);
     setStatusFor(sessionId, "Waiting for approval");
   };
@@ -369,6 +386,23 @@ export default function App({ onClear }: { onClear: () => void }) {
     };
   }, []);
   useEffect(() => {
+    if (typeof performance === "undefined") return;
+    const clear = () => {
+      try {
+        if (typeof performance.clearMeasures === "function") performance.clearMeasures();
+        if (typeof performance.clearMarks === "function") performance.clearMarks();
+      } catch {
+        // no-op
+      }
+    };
+    clear();
+    const timer = setInterval(clear, 10_000);
+    return () => {
+      clearInterval(timer);
+      clear();
+    };
+  }, []);
+  useEffect(() => {
     let active = true;
     const load = async () => {
       const notices: string[] = [];
@@ -382,6 +416,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       try { setSkills(await configuredSkills(loaded)); }
       catch (error) { add("error", `Could not discover skills: ${String(error)}`); }
       const fresh = newSession(project, loaded.routingMode);
+      thisPaceIds.current.add(fresh.id);
       activeSessionId.current = fresh.id;
       sessionLines.current.set(fresh.id, preSessionLines.current);
       setSession(fresh);
@@ -488,6 +523,11 @@ export default function App({ onClear }: { onClear: () => void }) {
       for (const message of turn.systemMessages ?? []) newLines.push({
         id: id++, role: "system", text: message, spaceBefore: false,
       });
+      for (const action of turn.activities ?? []) newLines.push({
+        id: id++, role: "activity", text: action.text, spaceBefore: false,
+        activity: { category: action.category, detail: action.detail, completed: true,
+          outcome: action.outcome, durationMs: action.durationMs, tokens: action.tokens },
+      });
       newLines.push({
         id: id++,
         role: turn.cancelled ? "meta" : turn.failed ? "error" : "codex",
@@ -586,9 +626,10 @@ export default function App({ onClear }: { onClear: () => void }) {
     return () => { process.off("SIGINT", onSignal); };
   }, []);
   const focusPicker = () => {
-    if (sortedSessions.length < 2 || modelMenu || convoMenu || queueMenu) return false;
+    if (sortedSessions.length < 2 || modelMenu || convoMenu || queueMenu || approvalMenu) return false;
+    const pendingIndex = sortedSessions.findIndex(item => item.id !== activeSessionId.current && pendingApprovals.current.has(item.id));
     const current = sortedSessions.findIndex(item => item.id === activeSessionId.current);
-    setPickerIndex(current >= 0 ? (current + 1) % sortedSessions.length : 0);
+    setPickerIndex(pendingIndex >= 0 ? pendingIndex : current >= 0 ? (current + 1) % sortedSessions.length : 0);
     setPickerFocused(true);
     return true;
   };
@@ -598,19 +639,37 @@ export default function App({ onClear }: { onClear: () => void }) {
     activeSessionId, jobs, sideAbort, outputsExpanded, setOutputsExpanded,
     redrawTranscript: () => { onClear(); setTranscriptRevision(value => value + 1); },
     modelMenu, setModelMenu, menuModels,
+    approvalMenu, setApprovalMenu, selectApprovalMode: async (mode: ApprovalMode) => {
+      try {
+        const updated = { ...latestConfig.current!, approvalMode: mode };
+        await store.saveConfig(updated);
+        setConfig(updated);
+        latestConfig.current = updated;
+        setApprovalMenu(false);
+        add("info", `Approval mode: ${mode}. Active turns keep their starting mode.`);
+      } catch (error) { add("error", `Could not save approval mode: ${String(error)}`); }
+    },
     menuIndex, setMenuIndex, setMenuModel, toggleModel, toggleEffort,
     resumeMenu, setResumeMenu, resumeChoices, missingProjectPaths, add,
     convoMenu, setConvoMenu, session, store, setSession, renderSessionTurns,
     setDraft, setHistory, queueMenu, setQueueMenu, promptQueue, setQueueVersion,
   });
-  const handleQueuePop = () => {
-    if (!session) return false;
-    const popped = promptQueue.current.pop(session.id);
-    if (!popped) return false;
+  const focusQueuedOrPicker = () => {
+    if (queued.length && !modelMenu && !convoMenu && !queueMenu && !approvalMenu) {
+      setQueueMenu(true);
+      setMenuIndex(0);
+      return true;
+    }
+    return focusPicker();
+  };
+  const handleQueueEdit = (index = 0): string | undefined => {
+    if (!session) return undefined;
+    const prompt = promptQueue.current.remove(session.id, index);
+    if (!prompt) return undefined;
     setQueueVersion(v => v + 1);
-    setDraft(popped);
-    add("info", `Editing queued message: ${popped.replace(/\s+/g, " ").slice(0, 80)}`);
-    return true;
+    setDraft(prompt);
+    add("info", `Editing queued message: ${prompt.replace(/\s+/g, " ").slice(0, 80)}`);
+    return prompt;
   };
   const handleQueueDelete = () => {
     if (!session) return false;
@@ -628,12 +687,13 @@ export default function App({ onClear }: { onClear: () => void }) {
     approvalMode: config?.approvalMode ?? "request-approval",
     activity,
     add,
-    requestApproval: command => new Promise(resolveDecision => {
+    requestApproval: (command, reason) => new Promise(resolveDecision => {
       showApproval({
         kind: "approval",
         id: `shell-approval-${nextId.current++}`,
         command,
-        reason: config?.approvalMode === "limited" ? "Limited mode asks before each Bash command." : "This command can publish changes or rewrite Git history.",
+        cwd: project,
+        reason: config?.approvalMode === "limited" ? "Limited mode asks before each Bash command." : reason,
         respond: decision => resolveDecision(decision === "accept"),
       });
     }),
@@ -725,7 +785,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       void askBtw(text.slice(4).trim());
       return;
     }
-    if (jobs.current.has(session.id) && !/^\/(?:new|clear|\.clear|queue|resume|help|exit|usage|stats|compact|context|route|artifacts|models|trust|skills|approval|tasks)(?:\s|$)/.test(text)) {
+    if (jobs.current.has(session.id) && !/^\/(?:new|clear|\.clear|resume|help|exit|usage|stats|compact|context|route|artifacts|models|trust|skills|approval|tasks)(?:\s|$)/.test(text)) {
       if (text.startsWith("/") && !skillCommand(text, enabledSkills(skills, config))) {
         add("info", "This conversation is working. Use /new or /resume to switch conversations.");
         return;
@@ -746,6 +806,7 @@ export default function App({ onClear }: { onClear: () => void }) {
           return;
         }
         const fresh = newSession(project, session.routingMode);
+        thisPaceIds.current.add(fresh.id);
         if (session.routingMode === "manual") fresh.route = session.route;
         switchingSession.current = true;
         const previousId = activeSessionId.current;
@@ -816,7 +877,11 @@ export default function App({ onClear }: { onClear: () => void }) {
       }
       if (command === "/approval") {
         const mode = parts[0] as ApprovalMode | undefined;
-        if (!mode) { add("info", `Approval mode: ${config.approvalMode ?? "request-approval"}. Choose full-access, request-approval, or limited.`); return; }
+        if (!mode) {
+          setApprovalMenu(true);
+          setMenuIndex(["request-approval", "limited", "full-access"].indexOf(config.approvalMode ?? "request-approval"));
+          return;
+        }
         if (parts.length !== 1 || !["full-access", "request-approval", "limited"].includes(mode)) { add("error", "Use /approval full-access, /approval request-approval, or /approval limited."); return; }
         try {
           const updated = { ...config, approvalMode: mode };
@@ -1070,59 +1135,6 @@ export default function App({ onClear }: { onClear: () => void }) {
         setMenuIndex(session.turns.length - 1);
         return;
       }
-      if (command === "/queue") {
-        const currentQueued = promptQueue.current.list(session.id);
-        if (!currentQueued.length) {
-          add("info", "No messages currently queued.");
-          return;
-        }
-        if (parts[0] === "clear") {
-          const cleared = promptQueue.current.clear(session.id);
-          setQueueVersion(v => v + 1);
-          add("info", `Cleared ${cleared} queued message${cleared === 1 ? "" : "s"}.`);
-          return;
-        }
-        if (parts[0] === "pop" || (parts[0] === "edit" && !parts[1])) {
-          const popped = promptQueue.current.pop(session.id);
-          if (popped) {
-            setQueueVersion(v => v + 1);
-            setDraft(popped);
-            add("info", `Editing queued message: ${popped.replace(/\s+/g, " ").slice(0, 80)}`);
-          }
-          return;
-        }
-        if (parts[0] === "edit" || /^\d+$/.test(parts[0] ?? "")) {
-          const indexStr = parts[0] === "edit" ? parts[1] : parts[0];
-          const num = parseInt(indexStr ?? "", 10);
-          if (isNaN(num) || num < 1 || num > currentQueued.length) {
-            add("error", `Invalid queue index. Choose 1 to ${currentQueued.length}.`);
-            return;
-          }
-          const prompt = promptQueue.current.remove(session.id, num - 1);
-          if (prompt) {
-            setQueueVersion(v => v + 1);
-            setDraft(prompt);
-            add("info", `Editing queued message ${num}: ${prompt.replace(/\s+/g, " ").slice(0, 80)}`);
-          }
-          return;
-        }
-        if (parts[0] === "delete" || parts[0] === "rm") {
-          const num = parseInt(parts[1] ?? "", 10);
-          if (isNaN(num) || num < 1 || num > currentQueued.length) {
-            add("error", `Invalid queue index. Choose 1 to ${currentQueued.length}.`);
-            return;
-          }
-          const removed = promptQueue.current.remove(session.id, num - 1);
-          if (removed) {
-            setQueueVersion(v => v + 1);
-            add("info", `Removed queued message ${num}: ${removed.replace(/\s+/g, " ").slice(0, 80)}`);
-          }
-          return;
-        }
-        setQueueMenu(true);
-        setMenuIndex(currentQueued.length - 1);
-        return;
-      }
       if (!skillCommand(text, enabledSkills(skills, config)) || commands.includes(command)) {
         add("error", `Unknown command ${command}. Use /help.`);
         return;
@@ -1143,7 +1155,16 @@ export default function App({ onClear }: { onClear: () => void }) {
   };
   const runTurn = createTurnRunner({
     turnSequence, activeSessionId, jobs, promptQueue, titleAborts, pendingApprovals, unreadCompletions,
-    runner, orchestrator, store, rememberSession, setRunningIds, addFor, activityFor,
+    runner, orchestrator, store, rememberSession, onTurnStart: sessionId => thisPaceIds.current.add(sessionId), setRunningIds, addFor, activityFor,
+    recordThoughtUsage, resetThoughtUsage: (sessionId: string) => lastReasoningTokens.current.delete(sessionId),
+    getTurnActivities: (sessionId: string, turnId: number) => (sessionLines.current.get(sessionId) ?? [])
+      .filter(line => line.sourceId?.startsWith(`turn-${turnId}-`) && line.activity?.completed)
+      .slice(-200)
+      .map(line => ({
+        category: line.activity!.category, text: line.text.slice(0, 2000),
+        detail: line.activity!.detail?.slice(0, 12000), outcome: line.activity!.outcome,
+        durationMs: line.activity!.durationMs, tokens: line.activity!.tokens,
+      })),
     setStatusFor, showApproval, setSession, setVexState, refreshUsage, setQueueVersion,
     setProcesses, setLiveUsage, getConfig: () => latestConfig.current ?? config!,
   });
@@ -1159,28 +1180,32 @@ export default function App({ onClear }: { onClear: () => void }) {
     staticState.firstId = lines[0]?.id;
   }
   staticState.sessionId = session?.id ?? staticState.sessionId;
+  const staticKey = `${staticState.key}-${transcriptRevision}`;
+  const staticItems: ({ kind: "logo" } | { kind: "lines"; group: Line[] })[] = [
+    ...(showHeader ? [{ kind: "logo" as const }] : []),
+    ...settledLines.map(group => ({ kind: "lines" as const, group })),
+  ];
   const terminalColumns = terminalDimensions.columns;
   const terminalRows = terminalDimensions.rows;
   const contentWidth = Math.max(20, terminalColumns - 2);
 
   return (
-    <Box flexDirection="column" paddingX={1}>
-      <Static key={`${staticState.key}-${transcriptRevision}`} items={[
-        ...(showHeader ? [{ kind: "logo" as const }] : []),
-        ...settledLines.map(group => ({ kind: "lines" as const, group })),
-      ]}>
+    <Box flexDirection="column" paddingX={1} width={terminalColumns}>
+      <Static key={staticKey} items={staticItems} style={{ width: contentWidth }}>
         {item => item.kind === "logo"
-          ? <HeaderLogo key="logo" width={terminalColumns} />
-          : <Transcript key={item.group[0]?.id} lines={item.group} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} width={terminalColumns} />}
+          ? <HeaderLogo key="logo" width={contentWidth} />
+          : <Transcript key={item.group[0]?.id} lines={item.group} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} width={contentWidth} />}
       </Static>
-      {showHeader ? <HeaderStatus project={project} vexState={vexState} width={terminalColumns} /> : null}
-      <Transcript lines={liveLines.slice(-Math.max(1, Math.floor(((terminalRows - 12) / 4))))} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} livePreview width={terminalColumns} />
+      {showHeader ? <HeaderStatus project={project} vexState={vexState} width={contentWidth} /> : null}
+      <Transcript lines={liveLines.slice(-Math.max(1, Math.floor(((terminalRows - 12) / 4))))} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} livePreview width={contentWidth} />
       {modelMenu ? <ModelMenu mode={modelMenu} models={menuModels} selectedModel={menuModel} selectedIndex={menuIndex} config={config} /> : null}
+      {approvalMenu ? <ApprovalModeMenu selectedIndex={menuIndex} currentMode={config?.approvalMode ?? "request-approval"} /> : null}
       {convoMenu && session ? <ConvoMenu turns={session.turns} selectedIndex={menuIndex} /> : null}
       {queueMenu && session ? <QueueMenu prompts={queued} selectedIndex={menuIndex} /> : null}
       {runningIds.length || shellJobs ? (
       <Box gap={1}><Text color="#59E6A7" bold>{spinner[tick % spinner.length]}</Text><Text color="#38BDF8">{busy ? status === "Thinking" ? thinkingWords[Math.floor(tick / 30) % thinkingWords.length] : status : runningIds.length ? `${runningIds.length} background turn${runningIds.length === 1 ? "" : "s"} running` : "Ready"}</Text>{busy && session && liveUsage[session.id] ? <Text color="#94A3B8">· {liveUsage[session.id]}</Text> : null}{shellJobs ? <Text color="#FBBF24">· ⚡ {shellJobs} Bash command{shellJobs === 1 ? "" : "s"} running</Text> : null}</Box>
       ) : null}
+      {backgroundApprovals.length ? <Text color="#FBBF24" bold>⚠ {backgroundApprovals.length} background approval{backgroundApprovals.length === 1 ? "" : "s"} waiting · ↓ select conversation · Enter open</Text> : null}
       <RunningProcesses processes={processes} now={Date.now()} />
       <TaskPanel tasks={session?.tasks ?? []} />
       {approval ? (
@@ -1193,9 +1218,19 @@ export default function App({ onClear }: { onClear: () => void }) {
         </Box>
       ) : null}
       {cancelArmed ? <Text color="#FBBF24">Press Esc again to cancel the turn</Text> : null}
-      <ComposerFrame width={terminalColumns} session={session} shellMode={shellMode} approvalMode={config?.approvalMode}>
+      <ComposerFrame width={contentWidth} session={session} shellMode={shellMode} approvalMode={config?.approvalMode}>
         <Composer key={session?.id} value={draft} onChange={value => { setDraft(value); setSelection(0); }} onSubmit={value => { void submit(value); }} history={history}
-          disabled={!session || !config || !!approval || !!modelMenu || resumeMenu || convoMenu || queueMenu || pickerFocused} shellMode={shellMode}
+          onImagePaste={async () => {
+            try {
+              const path = await saveClipboardImage(project);
+              if (!path) add("info", "No image found in clipboard. On WSL, use Alt+V when terminal handles Ctrl+V.");
+              return path ? `[Pace image: ${path}]` : undefined;
+            } catch (error) {
+              add("error", `Could not paste image: ${String(error)}`);
+              return undefined;
+            }
+          }}
+          disabled={!session || !config || !!approval || !!modelMenu || approvalMenu || resumeMenu || convoMenu || queueMenu || pickerFocused} shellMode={shellMode}
           completion={matches[selection] ?? matches[0]} completionStart={token?.start}
           onComplete={() => setDraft(token ? draft.slice(0, token.start) + (matches[selection] ?? matches[0] ?? token.prefix) : draft)}
           onHistory={direction => {
@@ -1203,14 +1238,14 @@ export default function App({ onClear }: { onClear: () => void }) {
             setSelection(value => (value + (direction === "up" ? -1 : 1) + matches.length) % matches.length);
             return true;
           }}
-          onMoveDown={focusPicker}
-          onQueuePop={handleQueuePop}
+          onMoveDown={focusQueuedOrPicker}
+          onQueueEdit={() => handleQueueEdit()}
           onDeleteQueued={handleQueueDelete}
-          placeholder={modelMenu || resumeMenu || convoMenu || queueMenu ? "Close menu to type" : shellMode ? "Bash command; ! returns to Pace" : vexState !== "connected" ? "Vex unavailable; manual turns work" : busy ? "Type next prompt to queue it" : "Ask Pace or type /"}
+          placeholder={modelMenu || approvalMenu || resumeMenu || convoMenu || queueMenu ? "Close menu to type" : shellMode ? "Bash command; ! returns to Pace" : vexState !== "connected" ? "Vex unavailable; manual turns work" : busy ? "Type next prompt to queue it" : "Ask Pace or type /"}
         />
       </ComposerFrame>
       {usageWarning ? <Text color="#FBBF24">{usageWarning}</Text> : null}
-      {!modelMenu && !resumeMenu && !convoMenu && !queueMenu && matches.length > 0 ? <CommandMenu matches={matches} descriptions={commandDescriptionsWithSkills} selectedIndex={selection} /> : null}
+      {!modelMenu && !approvalMenu && !resumeMenu && !convoMenu && !queueMenu && matches.length > 0 ? <CommandMenu matches={matches} descriptions={commandDescriptionsWithSkills} selectedIndex={selection} /> : null}
       <BottomPanel
         width={contentWidth}
         height={terminalRows}

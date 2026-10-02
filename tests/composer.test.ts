@@ -15,6 +15,7 @@ it("treats ./new, /.new, ./clear, and /.clear as conversation commands", () => {
   expect(normalizeNewCommand(" /.clear ")).toBe("/clear");
   expect(normalizeNewCommand("./clear")).toBe("/clear");
   expect(normalizeNewCommand("/.new")).toBe("/new");
+  expect(normalizeNewCommand("./approval")).toBe("/approval");
 });
 
 it("deletes words forward and backward with word boundary awareness", () => {
@@ -94,7 +95,7 @@ it("frames input with command help and compact routing mode below it", () => {
     width: 80, shellMode: false, children: composer,
   }), { columns: 80 });
   expect(output).not.toContain("Auto routing");
-  expect(output).toContain("/help for commands");
+  expect(output).not.toContain("/help for commands");
   expect(output).toContain("type ! to run commands");
   expect(output).not.toContain("!cmd for bash");
   expect(output).toContain("Context ? · auto · Request Approval");
@@ -104,15 +105,15 @@ it("frames input with command help and compact routing mode below it", () => {
   expect(output).toContain("Shift");
   const lines = output.split("\n");
   expect(lines.filter(line => line.includes("───"))).toHaveLength(2);
-  expect(lines.findIndex(line => line.includes("/help shortcuts"))).toBe(lines.findIndex(line => line.includes("/help for commands")) + 1);
+  expect(output.indexOf("/help shortcuts")).toBeLessThan(output.indexOf("type ! to run commands"));
 });
 
 it("keeps both composer hints on one footer row in wide terminals", () => {
   const output = renderToString(React.createElement(ComposerFrame, {
     width: 140, shellMode: false, children: React.createElement(Text, null, "Input"),
   }), { columns: 140 });
-  const hintLine = output.split("\n").find(line => line.includes("/help for commands"));
-  expect(hintLine).toContain("/help shortcuts · Shift+Enter newline");
+  const hintLine = output.split("\n").find(line => line.includes("/help shortcuts"));
+  expect(hintLine).toContain("type ! to run commands");
 });
 
 it("keeps context visible below input in narrow terminals", () => {
@@ -166,4 +167,27 @@ it("keeps multiline shell input within a narrow terminal", () => {
   }), { columns: 15 });
   expect(output.split("\n").every(line => line.length <= 15), JSON.stringify(output)).toBe(true);
   expect(output).toContain("second");
+});
+
+it("renders without duplicate React keys when value has leading or multiple spaces", () => {
+  const errorLogs: string[] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => {
+    errorLogs.push(args.join(" "));
+  };
+  try {
+    renderToString(React.createElement(Composer, {
+      value: "  two spaces  and  more",
+      onChange: () => {},
+      onSubmit: () => {},
+      history: [],
+      disabled: false,
+      shellMode: false,
+      placeholder: "Ask Pace",
+      onComplete: () => {},
+    }));
+    expect(errorLogs.some(msg => msg.includes("Encountered two children with the same key"))).toBe(false);
+  } finally {
+    console.error = originalError;
+  }
 });

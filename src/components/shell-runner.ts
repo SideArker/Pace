@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import type { ApprovalDecision, Progress } from "../integrations/codex.js";
 import type { Line } from "./Transcript.js";
+import { commandRisk } from "../core/command-protection.js";
 
 type Activity = Extract<Progress, { kind: "activity" }>;
 
@@ -10,7 +11,7 @@ type ShellRunnerOptions = {
   shells: { current: Set<{ kill: () => boolean }> };
   setShellJobs: (update: (count: number) => number) => void;
   approvalMode: "full-access" | "request-approval" | "limited";
-  requestApproval: (command: string) => Promise<boolean>;
+  requestApproval: (command: string, reason?: string) => Promise<boolean>;
   activity: (event: Activity) => void;
   add: (role: Line["role"], text: string) => void;
 };
@@ -20,7 +21,7 @@ export function oneOffShellCommand(text: string): string | undefined {
 }
 
 export function manualApprovalCommand(command: string): boolean {
-  return /\bgit\b[^;&|()\n]*\s(?:push|reset)\b/i.test(command);
+  return commandRisk(command).action === "approve";
 }
 
 export function displayCommand(command: string): string {
@@ -63,7 +64,9 @@ export function formatCommandActivity(title: string, detail?: string): { title: 
 
 export function createShellRunner(options: ShellRunnerOptions) {
   return async (command: string): Promise<void> => {
-    if (options.approvalMode !== "full-access" && (options.approvalMode === "limited" || manualApprovalCommand(command)) && !await options.requestApproval(command)) return;
+    const risk = commandRisk(command);
+    if (risk.action === "block") { options.add("error", `${risk.reason} Command: ${command}`); return; }
+    if (options.approvalMode !== "full-access" && (options.approvalMode === "limited" || risk.action === "approve") && !await options.requestApproval(command, risk.reason)) return;
     const id = `shell-${options.nextId.current++}`;
     options.activity({ kind: "activity", id, category: "command", title: `Running: Bash: ${command}`, completed: false });
     const executable = process.platform === "win32" ? "C:\\Program Files\\Git\\bin\\bash.exe" : "bash";
@@ -88,7 +91,7 @@ export function createShellRunner(options: ShellRunnerOptions) {
       child.stderr.on("data", append);
       child.on("error", error => {
         failed = true;
-        options.activity({ kind: "activity", id, category: "command", title: `Failed: Bash: ${command}`, detail: String(error), completed: true });
+        options.activity({ kind: "activity", id, category: "command", title: `Failed: Bash: ${command}`, detail: String(error), completed: true, outcome: "failure" });
       });
       child.on("close", code => {
         options.shells.current.delete(child);
@@ -100,6 +103,7 @@ export function createShellRunner(options: ShellRunnerOptions) {
           title: `${code === 0 ? "Ran" : "Failed"}: Bash: ${command} (exit ${code ?? "unknown"})`,
           detail: `${output.trimEnd() || "(no output)"}${clipped ? "\n[output truncated]" : ""}`,
           completed: true,
+          outcome: code === 0 ? "success" : "failure",
         });
       });
     } catch (error) {

@@ -1,14 +1,27 @@
 import { describe, expect, it } from "vitest";
 import React from "react";
 import { renderToString } from "ink";
-import { ConvoMenu, ConversationPicker, ResumeMenu, sortConversations } from "../src/components/Menus.js";
+import { ConvoMenu, ConversationPicker, ResumeMenu, sortConversations, sectionConversations } from "../src/components/Menus.js";
 import { newSession, PaceStore, rewindConversation, deleteConversationTurn, undoConversationTurn } from "../src/core/sessions.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TurnSummary } from "../src/shared/types.js";
+import { conversationState } from "../src/components/approval-state.js";
 
 describe("Conversation editing and undo logic", () => {
+  it("shows approval before running for a background turn", () => {
+    expect(conversationState(true, true)).toBe("approval");
+    expect(conversationState(true, false)).toBe("running");
+    const output = renderToString(React.createElement(ConversationPicker, {
+      choices: [
+        { id: "active", prompt: "Active conversation", state: "running" },
+        { id: "waiting", prompt: "Waiting conversation", state: conversationState(true, true) },
+      ], activeId: "active", selectedIndex: 0, focused: false,
+    }), { columns: 80 });
+    expect(output).toContain("approve");
+    expect(output).toContain("Waiting conversation");
+  });
   it("groups saved conversations by project and marks missing paths", () => {
     const available = newSession('/available', 'auto');
     const missing = newSession('/missing', 'auto');
@@ -49,6 +62,44 @@ describe("Conversation editing and undo logic", () => {
     expect(sorted[1]!.state).toBe("approval");
     expect(sorted[2]!.id).toBe("4"); // Done newer (12:00) before Done older (10:00)
     expect(sorted[3]!.id).toBe("1");
+  });
+
+  it("keeps this Pace's state order and saved conversations in time order", () => {
+    const choices = sectionConversations([
+      { id: "saved-old", prompt: "Older saved", state: "running", updatedAt: "2026-09-30T10:00:00Z" },
+      { id: "local-done", prompt: "Done here", state: "done", updatedAt: "2026-09-30T12:00:00Z" },
+      { id: "saved-new", prompt: "Newer saved", state: "done", updatedAt: "2026-09-30T13:00:00Z" },
+      { id: "local-running", prompt: "Running here", state: "running", updatedAt: "2026-09-30T09:00:00Z" },
+    ], new Set(["local-done", "local-running"]));
+    expect(choices.map(choice => choice.id)).toEqual(["local-running", "local-done", "saved-new", "saved-old"]);
+    const output = renderToString(React.createElement(ConversationPicker, {
+      choices, activeId: "local-running", selectedIndex: 2, focused: true, maxItems: 4,
+    }), { columns: 100 });
+    expect(output.indexOf("This pace")).toBeLessThan(output.indexOf("Saved conversations"));
+    expect(output.indexOf("Newer saved")).toBeLessThan(output.indexOf("Older saved"));
+    expect(output).toContain("▶ saved-ne");
+    const compact = renderToString(React.createElement(ConversationPicker, {
+      choices, activeId: "local-running", selectedIndex: 2, focused: true, maxItems: 2,
+    }), { columns: 80 });
+    expect(compact).toContain("Running here");
+    expect(compact).toContain("Newer saved");
+  });
+
+  it("moves a resumed conversation to This pace after a new message", () => {
+    const ids = new Set(["new-here"]);
+    const sessions = [
+      { id: "new-here", state: "done" as const, updatedAt: "2026-09-30T11:00:00Z" },
+      { id: "resumed", state: "done" as const, updatedAt: "2026-09-30T10:00:00Z" },
+    ];
+    expect(sectionConversations(sessions, ids).map(item => [item.id, item.section])).toEqual([
+      ["new-here", "pace"], ["resumed", "saved"],
+    ]);
+    ids.add("resumed"); // The new message starts a turn in the resumed conversation.
+    const choices = sectionConversations(sessions, ids);
+    expect(choices.map(item => [item.id, item.section])).toEqual([
+      ["new-here", "pace"], ["resumed", "pace"],
+    ]);
+    expect(choices.filter(item => item.id === "resumed")).toHaveLength(1);
   });
 
   it("renders ConvoMenu with turn summaries without error", () => {
@@ -111,6 +162,22 @@ describe("Conversation editing and undo logic", () => {
       const loaded = await store.latest("/my/project");
       expect(loaded?.turns).toHaveLength(0);
       expect(loaded?.threadId).toBeUndefined();
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("restores saved action records", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "pace-actions-test-"));
+    try {
+      const store = new PaceStore(tempDir);
+      const session = newSession("/my/project", "auto");
+      session.turns.push({ prompt: "Edit file", result: "Done", at: new Date().toISOString(), activities: [
+        { category: "thinking", text: "Thinking", durationMs: 1800, tokens: 32 },
+        { category: "files", text: "Edited src/file.ts", outcome: "success" },
+      ] });
+      await store.save(session);
+      expect((await store.latest("/my/project"))?.turns[0]?.activities).toEqual(session.turns[0]?.activities);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

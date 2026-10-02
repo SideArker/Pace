@@ -292,6 +292,8 @@ it('rejects disabled models and lets manual mode keep its route', async () => {
 it('exposes SDK activity with stable IDs and the available reasoning summary', () => {
   expect(eventProgress({ type: 'item.started', item: { id: 'x', type: 'command_execution', command: 'test', aggregated_output: '', status: 'in_progress' } })).toMatchObject({ kind: 'activity', id: 'x', completed: false });
   expect(eventProgress({ type: 'item.completed', item: { id: 'thought', type: 'reasoning', text: 'Checking files' } })).toMatchObject({ category: 'thinking', detail: 'Checking files' });
+  expect(eventProgress({ type: 'item.completed', item: { id: 'failed', type: 'command_execution', command: 'false', aggregated_output: '', status: 'failed', exit_code: 1 } })).toMatchObject({ outcome: 'failure' });
+  expect(eventProgress({ type: 'item.completed', item: { id: 'read', type: 'mcp_tool_call', server: 'files', tool: 'read_file', arguments: { path: 'src/a.ts' }, status: 'completed' } })).toMatchObject({ title: 'Read(src/a.ts)', outcome: 'success' });
 });
 
 it('uses Codex app-server sandbox values for threads and turns', () => {
@@ -304,11 +306,44 @@ it('uses Codex app-server sandbox values for threads and turns', () => {
   expect(JSON.stringify(side)).not.toContain('/trusted');
   const main = appServerTurnParams('work', '/project', { model: 'gpt-6-sol', effort: 'high' }, 'thread-1', 'main', ['/trusted']);
   expect(main).toMatchObject({ approvalPolicy: 'on-request', sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['/project', '/trusted'], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false } });
+  expect(appServerTurnParams('Describe [Pace image: /project/.pace/pasted-images/photo.png]', '/project', {}, 'thread-1', 'main', []).input).toEqual([
+    expect.objectContaining({ type: 'text', text: expect.stringContaining('Describe [Pace image: /project/.pace/pasted-images/photo.png]') }),
+    { type: 'localImage', path: '/project/.pace/pasted-images/photo.png' },
+  ]);
   expect(appServerThreadParams('/project', {}, undefined, 'main', 'full-access')).toMatchObject({ approvalPolicy: 'never', sandbox: 'danger-full-access' });
   expect(appServerTurnParams('work', '/project', {}, 'thread-1', 'main', [], 'full-access')).toMatchObject({ approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' } });
   expect(appServerThreadParams('/project', {}, undefined, 'main', 'limited')).toMatchObject({ approvalPolicy: 'untrusted', sandbox: 'read-only' });
   expect(appServerTurnParams('work', '/project', {}, 'thread-1', 'main', ['/trusted'], 'limited')).toMatchObject({ approvalPolicy: 'untrusted', sandboxPolicy: { type: 'readOnly', networkAccess: false } });
   expect(appServerTurnParams('scout', '/project', {}, 'thread-1', 'side', [], 'full-access')).toMatchObject({ approvalPolicy: 'never', sandboxPolicy: { type: 'readOnly' } });
+});
+
+it('declines a destructive Codex command before showing an approval prompt', async () => {
+  let onMessage!: (message: { method: string; params: unknown }) => void;
+  let onRequest!: (message: { id: number; method: string; params: unknown }) => void;
+  const decisions: unknown[] = [];
+  const progress: Progress[] = [];
+  const runner = new AppServerRunner(message => {
+    onMessage = message;
+    return {
+      setRequestHandler(handler) { onRequest = handler; },
+      notify() {}, kill() {},
+      respond(_id, decision) {
+        decisions.push(decision);
+        queueMicrotask(() => onMessage({ method: 'turn/completed', params: { turn: { status: 'completed' } } }));
+      },
+      async request(method: string) {
+        if (method === 'thread/start') return { thread: { id: 'thread-1' } };
+        if (method === 'turn/start') queueMicrotask(() => onRequest({
+          id: 7, method: 'item/commandExecution/requestApproval',
+          params: { itemId: 'cmd-1', command: 'rm -rf /' },
+        }));
+        return {};
+      },
+    };
+  });
+  await runner.run('work', process.cwd(), {}, undefined, event => { progress.push(event); });
+  expect(decisions).toEqual([{ decision: 'decline' }]);
+  expect(progress.some(event => event.kind === 'approval')).toBe(false);
 });
 
 it('ends an active turn when Codex app-server exits', async () => {

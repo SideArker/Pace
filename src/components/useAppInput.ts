@@ -2,7 +2,7 @@ import { useInput } from "ink";
 import { useEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import type { ApprovalDecision, Progress } from "../integrations/codex.js";
 import { EFFORTS } from "../shared/config.js";
-import type { Session } from "../shared/types.js";
+import type { ApprovalMode, Session } from "../shared/types.js";
 import { PaceStore, rewindConversation, deleteConversationTurn, undoConversationTurn } from "../core/sessions.js";
 import type { PromptQueue } from "../core/prompt-queue.js";
 import { isAltDeleteKey } from "./Composer.js";
@@ -33,6 +33,9 @@ export function useAppInput(options: {
   setOutputsExpanded: Dispatch<SetStateAction<boolean>>;
   redrawTranscript: () => void;
   modelMenu: "models" | "efforts" | undefined;
+  approvalMenu: boolean;
+  setApprovalMenu: Dispatch<SetStateAction<boolean>>;
+  selectApprovalMode: (mode: ApprovalMode) => Promise<void>;
   setModelMenu: Dispatch<SetStateAction<"models" | "efforts" | undefined>>;
   menuModels: string[];
   menuIndex: number;
@@ -62,7 +65,7 @@ export function useAppInput(options: {
     interrupt, pickerFocused, setPickerFocused, pickerIndex, setPickerIndex,
     openSessions, activateSession, approval, focusPicker, pendingApprovals,
     activeSessionId, jobs, sideAbort, outputsExpanded, setOutputsExpanded, redrawTranscript,
-    modelMenu, setModelMenu, menuModels, menuIndex,
+    modelMenu, setModelMenu, approvalMenu, setApprovalMenu, selectApprovalMode, menuModels, menuIndex,
     setMenuIndex, setMenuModel, toggleModel, toggleEffort, resumeMenu,
     setResumeMenu, resumeChoices, missingProjectPaths, add, convoMenu,
     setConvoMenu, session, store, setSession, renderSessionTurns, setDraft,
@@ -96,7 +99,7 @@ export function useAppInput(options: {
   };
   useInput((input, key) => {
     if (!key.escape) clearEscape();
-    else if (pickerFocused || modelMenu || resumeMenu || convoMenu || queueMenu) clearEscape();
+    else if (pickerFocused || modelMenu || approvalMenu || resumeMenu || convoMenu || queueMenu) clearEscape();
     if (key.ctrl && input === "c") { interrupt(); return; }
     if (pickerFocused) {
       if (key.escape || key.tab) setPickerFocused(false);
@@ -119,7 +122,7 @@ export function useAppInput(options: {
       else if (key.escape) handleCancelEscape();
       return;
     }
-    if (key.escape && !modelMenu && !resumeMenu && !convoMenu && !queueMenu && !pickerFocused) {
+    if (key.escape && !modelMenu && !approvalMenu && !resumeMenu && !convoMenu && !queueMenu && !pickerFocused) {
       if (handleCancelEscape()) return;
     }
     if (key.ctrl && (input.toLowerCase() === "o" || input === "\x0f")) {
@@ -142,6 +145,14 @@ export function useAppInput(options: {
         if (modelMenu === "models") toggleModel(menuModels[menuIndex]!);
         else toggleEffort(EFFORTS[menuIndex]!);
       }
+      return;
+    }
+    if (approvalMenu) {
+      const modes: ApprovalMode[] = ["request-approval", "limited", "full-access"];
+      if (key.escape) setApprovalMenu(false);
+      else if (key.upArrow || key.downArrow || key.tab)
+        setMenuIndex(value => (value + (key.upArrow ? -1 : 1) + modes.length) % modes.length);
+      else if (key.return) void selectApprovalMode(modes[menuIndex] ?? modes[0]!);
       return;
     }
     if (resumeMenu) {
@@ -209,7 +220,7 @@ export function useAppInput(options: {
         );
         return;
       }
-      if (key.return) {
+      if (key.rightArrow || key.return) {
         const target = promptQueue.current.remove(sessionId, menuIndex);
         setQueueVersion((v) => v + 1);
         setQueueMenu(false);

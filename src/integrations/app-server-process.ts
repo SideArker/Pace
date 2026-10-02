@@ -27,7 +27,6 @@ export function serverArgs(): string[] {
   const serverPath = vexServerPath();
   const args = [
     "--config", 'approvals_reviewer="user"',
-    "--config", 'rules.prefix_rules=[{ pattern = [{ token = "git" }, { any_of = ["push", "reset"] }], decision = "prompt", justification = "Publishing or resetting Git history requires your approval." }]',
   ];
   if (serverPath) args.unshift(
     "--config", `mcp_servers.vex.command=${tomlString(process.execPath)}`,

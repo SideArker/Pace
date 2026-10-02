@@ -8,6 +8,7 @@ import { AppServer, isRecord, type AppServerConnection, type JsonRecord } from "
 import { appServerThreadParams, appServerTurnParams, appUsage } from "./app-server-protocol.js";
 import { appItemProgress, fileChangeProgress } from "./codex-events.js";
 import { contextMeasurement } from "../core/context.js";
+import { commandRisk } from "../core/command-protection.js";
 
 type RpcMessage = { id?: number | string; method?: string; params?: unknown; result?: unknown; error?: { message?: string } };
 export type CompactionResult = {
@@ -238,6 +239,11 @@ export class AppServerRunner implements CodexRunner {
       const isFileApproval = message.method === "item/fileChange/requestApproval";
       if (!isCommandApproval && !isFileApproval) {
         server.respond(message.id, { decision: "decline" });
+        return;
+      }
+      if (isCommandApproval && typeof params.command === "string" && commandRisk(params.command).action === "block") {
+        server.respond(message.id, { decision: "decline" });
+        void onProgress({ kind: "status", text: `Blocked command: ${params.command}` });
         return;
       }
       const requestId = message.id;

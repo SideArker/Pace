@@ -30,12 +30,12 @@ it("renders QueueMenu with selected item and navigation hint", () => {
   expect(output).toContain("▶");
   expect(output).toContain("#2");
   expect(output).toContain("Prompt 2");
-  expect(output).toContain("Enter edit in composer");
+  expect(output).toContain("→ edit in composer");
   expect(output).toContain("Alt+Del/Backspace/d delete");
 });
 
 it("shows editing hints in wide QueuedMessages view", () => {
   const output = renderToString(React.createElement(QueuedMessages, { prompts: ["Task to run"], width: 80 }));
-  expect(output).toContain("↑ edit");
+  expect(output).toContain("↓ select · → edit");
   expect(output).toContain("Alt+Del remove");
 });

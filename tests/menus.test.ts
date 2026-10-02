@@ -1,7 +1,7 @@
 import React from "react";
 import { renderToString } from "ink";
 import { expect, it } from "vitest";
-import { CommandMenu, ConvoMenu, menuWindow } from "../src/components/ConversationMenus.js";
+import { ApprovalModeMenu, CommandMenu, ConvoMenu, menuWindow } from "../src/components/ConversationMenus.js";
 import { ResumeMenu } from "../src/components/ResumeMenu.js";
 import { ModelMenu } from "../src/components/ModelMenu.js";
 import { newSession } from "../src/core/sessions.js";
@@ -10,6 +10,13 @@ it("keeps selected entry inside a five-row window", () => {
   expect(menuWindow(12, 0)).toEqual({ start: 0, end: 5 });
   expect(menuWindow(12, 6)).toEqual({ start: 4, end: 9 });
   expect(menuWindow(12, 11)).toEqual({ start: 7, end: 12 });
+});
+
+it("shows current approval mode and keyboard choices", () => {
+  const output = renderToString(React.createElement(ApprovalModeMenu, { selectedIndex: 1, currentMode: "request-approval" }));
+  expect(output).toContain("request-approval (current)");
+  expect(output).toContain("▶ limited");
+  expect(output).toContain("Enter save");
 });
 
 it("scrolls command matches and conversation turns with selection", () => {

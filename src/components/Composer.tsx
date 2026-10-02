@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useInput, usePaste, useStdout } from "ink";
 import { letterGradients } from "./Transcript.js";
 
@@ -98,6 +98,7 @@ type Props = {
   value: string;
   onChange: (value: string) => void;
   onSubmit: (value: string) => void;
+  onImagePaste?: () => Promise<string | undefined>;
   history: string[];
   disabled: boolean;
   shellMode: boolean;
@@ -107,12 +108,12 @@ type Props = {
   onComplete: () => void;
   onHistory?: (direction: "up" | "down") => boolean;
   onMoveDown?: () => boolean;
-  onQueuePop?: () => boolean;
+  onQueueEdit?: () => string | undefined;
   onDeleteQueued?: () => boolean;
   width?: number;
 };
 
-export function Composer({ value, onChange, onSubmit, history, disabled, shellMode, placeholder, completion, completionStart, onComplete, onHistory, onMoveDown, onQueuePop, onDeleteQueued, width }: Props) {
+export function Composer({ value, onChange, onSubmit, onImagePaste, history, disabled, shellMode, placeholder, completion, completionStart, onComplete, onHistory, onMoveDown, onQueueEdit, onDeleteQueued, width }: Props) {
   const { stdout } = useStdout();
   const [terminalWidth, setTerminalWidth] = useState(width ?? stdout?.columns ?? 80);
 
@@ -134,20 +135,32 @@ export function Composer({ value, onChange, onSubmit, history, disabled, shellMo
   const [cursor, setCursor] = useState(0);
   const [historyIndex, setHistoryIndex] = useState<number>();
   const [savedDraft, setSavedDraft] = useState("");
+  const previousValue = useRef(value);
+  useEffect(() => {
+    if (!previousValue.current && value) setCursor(value.length);
+    previousValue.current = value;
+  }, [value]);
   const insert = (text: string) => {
     onChange(value.slice(0, cursor) + text + value.slice(cursor));
     setCursor(cursor + text.length);
     setHistoryIndex(undefined);
   };
+  const insertLatest = useRef(insert);
+  insertLatest.current = insert;
+  const active = useRef(true);
+  useEffect(() => () => { active.current = false; }, []);
   usePaste((text) => { if (!disabled) insert(text.replace(/\r\n?/g, "\n")); }, { isActive: !disabled });
   useInput((input, key) => {
     if (key.ctrl && input === "c") return;
+    if (!shellMode && onImagePaste && ((key.ctrl && input === "v") || (key.meta && input === "v"))) {
+      void onImagePaste().then(marker => { if (active.current && marker) insertLatest.current(`${value ? " " : ""}${marker} `); });
+      return;
+    }
     if (isNewlineKey(input, key)) { insert("\n"); return; }
     if (key.upArrow || key.downArrow) {
       const nextCursor = verticalCursor(value, cursor, key.upArrow ? "up" : "down");
       if (nextCursor !== undefined) { setCursor(nextCursor); return; }
       if (onHistory?.(key.upArrow ? "up" : "down")) return;
-      if (key.upArrow && !value && onQueuePop?.()) return;
       if (key.downArrow && historyIndex === undefined && onMoveDown?.()) return;
       if (!history.length) return;
       const next = key.upArrow ? Math.min((historyIndex ?? history.length) - 1, history.length - 1) : Math.min((historyIndex ?? history.length) + 1, history.length);
@@ -172,7 +185,14 @@ export function Composer({ value, onChange, onSubmit, history, disabled, shellMo
       return;
     }
     if (key.leftArrow) { setCursor(Math.max(0, cursor - 1)); return; }
-    if (key.rightArrow) { setCursor(Math.min(value.length, cursor + 1)); return; }
+    if (key.rightArrow) {
+      if (!value) {
+        const queued = onQueueEdit?.();
+        if (queued !== undefined) { onChange(queued); setCursor(queued.length); setHistoryIndex(undefined); return; }
+      }
+      setCursor(Math.min(value.length, cursor + 1));
+      return;
+    }
     if (key.home) { setCursor(value.lastIndexOf("\n", cursor - 1) + 1); return; }
     if (key.end) { const end = value.indexOf("\n", cursor); setCursor(end < 0 ? value.length : end); return; }
     if (isAltDeleteKey(input, key)) {
@@ -216,7 +236,10 @@ export function Composer({ value, onChange, onSubmit, history, disabled, shellMo
     let position = start;
     // Keep each word together as one Ink text node so its word-aware wrapper
     // can move it intact to the next line.
-    return text.split(/(\s+)/).map((part) => {
+    return text
+      .split(/(\s+)/)
+      .filter((part) => part.length > 0)
+      .map((part) => {
       const index = position;
       position += part.length;
       return <Text key={index} color={colorAt(index)} bold={isCommand(index)}>{part}</Text>;
