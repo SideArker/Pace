@@ -8,16 +8,16 @@ export type ConversationChoice = {
   section?: "pace" | "saved";
   title?: string;
   prompt: string;
-  state: "ready" | "running" | "approval" | "done";
+  state: "ready" | "running" | "approval" | "question" | "done";
   updatedAt?: string;
 };
 
-export function sortConversations<T extends { state: "ready" | "running" | "approval" | "done"; updatedAt?: string }>(
+export function sortConversations<T extends { state: "ready" | "running" | "approval" | "question" | "done"; updatedAt?: string }>(
   items: T[],
 ): T[] {
   const getRank = (state: string): number => {
     if (state === "running") return 1;
-    if (state === "approval") return 2;
+    if (state === "approval" || state === "question") return 2;
     return 3; // done | ready
   };
 
@@ -32,7 +32,7 @@ export function sortConversations<T extends { state: "ready" | "running" | "appr
   });
 }
 
-export function sectionConversations<T extends { id: string; state: "ready" | "running" | "approval" | "done"; updatedAt?: string }>(
+export function sectionConversations<T extends { id: string; state: "ready" | "running" | "approval" | "question" | "done"; updatedAt?: string }>(
   items: T[], thisPaceIds: ReadonlySet<string>,
 ): (T & { section: "pace" | "saved" })[] {
   const current = sortConversations(items.filter(item => thisPaceIds.has(item.id)));
@@ -73,7 +73,7 @@ export function ConversationPicker({
   const savedLimit = pace.length ? Math.max(1, maxItems - paceLimit) : maxItems;
   const windowFor = (items: typeof pace, limit: number) => {
     const selected = items.findIndex(item => item.index === anchor);
-    const waiting = !focused ? items.findIndex(item => item.choice.state === "approval" && item.choice.id !== activeId) : -1;
+    const waiting = !focused ? items.findIndex(item => (item.choice.state === "approval" || item.choice.state === "question") && item.choice.id !== activeId) : -1;
     const { start } = menuWindow(items.length, Math.max(0, waiting >= 0 ? waiting : selected), limit);
     return items.slice(start, start + limit);
   };
@@ -94,8 +94,8 @@ export function ConversationPicker({
         const selected = focused && index === selectedIndex;
         const current = choice.id === activeId;
         const prompt = (choice.title || choice.prompt).replace(/\s+/g, " ").trim();
-        const stateColor = choice.state === "approval" ? "#FBBF24" : choice.state === "running" ? "#38BDF8" : choice.state === "done" ? "#59E6A7" : "#64748B";
-        const stateLabel = choice.state === "approval" ? "approve" : choice.state === "running" ? "running" : choice.state === "done" ? "done" : current ? "current" : "ready";
+        const stateColor = choice.state === "approval" ? "#FBBF24" : choice.state === "question" ? "#A5B4FC" : choice.state === "running" ? "#38BDF8" : choice.state === "done" ? "#59E6A7" : "#64748B";
+        const stateLabel = choice.state === "approval" ? "approve" : choice.state === "question" ? "answer" : choice.state === "running" ? "running" : choice.state === "done" ? "done" : current ? "current" : "ready";
         return (
           <Box key={choice.id} gap={1}>
             <Box flexShrink={0}><Text color={selected ? "#38BDF8" : "#64748B"}>{selected ? "▶" : " "}</Text></Box>

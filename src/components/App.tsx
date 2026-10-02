@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Box, Static, Text, useApp, useStdout } from "ink";
 import type { ApprovalDecision, Progress } from "../integrations/codex.js";
+import type { UserAnswers } from "../integrations/codex-types.js";
 import type { ApprovalMode, Config, Session } from "../shared/types.js";
 import { PaceStore, newSession, rewindConversation, deleteConversationTurn, undoConversationTurn } from "../core/sessions.js";
 import { Orchestrator, VexUnavailableError } from "../core/orchestrator.js";
@@ -17,6 +18,7 @@ import type { UsageLimits, UsageWarningLevels } from "../integrations/usage.js";
 import { Composer, commandToken } from "./Composer.js";
 import { saveClipboardImage } from "./pasted-images.js";
 import { ComposerFrame } from "./ComposerFrame.js";
+import { QuestionPanel } from "./QuestionPanel.js";
 import { BottomPanel } from "./BottomPanel.js";
 import { QueuedMessages } from "./QueuedMessages.js";
 import { useAppInput } from "./useAppInput.js";
@@ -31,7 +33,7 @@ import { RunningProcesses, updateProcesses, type RunningProcess } from "./Runnin
 import { TaskPanel } from "./TaskPanel.js";
 import { conversationState } from "./approval-state.js";
 import { taskSummary } from "../core/tasks.js";
-import { createTurnRunner, type PendingApproval, type TurnJob } from "./turn-runner.js";
+import { createTurnRunner, type PendingApproval, type PendingQuestion, type TurnJob } from "./turn-runner.js";
 import { costForUsage } from "../core/routing/pricing.js";
 import { formatLatestRoute } from "./route-format.js";
 import { contextPercent, measuredContext } from "../core/context.js";
@@ -158,6 +160,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const [processes, setProcesses] = useState<RunningProcess[]>([]);
   const [liveUsage, setLiveUsage] = useState<Record<string, string>>({});
   const [approval, setApproval] = useState<Extract<Progress, { kind: "approval" }>>();
+  const [question, setQuestion] = useState<PendingQuestion>();
   const [pendingRevision, setPendingRevision] = useState(0);
   const [approvalMenu, setApprovalMenu] = useState(false);
   const [vexState, setVexState] = useState<
@@ -187,6 +190,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const sessionStatuses = useRef(new Map<string, string>());
   const unreadCompletions = useRef(new Set<string>());
   const pendingApprovals = useRef(new Map<string, PendingApproval>());
+  const pendingQuestions = useRef(new Map<string, PendingQuestion>());
   const sideAbort = useRef<AbortController | undefined>(undefined);
   const titleAborts = useRef(new Map<string, AbortController>());
   const shells = useRef(new Set<{ kill: () => boolean }>());
@@ -201,16 +205,18 @@ export default function App({ onClear }: { onClear: () => void }) {
     if (index < 0) return [target, ...old];
     return old.map((item, at) => at === index ? target : item);
   });
-  const getSessionState = (sessionId: string): "running" | "approval" | "done" => {
+  const getSessionState = (sessionId: string): "running" | "approval" | "question" | "done" => {
     return conversationState(
       runningIds.includes(sessionId) || jobs.current.has(sessionId),
       pendingApprovals.current.has(sessionId) || (activeSessionId.current === sessionId && !!approval),
+      pendingQuestions.current.has(sessionId) || (activeSessionId.current === sessionId && !!question),
     );
   };
   const sortedSessions = useMemo(() => sectionConversations(
     openSessions.map(item => ({ ...item, state: getSessionState(item.id) })), thisPaceIds.current,
-  ), [openSessions, runningIds, approval, pendingRevision]);
+  ), [openSessions, runningIds, approval, question, pendingRevision]);
   const backgroundApprovals = [...pendingApprovals.current.keys()].filter(id => id !== activeSessionId.current);
+  const backgroundQuestions = [...pendingQuestions.current.keys()].filter(id => id !== activeSessionId.current);
   const pickerChoices: ConversationChoice[] = sortedSessions.map(item => ({
     id: item.id,
     title: item.title,
@@ -304,6 +310,35 @@ export default function App({ onClear }: { onClear: () => void }) {
     if (activeSessionId.current === sessionId) setApproval(pending);
     setStatusFor(sessionId, "Waiting for approval");
   };
+  const showQuestion = (request: Extract<Progress, { kind: "question" }>, sessionId = activeSessionId.current, owner?: AbortController) => {
+    if (!sessionId || pendingQuestions.current.has(sessionId)) { request.respond({}); return; }
+    const pending: PendingQuestion = { ...request, owner, respond: (answers: UserAnswers) => {
+      if (pendingQuestions.current.get(sessionId)?.id !== request.id) return;
+      pendingQuestions.current.delete(sessionId);
+      setPendingRevision(value => value + 1);
+      if (activeSessionId.current === sessionId) setQuestion(undefined);
+      request.respond(answers);
+      for (const item of request.questions) {
+        const answer = answers[item.id]?.answers[0];
+        if (answer) addFor(sessionId, "info", `${item.question}\nYou: ${item.isSecret ? "[hidden]" : answer}`);
+      }
+      setStatusFor(sessionId, Object.keys(answers).length ? "Resuming" : "Question skipped");
+    } };
+    pendingQuestions.current.set(sessionId, pending);
+    setPendingRevision(value => value + 1);
+    if (activeSessionId.current === sessionId) {
+      setModelMenu(undefined); setApprovalMenu(false); setResumeMenu(false); setConvoMenu(false); setQueueMenu(false);
+      setQuestion(pending);
+    }
+    setStatusFor(sessionId, "Waiting for answer");
+  };
+  const dismissQuestion = (id: string, sessionId: string) => {
+    if (pendingQuestions.current.get(sessionId)?.id !== id) return;
+    pendingQuestions.current.delete(sessionId);
+    setPendingRevision(value => value + 1);
+    if (activeSessionId.current === sessionId) setQuestion(undefined);
+    setStatusFor(sessionId, "Question expired");
+  };
   const skillCommands = (config ? enabledSkills(skills, config) : [])
     .flatMap(skill => [`/${skill.name}`, `@${skill.name}`])
     .filter(command => !commands.includes(command));
@@ -352,6 +387,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   useEffect(
     () => () => {
       for (const pending of pendingApprovals.current.values()) pending.respond("decline");
+      for (const pending of pendingQuestions.current.values()) pending.respond({});
       for (const [sessionId, job] of jobs.current) {
         promptQueue.current.clear(sessionId);
         job.controller.abort();
@@ -528,6 +564,9 @@ export default function App({ onClear }: { onClear: () => void }) {
         activity: { category: action.category, detail: action.detail, completed: true,
           outcome: action.outcome, durationMs: action.durationMs, tokens: action.tokens },
       });
+      for (const item of turn.questions ?? []) newLines.push({
+        id: id++, role: "info", text: `${item.question}\nYou: ${item.answer}`, spaceBefore: false,
+      });
       newLines.push({
         id: id++,
         role: turn.cancelled ? "meta" : turn.failed ? "error" : "codex",
@@ -585,6 +624,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       if (sessionLines.current.has(target.id)) setLines(sessionLines.current.get(target.id)!);
       else renderSessionTurns(target);
       setApproval(pendingApprovals.current.get(target.id));
+      setQuestion(pendingQuestions.current.get(target.id));
       setHistory(target.turns.map(t => t.prompt));
       setStatus(sessionStatuses.current.get(target.id) ?? "Ready");
     } catch (error) {
@@ -602,6 +642,8 @@ export default function App({ onClear }: { onClear: () => void }) {
     const id = activeSessionId.current;
     const pending = id ? pendingApprovals.current.get(id) : undefined;
     pending?.respond("decline");
+    const pendingQuestion = id ? pendingQuestions.current.get(id) : undefined;
+    pendingQuestion?.respond({});
     const job = id ? jobs.current.get(id) : undefined;
     if (job || sideAbort.current) {
       if (id && job) {
@@ -627,7 +669,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   }, []);
   const focusPicker = () => {
     if (sortedSessions.length < 2 || modelMenu || convoMenu || queueMenu || approvalMenu) return false;
-    const pendingIndex = sortedSessions.findIndex(item => item.id !== activeSessionId.current && pendingApprovals.current.has(item.id));
+    const pendingIndex = sortedSessions.findIndex(item => item.id !== activeSessionId.current && (pendingApprovals.current.has(item.id) || pendingQuestions.current.has(item.id)));
     const current = sortedSessions.findIndex(item => item.id === activeSessionId.current);
     setPickerIndex(pendingIndex >= 0 ? pendingIndex : current >= 0 ? (current + 1) % sortedSessions.length : 0);
     setPickerFocused(true);
@@ -635,7 +677,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   };
   const cancelArmed = useAppInput({
     interrupt, pickerFocused, setPickerFocused, pickerIndex, setPickerIndex,
-    openSessions: sortedSessions, activateSession, approval, focusPicker, pendingApprovals,
+    openSessions: sortedSessions, activateSession, approval, question, focusPicker, pendingApprovals,
     activeSessionId, jobs, sideAbort, outputsExpanded, setOutputsExpanded,
     redrawTranscript: () => { onClear(); setTranscriptRevision(value => value + 1); },
     modelMenu, setModelMenu, menuModels,
@@ -1154,7 +1196,7 @@ export default function App({ onClear }: { onClear: () => void }) {
     void runTurn(text, session, config);
   };
   const runTurn = createTurnRunner({
-    turnSequence, activeSessionId, jobs, promptQueue, titleAborts, pendingApprovals, unreadCompletions,
+    turnSequence, activeSessionId, jobs, promptQueue, titleAborts, pendingApprovals, pendingQuestions, unreadCompletions,
     runner, orchestrator, store, rememberSession, onTurnStart: sessionId => thisPaceIds.current.add(sessionId), setRunningIds, addFor, activityFor,
     recordThoughtUsage, resetThoughtUsage: (sessionId: string) => lastReasoningTokens.current.delete(sessionId),
     getTurnActivities: (sessionId: string, turnId: number) => (sessionLines.current.get(sessionId) ?? [])
@@ -1165,7 +1207,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         detail: line.activity!.detail?.slice(0, 12000), outcome: line.activity!.outcome,
         durationMs: line.activity!.durationMs, tokens: line.activity!.tokens,
       })),
-    setStatusFor, showApproval, setSession, setVexState, refreshUsage, setQueueVersion,
+    setStatusFor, showApproval, showQuestion, dismissQuestion, setSession, setVexState, refreshUsage, setQueueVersion,
     setProcesses, setLiveUsage, getConfig: () => latestConfig.current ?? config!,
   });
   const { history: settledLines, live: liveLines } = useMemo(() => splitTranscript(lines), [lines]);
@@ -1206,6 +1248,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       <Box gap={1}><Text color="#59E6A7" bold>{spinner[tick % spinner.length]}</Text><Text color="#38BDF8">{busy ? status === "Thinking" ? thinkingWords[Math.floor(tick / 30) % thinkingWords.length] : status : runningIds.length ? `${runningIds.length} background turn${runningIds.length === 1 ? "" : "s"} running` : "Ready"}</Text>{busy && session && liveUsage[session.id] ? <Text color="#94A3B8">· {liveUsage[session.id]}</Text> : null}{shellJobs ? <Text color="#FBBF24">· ⚡ {shellJobs} Bash command{shellJobs === 1 ? "" : "s"} running</Text> : null}</Box>
       ) : null}
       {backgroundApprovals.length ? <Text color="#FBBF24" bold>⚠ {backgroundApprovals.length} background approval{backgroundApprovals.length === 1 ? "" : "s"} waiting · ↓ select conversation · Enter open</Text> : null}
+      {backgroundQuestions.length ? <Text color="#A5B4FC" bold>◆ {backgroundQuestions.length} background question{backgroundQuestions.length === 1 ? "" : "s"} waiting · {question ? "Shift+Tab" : "↓"} select conversation · Enter open</Text> : null}
       <RunningProcesses processes={processes} now={Date.now()} />
       <TaskPanel tasks={session?.tasks ?? []} />
       {approval ? (
@@ -1217,6 +1260,7 @@ export default function App({ onClear }: { onClear: () => void }) {
           <Text color="#FBBF24">Y approve once · N decline · Esc twice to cancel turn</Text>
         </Box>
       ) : null}
+      {question ? <QuestionPanel key={`${session?.id}-${question.id}`} questions={question.questions} onSubmit={question.respond} isActive={!pickerFocused && !approval} /> : null}
       {cancelArmed ? <Text color="#FBBF24">Press Esc again to cancel the turn</Text> : null}
       <ComposerFrame width={contentWidth} session={session} shellMode={shellMode} approvalMode={config?.approvalMode}>
         <Composer key={session?.id} value={draft} onChange={value => { setDraft(value); setSelection(0); }} onSubmit={value => { void submit(value); }} history={history}
@@ -1230,7 +1274,7 @@ export default function App({ onClear }: { onClear: () => void }) {
               return undefined;
             }
           }}
-          disabled={!session || !config || !!approval || !!modelMenu || approvalMenu || resumeMenu || convoMenu || queueMenu || pickerFocused} shellMode={shellMode}
+          disabled={!session || !config || !!approval || !!question || !!modelMenu || approvalMenu || resumeMenu || convoMenu || queueMenu || pickerFocused} shellMode={shellMode}
           completion={matches[selection] ?? matches[0]} completionStart={token?.start}
           onComplete={() => setDraft(token ? draft.slice(0, token.start) + (matches[selection] ?? matches[0] ?? token.prefix) : draft)}
           onHistory={direction => {

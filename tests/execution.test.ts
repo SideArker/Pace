@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { Orchestrator } from '../src/core/orchestrator.js';
 import { PaceStore, newSession, undoConversationTurn } from '../src/core/sessions.js';
 import { AppServerRunner, appServerThreadParams, appServerTurnParams, appUsage, codexOptions, eventProgress, SdkRunner, type CodexRunner, type Progress } from '../src/integrations/codex.js';
+import { serverArgs } from '../src/integrations/app-server-process.js';
 import type { Config, Route } from '../src/shared/types.js';
 import type { VexRequest } from '../src/core/vex/client.js';
 import { decision } from './routing-fixture.js';
@@ -344,6 +345,123 @@ it('declines a destructive Codex command before showing an approval prompt', asy
   await runner.run('work', process.cwd(), {}, undefined, event => { progress.push(event); });
   expect(decisions).toEqual([{ decision: 'decline' }]);
   expect(progress.some(event => event.kind === 'approval')).toBe(false);
+});
+
+it('keeps a Codex turn open until an agent question is answered', async () => {
+  let onMessage!: (message: { method: string; params: unknown }) => void;
+  let onRequest!: (message: { id: number; method: string; params: unknown }) => void;
+  const replies: unknown[] = [];
+  let asked!: (question: Extract<Progress, { kind: 'question' }>) => void;
+  const questionReady = new Promise<Extract<Progress, { kind: 'question' }>>(resolve => { asked = resolve; });
+  const runner = new AppServerRunner(message => {
+    onMessage = message;
+    return {
+      setRequestHandler(handler) { onRequest = handler; },
+      notify() {}, kill() {},
+      respond(_id, answer) {
+        replies.push(answer);
+        queueMicrotask(() => onMessage({ method: 'turn/completed', params: { turn: { status: 'completed' } } }));
+      },
+      async request(method: string) {
+        if (method === 'thread/start') return { thread: { id: 'thread-1' } };
+        if (method === 'turn/start') queueMicrotask(() => onRequest({
+          id: 8, method: 'item/tool/requestUserInput', params: { questions: [
+            { id: 'choice', header: 'Scope', question: 'Which scope?', options: [{ label: 'All', description: 'Every file' }], isOther: true, isSecret: false },
+            { id: 'note', header: 'Note', question: 'Any note?', options: null, isOther: false, isSecret: false },
+          ] },
+        }));
+        return {};
+      },
+    };
+  });
+  let finished = false;
+  const running = runner.run('work', process.cwd(), {}, undefined, event => {
+    if (event.kind === 'question') asked(event);
+  }).then(value => { finished = true; return value; });
+  const request = await questionReady;
+  expect(request.questions).toMatchObject([{ id: 'choice', options: [{ label: 'All' }] }, { id: 'note', options: [] }]);
+  expect(finished).toBe(false);
+  request.respond({ choice: { answers: ['All'] }, note: { answers: ['No'] } });
+  await running;
+  expect(replies).toEqual([{ answers: { choice: { answers: ['All'] }, note: { answers: ['No'] } } }]);
+});
+
+it('enables agent questions during normal Codex turns', () => {
+  const args = serverArgs();
+  expect(args.slice(args.indexOf('--enable'), args.indexOf('--enable') + 2)).toEqual(['--enable', 'default_mode_request_user_input']);
+});
+
+it('dismisses a question when Codex resolves it without an answer', async () => {
+  const progress: Progress[] = [];
+  const runner = new AppServerRunner((onMessage) => ({
+    setRequestHandler(handler) {
+      queueMicrotask(() => handler({ id: 10, method: 'item/tool/requestUserInput', params: {
+        questions: [{ id: 'scope', question: 'Which scope?', options: null }],
+      } }));
+    },
+    notify() {}, kill() {}, respond() {},
+    async request(method: string) {
+      if (method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (method === 'turn/start') queueMicrotask(() => {
+        onMessage({ method: 'serverRequest/resolved', params: { requestId: 10 } });
+        onMessage({ method: 'turn/completed', params: { turn: { status: 'completed' } } });
+      });
+      return {};
+    },
+  }));
+  await runner.run('work', process.cwd(), {}, undefined, event => { progress.push(event); });
+  expect(progress.map(event => event.kind)).toContain('question');
+  expect(progress).toContainEqual({ kind: 'questionResolved', id: '10' });
+});
+
+it('releases an unanswered agent question when a turn is cancelled', async () => {
+  let onRequest!: (message: { id: number; method: string; params: unknown }) => void;
+  const replies: unknown[] = [];
+  let asked!: () => void;
+  const questionReady = new Promise<void>(resolve => { asked = resolve; });
+  const controller = new AbortController();
+  const runner = new AppServerRunner(() => ({
+    setRequestHandler(handler) { onRequest = handler; }, notify() {}, kill() {},
+    respond(_id, answer) { replies.push(answer); },
+    async request(method: string) {
+      if (method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (method === 'turn/start') queueMicrotask(() => onRequest({
+        id: 9, method: 'item/tool/requestUserInput', params: { questions: [
+          { id: 'note', question: 'Continue?', options: null },
+        ] },
+      }));
+      return {};
+    },
+  }));
+  const running = runner.run('work', process.cwd(), {}, undefined, event => {
+    if (event.kind === 'question') asked();
+  }, controller.signal);
+  await questionReady;
+  controller.abort();
+  await expect(running).rejects.toThrow();
+  expect(replies).toEqual([{ answers: {} }]);
+});
+
+it('saves agent questions and redacts secret answers in the conversation', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  const session = newSession(process.cwd(), 'manual');
+  session.route = { model: 'gpt-6-sol', effort: 'high' };
+  const store = new PaceStore(dir);
+  const runner: CodexRunner = { async run(_prompt, _project, _route, _threadId, progress) {
+    await progress({ kind: 'question', id: 'one', questions: [
+      { id: 'scope', header: 'Scope', question: 'Which scope?', options: [], isOther: false, isSecret: false },
+      { id: 'token', header: 'Token', question: 'What token?', options: [], isOther: false, isSecret: true },
+    ], respond: () => {} });
+    return { threadId: 'thread-1', result: 'Done', completed: true };
+  } };
+  const orchestrator = new Orchestrator(store, runner, { choose: async () => { throw new Error('unexpected routing'); } });
+  await orchestrator.turn('Work', session, { ...config, routingMode: 'manual' }, event => {
+    if (event.kind === 'question') event.respond({ scope: { answers: ['All'] }, token: { answers: ['secret-value'] } });
+  });
+  expect((await store.latest(process.cwd()))?.turns.at(-1)?.questions).toEqual([
+    { question: 'Which scope?', answer: 'All' },
+    { question: 'What token?', answer: '[hidden]' },
+  ]);
 });
 
 it('ends an active turn when Codex app-server exits', async () => {

@@ -40,6 +40,7 @@ export type TurnSummary = {
   routeNote?: string;
   systemMessages?: string[];
   activities?: TurnActivity[];
+  questions?: { question: string; answer: string }[];
   durationMs?: number;
   artifacts?: string[];
   usage?: Usage;

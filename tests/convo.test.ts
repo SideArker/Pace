@@ -22,6 +22,17 @@ describe("Conversation editing and undo logic", () => {
     expect(output).toContain("approve");
     expect(output).toContain("Waiting conversation");
   });
+  it("marks a background question as waiting for an answer", () => {
+    expect(conversationState(true, false, true)).toBe("question");
+    const output = renderToString(React.createElement(ConversationPicker, {
+      choices: [
+        { id: "active", prompt: "Active conversation", state: "running" },
+        { id: "waiting", prompt: "Waiting conversation", state: conversationState(true, false, true) },
+      ], activeId: "active", selectedIndex: 0, focused: false,
+    }), { columns: 80 });
+    expect(output).toContain("answer");
+    expect(output).toContain("Waiting conversation");
+  });
   it("groups saved conversations by project and marks missing paths", () => {
     const available = newSession('/available', 'auto');
     const missing = newSession('/missing', 'auto');

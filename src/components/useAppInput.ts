@@ -24,6 +24,7 @@ export function useAppInput(options: {
   openSessions: Session[];
   activateSession: (session: Session) => Promise<void>;
   approval: Extract<Progress, { kind: "approval" }> | undefined;
+  question: Extract<Progress, { kind: "question" }> | undefined;
   focusPicker: () => boolean;
   pendingApprovals: MutableRefObject<Map<string, PendingApproval>>;
   activeSessionId: MutableRefObject<string | undefined>;
@@ -63,7 +64,7 @@ export function useAppInput(options: {
 }) {
   const {
     interrupt, pickerFocused, setPickerFocused, pickerIndex, setPickerIndex,
-    openSessions, activateSession, approval, focusPicker, pendingApprovals,
+    openSessions, activateSession, approval, question, focusPicker, pendingApprovals,
     activeSessionId, jobs, sideAbort, outputsExpanded, setOutputsExpanded, redrawTranscript,
     modelMenu, setModelMenu, approvalMenu, setApprovalMenu, selectApprovalMode, menuModels, menuIndex,
     setMenuIndex, setMenuModel, toggleModel, toggleEffort, resumeMenu,
@@ -83,7 +84,7 @@ export function useAppInput(options: {
   useEffect(() => () => { if (escapeTimer.current) clearTimeout(escapeTimer.current); }, []);
   const handleCancelEscape = () => {
     const id = activeSessionId.current;
-    if (!(id && jobs.current.has(id)) && !sideAbort.current && !approval) return false;
+    if (!(id && jobs.current.has(id)) && !sideAbort.current && !approval && !question) return false;
     const sessionId = id ?? "";
     const now = Date.now();
     if (isSecondEscape(lastEscape.current, sessionId, now)) {
@@ -119,6 +120,11 @@ export function useAppInput(options: {
       const pending = activeSessionId.current ? pendingApprovals.current.get(activeSessionId.current) : undefined;
       if (input.toLowerCase() === "y") pending?.respond("accept");
       else if (input.toLowerCase() === "n") pending?.respond("decline");
+      else if (key.escape) handleCancelEscape();
+      return;
+    }
+    if (question) {
+      if (key.shift && key.tab) focusPicker();
       else if (key.escape) handleCancelEscape();
       return;
     }

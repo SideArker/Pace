@@ -27,6 +27,7 @@ export function serverArgs(): string[] {
   const serverPath = vexServerPath();
   const args = [
     "--config", 'approvals_reviewer="user"',
+    "--enable", "default_mode_request_user_input",
   ];
   if (serverPath) args.unshift(
     "--config", `mcp_servers.vex.command=${tomlString(process.execPath)}`,

@@ -13,15 +13,16 @@ import type { RunningProcess } from "./RunningProcesses.js";
 
 type TurnJob = { session: Session; controller: AbortController; prompt: string };
 type PendingApproval = Extract<Progress, { kind: "approval" }> & { owner?: AbortController };
+type PendingQuestion = Extract<Progress, { kind: "question" }> & { owner?: AbortController };
 type AddLine = (sessionId: string, role: Line["role"], text: string) => void;
 type Status = (sessionId: string, value: string) => void;
 
-export type { TurnJob, PendingApproval };
+export type { TurnJob, PendingApproval, PendingQuestion };
 
 export function createTurnRunner({
-  turnSequence, activeSessionId, jobs, promptQueue, titleAborts, pendingApprovals, unreadCompletions,
+  turnSequence, activeSessionId, jobs, promptQueue, titleAborts, pendingApprovals, pendingQuestions, unreadCompletions,
   runner, orchestrator, store, rememberSession, onTurnStart, setRunningIds, addFor, activityFor, recordThoughtUsage, resetThoughtUsage, getTurnActivities, setStatusFor,
-  showApproval, setSession, setVexState, refreshUsage, setQueueVersion, setProcesses, setLiveUsage, getConfig,
+  showApproval, showQuestion, dismissQuestion, setSession, setVexState, refreshUsage, setQueueVersion, setProcesses, setLiveUsage, getConfig,
 }: {
   turnSequence: MutableRefObject<number>;
   activeSessionId: MutableRefObject<string | undefined>;
@@ -29,6 +30,7 @@ export function createTurnRunner({
   promptQueue: MutableRefObject<PromptQueue>;
   titleAborts: MutableRefObject<Map<string, AbortController>>;
   pendingApprovals: MutableRefObject<Map<string, PendingApproval>>;
+  pendingQuestions: MutableRefObject<Map<string, PendingQuestion>>;
   unreadCompletions: MutableRefObject<Set<string>>;
   runner: CodexRunner;
   orchestrator: Orchestrator;
@@ -43,6 +45,8 @@ export function createTurnRunner({
   getTurnActivities: (sessionId: string, turnId: number) => TurnActivity[];
   setStatusFor: Status;
   showApproval: (request: Extract<Progress, { kind: "approval" }>, sessionId?: string, owner?: AbortController) => void;
+  showQuestion: (request: Extract<Progress, { kind: "question" }>, sessionId?: string, owner?: AbortController) => void;
+  dismissQuestion: (id: string, sessionId: string) => void;
   setSession: Dispatch<SetStateAction<Session | undefined>>;
   setVexState: Dispatch<SetStateAction<"connecting" | "connected" | "failed">>;
   refreshUsage: () => void;
@@ -123,6 +127,8 @@ export function createTurnRunner({
             if (activeSessionId.current === sessionId) setSession({ ...turnSession });
           }
           if (progress.kind === "approval") showApproval(progress, sessionId, controller);
+          if (progress.kind === "question") showQuestion(progress, sessionId, controller);
+          if (progress.kind === "questionResolved") dismissQuestion(progress.id, sessionId);
           if (progress.kind === "error") addFor(sessionId, "error", progress.text);
           if (progress.kind === "message") {
             setStatusFor(sessionId, "Finishing response…");
@@ -150,6 +156,8 @@ export function createTurnRunner({
           const checkpoint = await createCheckpointIfDue(turnSession, runner, progress => {
             if (progress.kind === "status") setStatusFor(sessionId, progress.text);
             if (progress.kind === "approval") showApproval(progress, sessionId, controller);
+            if (progress.kind === "question") showQuestion(progress, sessionId, controller);
+            if (progress.kind === "questionResolved") dismissQuestion(progress.id, sessionId);
             if (progress.kind === "error") addFor(sessionId, "error", progress.text);
           }, controller.signal, turnConfig.approvalMode);
           await store.save(turnSession, () => activeSessionId.current === sessionId);
@@ -188,6 +196,8 @@ export function createTurnRunner({
       setProcesses(old => old.filter(item => !item.id.startsWith(`turn-${turnId}-`)));
       const pending = pendingApprovals.current.get(sessionId);
       if (pending?.owner === controller) pending.respond("decline");
+      const question = pendingQuestions.current.get(sessionId);
+      if (question?.owner === controller) question.respond({});
       jobs.current.delete(sessionId);
       if (activeSessionId.current !== sessionId) unreadCompletions.current.add(sessionId);
       rememberSession(turnSession);

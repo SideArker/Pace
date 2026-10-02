@@ -1,6 +1,7 @@
 import type { Usage } from "@openai/codex-sdk";
 import type { Config, Route, Session } from "../shared/types.js";
 import type { CodexRunner, Progress } from "../integrations/codex.js";
+import type { UserAnswers } from "../integrations/codex-types.js";
 import {
   VexRouter,
   shapeChoices,
@@ -172,6 +173,7 @@ export class Orchestrator {
     const stages: StageRecord[] = [];
     const routing: RoutingRecord[] = [];
     const systemMessages: string[] = [];
+    const answeredQuestions: { question: string; answer: string }[] = [];
     const systemMessage = (text: string) => {
       systemMessages.push(text);
       onProgress({ kind: "system", text });
@@ -368,6 +370,14 @@ export class Orchestrator {
           if (progress.kind === "thread") {
             session.threadId = progress.text;
             await save();
+          } else if (progress.kind === "question") {
+            onProgress({ ...progress, respond: (answers: UserAnswers) => {
+              for (const item of progress.questions) {
+                const answer = answers[item.id]?.answers[0];
+                if (answer) answeredQuestions.push({ question: item.question, answer: item.isSecret ? "[hidden]" : answer });
+              }
+              progress.respond(answers);
+            } });
           } else onProgress(progress);
         },
         signal,
@@ -411,6 +421,7 @@ export class Orchestrator {
           route,
           routeNote: note,
           systemMessages,
+          questions: answeredQuestions,
           durationMs,
           artifacts,
           usage,
@@ -443,6 +454,7 @@ export class Orchestrator {
           route,
           routeNote: note,
           systemMessages,
+          questions: answeredQuestions,
           durationMs: Math.round(performance.now() - startedAt),
           failed: true,
           cancelled,

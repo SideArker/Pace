@@ -3,7 +3,7 @@ import { realpath } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import type { Usage } from "@openai/codex-sdk";
 import { artifactPrompt } from "../core/system/artifacts.js";
-import { CodexRunError, type ApprovalDecision, type CodexRunner, type Execution, type Progress } from "./codex-types.js";
+import { CodexRunError, type ApprovalDecision, type CodexRunner, type Execution, type Progress, type UserAnswers, type UserQuestion } from "./codex-types.js";
 import { AppServer, isRecord, type AppServerConnection, type JsonRecord } from "./app-server-process.js";
 import { appServerThreadParams, appServerTurnParams, appUsage } from "./app-server-protocol.js";
 import { appItemProgress, fileChangeProgress } from "./codex-events.js";
@@ -152,15 +152,23 @@ export class AppServerRunner implements CodexRunner {
     let thread: JsonRecord | undefined;
     let failure: string | undefined;
     let completed = false;
+    const questions = new Map<string, (answers: UserAnswers) => void>();
     let turnResolve!: () => void;
     const turnDone = new Promise<void>(resolve => { turnResolve = resolve; });
     const server = this.createServer(message => {
       const params = isRecord(message.params) ? message.params : {};
+      if (message.method === "serverRequest/resolved" && (typeof params.requestId === "number" || typeof params.requestId === "string")) {
+        const id = String(params.requestId);
+        if (questions.delete(id)) void onProgress({ kind: "questionResolved", id });
+        return;
+      }
       if (message.method === "item/fileChange/patchUpdated" && typeof params.itemId === "string") {
         void onProgress(fileChangeProgress({ id: params.itemId, changes: params.changes }, false, cwd));
         return;
       }
       if (message.method === "turn/completed") {
+        for (const id of questions.keys()) void onProgress({ kind: "questionResolved", id });
+        questions.clear();
         const turn = isRecord(params.turn) ? params.turn : {};
         if (!usageEvents) usage = appUsage(params.tokenUsage) ?? appUsage(turn.tokenUsage) ?? appUsage(turn.usage);
         if (turn.status === "failed" || turn.status === "interrupted") failure = isRecord(turn.error) && typeof turn.error.message === "string" ? turn.error.message : `Codex turn ${String(turn.status)}`;
@@ -235,6 +243,35 @@ export class AppServerRunner implements CodexRunner {
     server.setRequestHandler(message => {
       if (message.id === undefined) return;
       const params = isRecord(message.params) ? message.params : {};
+      if (message.method === "item/tool/requestUserInput") {
+        const parsed: UserQuestion[] = Array.isArray(params.questions) ? params.questions.flatMap(value => {
+          if (!isRecord(value) || typeof value.id !== "string" || typeof value.question !== "string") return [];
+          return [{
+            id: value.id,
+            header: typeof value.header === "string" ? value.header : "Question",
+            question: value.question,
+            options: Array.isArray(value.options) ? value.options.flatMap(option =>
+              isRecord(option) && typeof option.label === "string"
+                ? [{ label: option.label, description: typeof option.description === "string" ? option.description : "" }]
+                : []) : [],
+            isOther: value.isOther === true,
+            isSecret: value.isSecret === true,
+          }];
+        }) : [];
+        if (mode === "side" || !parsed.length || new Set(parsed.map(item => item.id)).size !== parsed.length) {
+          server.respond(message.id, { answers: {} });
+          return;
+        }
+        const requestId = message.id;
+        const key = String(requestId);
+        const resolve = (answers: UserAnswers) => {
+          if (!questions.delete(key)) return;
+          server.respond(requestId, { answers });
+        };
+        questions.set(key, resolve);
+        void onProgress({ kind: "question", id: key, questions: parsed, respond: resolve });
+        return;
+      }
       const isCommandApproval = message.method === "item/commandExecution/requestApproval";
       const isFileApproval = message.method === "item/fileChange/requestApproval";
       if (!isCommandApproval && !isFileApproval) {
@@ -287,6 +324,7 @@ export class AppServerRunner implements CodexRunner {
       await onProgress({ kind: "thread", text: id });
       const abortTurn = () => {
         for (const resolve of approvals.values()) resolve("decline");
+        for (const resolve of questions.values()) resolve({});
         void server.request("turn/interrupt", { threadId: id }).catch(() => {});
       };
       signal?.addEventListener("abort", abortTurn, { once: true });

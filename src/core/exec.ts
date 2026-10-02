@@ -27,6 +27,10 @@ export async function execTurn(prompt: string, project = process.cwd()): Promise
         console.error(`Denied command approval in non-interactive mode: ${progress.command}`);
         progress.respond("decline");
       }
+      if (progress.kind === "question") {
+        console.error("Skipped agent question in non-interactive mode.");
+        progress.respond({});
+      }
     }, controller.signal);
     controller.signal.throwIfAborted();
     console.log(outcome.result);
