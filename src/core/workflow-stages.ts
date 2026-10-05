@@ -1,4 +1,4 @@
-import type { ModelOption, Route, Session, TurnSummary } from "../shared/types.js";
+import type { ModelOption, Session, TurnSummary } from "../shared/types.js";
 import type { CodexRunner, Progress } from "../integrations/codex.js";
 import type { RoutingDecision } from "./routing/router.js";
 import { stageRequest, type RoutingState, type VexRequest } from "./vex/client.js";
@@ -9,7 +9,7 @@ import { costForUsage } from "./routing/pricing.js";
 import { handoffPrompt, structuredHandoff } from "./orchestrator-helpers.js";
 export async function runPlanningStage({
   shape, request, routingTurns, enabled, prompts, routingState, choose, runner, session,
-  signal, onProgress, routeMessage, systemMessage, stages,
+  signal, onProgress, stages, priorHandoff,
 }: {
   shape: "scout" | "plan_execute";
   request: string;
@@ -22,9 +22,8 @@ export async function runPlanningStage({
   session: Pick<Session, "projectPath">;
   signal?: AbortSignal;
   onProgress: (progress: Progress) => void;
-  routeMessage: (route: Route, stage?: string) => void;
-  systemMessage: (text: string) => void;
   stages: StageRecord[];
+  priorHandoff?: string;
 }): Promise<string> {
   let handoff = "";
   if (shape === "scout" || shape === "plan_execute") {
@@ -46,7 +45,7 @@ export async function runPlanningStage({
                 routingTurns,
                 stageModels,
                 objective,
-                undefined,
+                priorHandoff,
                 enabled,
                 prompts,
                 routingState,
@@ -58,15 +57,11 @@ export async function runPlanningStage({
         );
         signal?.throwIfAborted();
         onProgress({ kind: "route", route: sideRoute });
-        routeMessage(sideRoute, shape === "scout" ? "the scout" : "planning");
-        systemMessage(
-          `This task will split into two stages: ${shape === "scout" ? "a read-only scout" : "planning"}, then completion.`,
-        );
         onProgress({
           kind: "status",
           text: `${objective}: ${sideRoute.model} · ${sideRoute.effort}`,
         });
-        const basePrompt = handoffPrompt(shape, request, routingTurns, prompts);
+        const basePrompt = handoffPrompt(shape, request, routingTurns, prompts, priorHandoff);
         let previousResult: string | undefined;
         let handoffError: unknown;
         for (let attempt = 0; attempt < 2; attempt++) {

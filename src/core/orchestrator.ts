@@ -4,9 +4,9 @@ import type { CodexRunner, Progress } from "../integrations/codex.js";
 import type { UserAnswers } from "../integrations/codex-types.js";
 import {
   VexRouter,
-  shapeChoices,
   shapeRequest,
   stageRequest,
+  taskRelationRequest,
   type VexRequest,
 } from "./vex/client.js";
 import {
@@ -14,10 +14,12 @@ import {
   validateDecision,
   type RoutingDecision,
 } from "./routing/router.js";
-import { costForUsage, pricedModels } from "./routing/pricing.js";
+import { costForUsage, pricedModels, refreshVersionManifest } from "./routing/pricing.js";
+import { advanceTask, retainedTask, type TaskRelation } from "./active-task.js";
 import { PaceStore } from "./sessions.js";
-import { addUsage, awaitRouting, handoffPrompt, retainedConversationPrompt, structuredHandoff } from "./orchestrator-helpers.js";
+import { addUsage, awaitRouting, retainedConversationPrompt } from "./orchestrator-helpers.js";
 import { runPlanningStage } from "./workflow-stages.js";
+import { checkpointHandoff } from "./checkpoint.js";
 import { artifactSnapshot, changedArtifacts } from "./system/artifacts.js";
 import { validRoute } from "../shared/config.js";
 import { existingFolder } from "./system/folders.js";
@@ -25,7 +27,6 @@ import {
   configuredSkills,
   enabledSkills,
   skillCommand,
-  skillMention,
   skillOption,
   skillPrompt,
   skillRequest,
@@ -155,10 +156,14 @@ export class Orchestrator {
         : turn;
     });
     const enabled = config.models.filter((model) => model.enabled !== false);
+    const priorTask = retainedTask(session);
+    let taskRelation: TaskRelation = "replace";
+    let relationResolved = !priorTask && !session.turns.length;
     const routingState = {
       previousRoute: session.route,
       openTasks: (session.tasks ?? []).filter(task => !task.completed).map(task => task.text),
       hasCodexThread: !!session.threadId,
+      activeTask: priorTask,
     };
     const save = async () => {
       try {
@@ -172,23 +177,7 @@ export class Orchestrator {
     };
     const stages: StageRecord[] = [];
     const routing: RoutingRecord[] = [];
-    const systemMessages: string[] = [];
     const answeredQuestions: { question: string; answer: string }[] = [];
-    const systemMessage = (text: string) => {
-      systemMessages.push(text);
-      onProgress({ kind: "system", text });
-    };
-    const routeMessage = (selected: Route, stage?: string) => {
-      const model =
-        selected.model?.replace(
-          /^gpt-(\d+)-(.+)$/,
-          (_match, version: string, name: string) =>
-            `GPT-${version} ${name[0]!.toUpperCase()}${name.slice(1)}`,
-        ) ?? "Codex default";
-      systemMessage(
-        `${session.routingMode === "auto" ? "Vex routed" : "Manual route"}${stage ? ` ${stage}` : ""} to ${model}${selected.effort ? ` ${selected.effort[0]!.toUpperCase()}${selected.effort.slice(1)}` : ""}.`,
-      );
-    };
     const choose = async (
       request: VexRequest,
       objective: string,
@@ -221,8 +210,13 @@ export class Orchestrator {
     let route: Route = session.route;
     let note = "Manual route";
     let shape = "single";
+    let usedThreadForClarification = false;
     let handoff: string | undefined;
     const auto = session.routingMode === "auto";
+    if (!auto) {
+      taskRelation = priorTask ? "continue" : "replace";
+      relationResolved = true;
+    }
     try {
       if (auto) {
         try {
@@ -244,6 +238,7 @@ export class Orchestrator {
           "Saved manual route is no longer enabled. Use /models or /auto.",
         );
       if (auto) {
+        await awaitRouting(refreshVersionManifest(), signal);
         pricedModels(enabled);
         const choices = enabled.reduce(
           (count, model) => count + model.efforts.length,
@@ -253,16 +248,32 @@ export class Orchestrator {
           throw new Error(
             "Auto routing supports at most 12 model and effort pairs. Narrow /models.",
           );
+        if (priorTask || session.turns.length) {
+          onProgress({ kind: "status", text: "Resolving conversation..." });
+          taskRelation = (await choose(taskRelationRequest(request, routingTurns, routingState, prompts), "task relation")).choice as TaskRelation;
+          relationResolved = true;
+        }
         onProgress({ kind: "status", text: "Choosing workflow..." });
+        const workflowRequest = shapeRequest(request, routingTurns, enabled, prompts, routingState);
+        if (taskRelation === "continue" && !priorTask && session.threadId)
+          workflowRequest.options = workflowRequest.options.filter(option => option.id === "single");
+        else if (taskRelation === "continue" && priorTask)
+          workflowRequest.options = workflowRequest.options.filter(option => option.id !== "clarify");
         shape = (
           await choose(
-            shapeRequest(request, routingTurns, enabled, prompts, routingState),
+            workflowRequest,
             "workflow",
           )
         ).choice;
+        if (shape === "clarify" && session.threadId) {
+          shape = "single";
+          usedThreadForClarification = true;
+        }
         if (shape === "clarify") {
           const result =
-            "What outcome would you like from this request? Please describe the deliverable.";
+            taskRelation === "continue"
+              ? "I can't identify an earlier task from this conversation. Open /resume if the work is in another saved conversation, or paste the original request or plan."
+              : "What outcome would you like from this request? Please describe the deliverable.";
           const durationMs = Math.round(performance.now() - startedAt);
           session.turns = [
             ...session.turns,
@@ -271,7 +282,6 @@ export class Orchestrator {
               result,
               at: new Date().toISOString(),
               routeNote: "Vex requested clarification",
-              systemMessages,
               durationMs,
             },
           ].slice(-20);
@@ -296,11 +306,20 @@ export class Orchestrator {
         (config.trustedFolders ?? []).map(existingFolder),
       );
       signal?.throwIfAborted();
-      if (auto && (shape === "scout" || shape === "plan_execute")) {
-        handoff = await runPlanningStage({
-          shape, request, routingTurns, enabled, prompts, routingState, choose, runner: this.runner,
-          session, signal, onProgress, routeMessage, systemMessage, stages,
+      if (auto && ["scout", "plan_execute", "scout_plan_execute"].includes(shape)) {
+        const firstShape = shape === "scout_plan_execute" ? "scout" : shape as "scout" | "plan_execute";
+        const firstHandoff = await runPlanningStage({
+          shape: firstShape, request, routingTurns, enabled, prompts, routingState, choose, runner: this.runner,
+          session, signal, onProgress, stages,
         });
+        handoff = firstHandoff;
+        if (shape === "scout_plan_execute") {
+          const planHandoff = await runPlanningStage({
+            shape: "plan_execute", request, routingTurns, enabled, prompts, routingState, choose, runner: this.runner,
+            session, signal, onProgress, stages, priorHandoff: firstHandoff,
+          });
+          handoff = `Scout report:\n${firstHandoff}\n\nPlanning report:\n${planHandoff}`;
+        }
       }
       if (auto) {
         const objective = completionObjective(shape, prompts);
@@ -322,53 +341,52 @@ export class Orchestrator {
           ).choice,
           enabled,
         );
-        note = `Vex chose ${shape} workflow`;
+        note = usedThreadForClarification ? "Vex clarification delegated to existing Codex thread" : `Vex chose ${shape} workflow`;
       }
       signal?.throwIfAborted();
-      if (session.threadId && session.route.model !== route.model) {
-        systemMessage("Model changed. Continuing the existing Codex thread.");
-      }
       session.route = route;
       await save();
       onProgress({ kind: "route", route });
-      routeMessage(route, shape === "single" ? undefined : "completion");
-      const mentioned = skillMention(prompt, skills);
-      const turnSkills = skills.filter(
-        (skill) =>
-          session.activeSkills?.includes(skill.name) ||
-          skill.name === invoked?.name ||
-          skill.name === mentioned?.name,
-      );
-      systemMessage(
-        turnSkills.length
-          ? `Active skills: ${turnSkills.map((skill) => `/${skill.name}`).join(", ")}.`
-          : "No skills are active for this conversation.",
-      );
       onProgress({
         kind: "status",
         text: `${note}: ${route.model ?? "Codex default"} · ${route.effort ?? "default"}`,
       });
+      const resumedAfterLimit = session.deferredTurn?.prompt === prompt;
+      const resolvedPrompt = taskRelation === "continue" && priorTask && !session.threadId
+        ? `${prompt}\n\nPace's saved task brief (verify against conversation): ${priorTask.originalRequest}\nLater instructions: ${JSON.stringify(priorTask.instructions)}\nLast outcome: ${priorTask.latestOutcome ?? "Unknown"}\nThe latest user request controls scope, including when it asks to implement a prior plan. Inspect the current repository and retained conversation, continue the remaining work, and report what is done and what remains. If this brief is stale or the prior task cannot be identified, say so clearly and suggest /resume for work in another saved conversation. Do not repeat completed changes.`
+        : (taskRelation === "continue" || usedThreadForClarification) && session.threadId
+          ? `${prompt}\n\nUse this Codex thread's earlier conversation and tool history to identify the task. Inspect current files, continue unfinished work, and report what is done and what remains. If the task cannot be identified, say so clearly and suggest /resume for work in another saved conversation.`
+          : prompt;
+      const safePrompt = resumedAfterLimit
+        ? `${resolvedPrompt}\n\nThis request was interrupted by a Codex usage limit. Inspect current files and prior conversation before editing. Continue only unfinished work. Report completed work, remaining work, and checks.`
+        : resolvedPrompt;
       const executionPrompt = handoff
-        ? `${skillPrompt(prompt, skills, session.activeSkills, session.skillOptions)}${shape === "plan_execute" ? "\n\nThe previous stage only prepared a read-only plan. Carry out the requested implementation and verification now." : ""}\n\n${prompts.handoff.reportInstruction}\n${handoff}`
+        ? `${skillPrompt(safePrompt, skills, session.activeSkills, session.skillOptions)}${shape === "plan_execute" || shape === "scout_plan_execute" ? `\n\n${prompts.handoff.planExecutionInstruction}` : ""}\n\n${prompts.handoff.reportInstruction}\n${handoff}`
         : skillPrompt(
-            prompt,
+            safePrompt,
             skills,
             session.activeSkills,
             session.skillOptions,
           );
-      const promptWithHistory = retainedConversationPrompt(
-        executionPrompt,
-        session,
-      );
+      const checkpoint = session.checkpoint?.threadId === session.threadId &&
+        session.turns.some(turn => turn.at === session.checkpoint?.sourceTurnAt)
+        ? session.checkpoint : undefined;
+      const runThreadId = checkpoint ? undefined : session.threadId;
+      const checkpointTurn = checkpoint ? session.turns.findIndex(turn => turn.at === checkpoint.sourceTurnAt) : -1;
+      const promptWithHistory = checkpoint
+        ? checkpointHandoff(checkpoint.note, session.turns.slice(checkpointTurn + 1).slice(-3).map(turn => ({ user: turn.prompt.slice(0, 1000), assistant: turn.result.slice(0, 1000) })), executionPrompt)
+        : retainedConversationPrompt(executionPrompt, session);
+      if (checkpoint) onProgress({ kind: "status", text: "Starting fresh thread from checkpoint…" });
       const stageStart = performance.now();
       const execution = await this.runner.run(
         promptWithHistory,
         session.projectPath,
         route,
-        session.threadId,
+        runThreadId,
         async (progress) => {
           if (progress.kind === "thread") {
             session.threadId = progress.text;
+            if (progress.text !== runThreadId) session.threadTurnCount = 0;
             await save();
           } else if (progress.kind === "question") {
             onProgress({ ...progress, respond: (answers: UserAnswers) => {
@@ -394,6 +412,12 @@ export class Orchestrator {
         estimatedCostUsd: costForUsage(route, execution.usage),
       });
       if (execution.threadId) session.threadId = execution.threadId;
+      if (checkpoint && session.threadId === checkpoint.threadId) {
+        session.threadId = undefined;
+        onProgress({ kind: "error", text: "Fresh Codex thread ID was unavailable; the next turn will use retained conversation history." });
+      }
+      session.threadTurnCount = runThreadId && session.threadId === runThreadId
+        ? (session.threadTurnCount ?? session.turns.length) + 1 : 1;
       if (session.threadId) {
         session.contextByThread ??= {};
         if (execution.context) session.contextByThread[session.threadId] = execution.context;
@@ -420,7 +444,6 @@ export class Orchestrator {
           at: new Date().toISOString(),
           route,
           routeNote: note,
-          systemMessages,
           questions: answeredQuestions,
           durationMs,
           artifacts,
@@ -430,6 +453,9 @@ export class Orchestrator {
           estimatedCostUsd,
         },
       ].slice(-20);
+      if (relationResolved && (priorTask || taskRelation === "replace"))
+        session.activeTask = advanceTask(priorTask, taskRelation, prompt, execution.result, false);
+      if (resumedAfterLimit) session.deferredTurn = undefined;
       await save();
       return {
         session,
@@ -453,7 +479,6 @@ export class Orchestrator {
           at: new Date().toISOString(),
           route,
           routeNote: note,
-          systemMessages,
           questions: answeredQuestions,
           durationMs: Math.round(performance.now() - startedAt),
           failed: true,
@@ -462,6 +487,8 @@ export class Orchestrator {
           routing,
         },
       ].slice(-20);
+      if (relationResolved && (priorTask || taskRelation === "replace"))
+        session.activeTask = advanceTask(priorTask, taskRelation, prompt, String(error), true);
       await save();
       throw error;
     }

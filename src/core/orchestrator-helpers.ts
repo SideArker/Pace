@@ -51,6 +51,7 @@ export function handoffPrompt(
   request: string,
   turns: TurnSummary[],
   prompts: RoutingPrompts,
+  priorHandoff?: string,
 ): string {
   const objective =
     kind === "scout"
@@ -58,8 +59,8 @@ export function handoffPrompt(
       : prompts.handoff.planObjective;
   const conversation = turns
     .slice(-10)
-    .map((turn) => ({ user: turn.prompt, assistant: turn.result }));
-  return `${objective} ${prompts.handoff.instructions}\n\n${prompts.handoff.recentConversationLabel}\n${JSON.stringify(conversation)}\n\n${prompts.handoff.originalRequestLabel}\n${request}`;
+    .map((turn) => ({ user: turn.prompt.slice(0, 1000), assistant: turn.result.slice(0, 1000) }));
+  return `${objective} ${prompts.handoff.instructions}\n\n${prompts.handoff.recentConversationLabel}\n${JSON.stringify(conversation)}\n\n${prompts.handoff.originalRequestLabel}\n${request}${priorHandoff ? `\n\nVerified scout report to use when planning:\n${priorHandoff}` : ""}`;
 }
 export function retainedConversationPrompt(prompt: string, session: Session): string {
   if (session.threadId) return prompt;

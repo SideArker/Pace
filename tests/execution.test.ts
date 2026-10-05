@@ -9,6 +9,7 @@ import { serverArgs } from '../src/integrations/app-server-process.js';
 import type { Config, Route } from '../src/shared/types.js';
 import type { VexRequest } from '../src/core/vex/client.js';
 import { decision } from './routing-fixture.js';
+import { checkpointDue } from '../src/core/checkpoint.js';
 
 let dir: string;
 afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true }); });
@@ -26,7 +27,7 @@ it('keeps the existing thread when routing changes model', async () => {
   } };
   const session = newSession('/example/project', 'auto');
   const store = new PaceStore(dir);
-  const vex = { choose: async (request: VexRequest) => decision(request, request.options[0]?.id === 'single' ? 'single' : request.context.originalRequest === 'first' ? '1:high' : '0:low') };
+  const vex = { choose: async (request: VexRequest) => decision(request, request.options[0]?.id === 'continue' ? 'replace' : request.options[0]?.id === 'single' ? 'single' : request.context.originalRequest === 'first' ? '1:high' : '0:low') };
   const orchestrator = new Orchestrator(store, runner, vex);
   await orchestrator.turn('first', session, config, () => {});
   await orchestrator.turn('second', session, config, () => {});
@@ -50,19 +51,71 @@ it('lets Vex route paraphrased implementation follow-ups using conversation stat
   } };
   const vex = { choose: async (request: VexRequest) => {
     requests.push(request);
-    return decision(request, request.options[0]?.id === 'single' ? 'single' : '1:high');
+    return decision(request, request.options[0]?.id === 'continue' ? 'continue' : request.options[0]?.id === 'single' ? 'single' : '1:high');
   } };
   const orchestrator = new Orchestrator(new PaceStore(dir), runner, vex);
   await orchestrator.turn('Could you turn that plan into working code?', session, config, () => {});
-  expect(requests[0]?.context).toMatchObject({
+  expect(requests[1]?.context).toMatchObject({
     originalRequest: 'Could you turn that plan into working code?',
     recentConversation: [{ user: 'Plan a CSV export and tests. No edits yet.', assistant: 'I found the export code. The implementation remains.' }],
     conversationState: { openTasks: ['Implement CSV writer'], hasCodexThread: true },
   });
-  expect(requests[1]?.options.map(option => option.id)).toEqual(['0:low', '1:medium', '1:high']);
+  expect(requests[0]?.context.conversationState).toMatchObject({ activeTask: { originalRequest: 'Plan a CSV export and tests. No edits yet.' } });
+  expect(requests[2]?.options.map(option => option.id)).toEqual(['0:low', '1:medium', '1:high']);
   expect(calls[0]?.route).toEqual({ model: 'gpt-6-sol', effort: 'high' });
   expect(calls[0]?.prompt).toMatch(/^Could you turn that plan into working code\?/);
   expect(calls[0]?.prompt).not.toContain('Follow-up task context:');
+});
+
+it('continues a saved task when Vex would otherwise ask for the deliverable again', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  const session = newSession('/example/project', 'auto');
+  session.threadId = 'thread-1';
+  session.activeTask = { originalRequest: 'Implement CSV export and tests', instructions: ['Use the existing writer'], latestOutcome: 'Usage limit before completion', failed: true };
+  session.turns.push({ prompt: 'BRO CONTINUE', result: 'Usage limit', failed: true, at: '2026-10-05' });
+  const requests: VexRequest[] = [];
+  let executionPrompt = '';
+  const runner: CodexRunner = { async run(prompt) {
+    executionPrompt = prompt;
+    return { threadId: 'thread-1', result: 'Implemented CSV export and tests', completed: true };
+  } };
+  const vex = { choose: async (request: VexRequest) => {
+    requests.push(request);
+    return decision(request, request.options.some(option => option.id === 'clarify') ? 'clarify' : request.options[0]?.id ?? '1:high');
+  } };
+  const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('BRO CONTINUE', session, config, () => {});
+  expect(requests[0]?.options.map(option => option.id)).not.toContain('clarify');
+  expect(requests[0]?.context.conversationState).toMatchObject({ activeTask: { originalRequest: 'Implement CSV export and tests' } });
+  expect(executionPrompt).toContain("Use this Codex thread's earlier conversation and tool history");
+  expect(executionPrompt).not.toContain("Pace's saved task brief");
+  expect(outcome.result).toBe('Implemented CSV export and tests');
+  expect(session.activeTask?.originalRequest).toBe('Implement CSV export and tests');
+});
+
+it('routes a continuation into the Codex thread when Pace lacks the original task brief', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  const session = newSession('/example/project', 'auto');
+  session.threadId = 'thread-with-history';
+  session.turns.push({ prompt: 'BRO CONTINUE', result: 'What outcome would you like?', routeNote: 'Vex requested clarification', at: '2026-10-05' });
+  const requests: VexRequest[] = [];
+  let sentThread: string | undefined;
+  let sentPrompt = '';
+  const runner: CodexRunner = { async run(prompt, _project, _route, id) {
+    sentThread = id;
+    sentPrompt = prompt;
+    return { threadId: id, result: 'Continued original work', completed: true };
+  } };
+  const vex = { choose: async (request: VexRequest) => {
+    requests.push(request);
+    return decision(request, request.options.some(option => option.id === 'clarify') ? 'clarify' : request.options[0]?.id ?? '1:high');
+  } };
+  const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('BRO CONTINUE', session, config, () => {});
+  expect(requests[0]?.options.map(option => option.id)).toEqual(['continue', 'replace', 'aside']);
+  expect(requests[1]?.options.map(option => option.id)).toEqual(['single']);
+  expect(sentThread).toBe('thread-with-history');
+  expect(sentPrompt).toContain("Use this Codex thread's earlier conversation and tool history");
+  expect(outcome.result).toBe('Continued original work');
+  expect(session.activeTask).toBeUndefined();
 });
 
 it('replays only retained turns after undo starts a new Codex thread', async () => {
@@ -81,7 +134,7 @@ it('replays only retained turns after undo starts a new Codex thread', async () 
     sentThread = threadId;
     return { threadId: 'new-thread', result: 'done', completed: true };
   } };
-  const vex = { choose: async (request: VexRequest) => decision(request, request.options[0]?.id === 'single' ? 'single' : '1:high') };
+  const vex = { choose: async (request: VexRequest) => decision(request, request.options[0]?.id === 'continue' ? 'replace' : request.options[0]?.id === 'single' ? 'single' : '1:high') };
   await new Orchestrator(new PaceStore(dir), runner, vex).turn('Current request', session, config, () => {});
   expect(sentThread).toBeUndefined();
   expect(sentPrompt).toContain('Keep this request');
@@ -106,7 +159,7 @@ it('runs a read-only scout, reroutes after handoff, and sums stage costs', async
   const requests: VexRequest[] = [];
   const vex = { choose: async (request: VexRequest) => {
     requests.push(request);
-    return decision(request, request.options[0]?.id === 'single' ? 'scout' : request.context.stageObjective === 'Read-only repository scout' ? '0:low' : '1:high');
+    return decision(request, request.options[0]?.id === 'continue' ? 'replace' : request.options[0]?.id === 'single' ? 'scout' : request.context.stageObjective === 'Read-only repository scout' ? '0:low' : '1:high');
   } };
   const session = newSession('/example/project', 'auto');
   session.threadId = 'existing-main-thread';
@@ -115,30 +168,102 @@ it('runs a read-only scout, reroutes after handoff, and sums stage costs', async
   const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('Implement feature', session, config, progress => {
     if (progress.kind === 'system') notices.push(progress.text);
   });
-  expect(notices).toEqual([
-    'Vex routed the scout to GPT-6 Luna Low.',
-    'This task will split into two stages: a read-only scout, then completion.',
-    'Model changed. Continuing the existing Codex thread.',
-    'Vex routed completion to GPT-6 Sol High.',
-    'No skills are active for this conversation.',
-  ]);
-  expect(session.turns.at(-1)?.systemMessages).toEqual(notices);
+  expect(notices).toEqual([]);
+  expect(session.turns.at(-1)?.systemMessages).toBeUndefined();
   expect(calls.map(call => call.mode)).toEqual(['side', 'main']);
   expect(calls.map(call => call.id)).toEqual([undefined, 'existing-main-thread']);
   expect(calls[0]?.prompt).toContain('We discussed the parser in src/a.ts');
   expect(calls[0]?.route).toEqual({ model: 'gpt-6-luna', effort: 'low' });
-  expect(requests[1]?.options.map(option => option.id)).toEqual(['0:low']);
-  expect((requests[1]?.context.availableModels as { id: string }[]).map(model => model.id)).toContain('gpt-6-sol');
+  expect(requests[2]?.options.map(option => option.id)).toEqual(['0:low']);
+  expect((requests[2]?.context.availableModels as { id: string }[]).map(model => model.id)).toContain('gpt-6-sol');
   expect(calls[1]?.prompt).toContain('Parser is defined here');
   expect(calls[1]?.prompt).not.toContain('Retained conversation:');
   expect(calls[1]?.prompt).not.toContain('unshared scout history');
-  expect(requests[2]?.context.priorStageHandoff).toContain('src/a.ts');
-  expect(requests[2]?.context.priorStageHandoff).not.toContain('unshared scout history');
+  expect(requests[3]?.context.priorStageHandoff).toContain('src/a.ts');
+  expect(requests[3]?.context.priorStageHandoff).not.toContain('unshared scout history');
   expect(outcome.stages[0]?.handoff).toContain('Parser is defined here');
   expect((await new PaceStore(dir).latest('/example/project'))?.turns.at(-1)?.stages?.[0]?.handoff).toContain('Parser is defined here');
   expect(outcome.usage).toMatchObject({ input_tokens: 300, output_tokens: 25 });
   expect(outcome.estimatedCostUsd).toBeCloseTo(outcome.stages[0]!.estimatedCostUsd! + outcome.stages[1]!.estimatedCostUsd!, 12);
-  expect(outcome.routing).toHaveLength(3);
+  expect(outcome.routing).toHaveLength(4);
+});
+
+it('passes scout findings to planning, then both reports to execution', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  const calls: { prompt: string; mode?: string; threadId?: string }[] = [];
+  const usage = { input_tokens: 100, cached_input_tokens: 20, cache_write_input_tokens: 0, output_tokens: 10, reasoning_output_tokens: 2 };
+  const runner: CodexRunner = { async run(prompt, _project, _route, threadId, _progress, _signal, mode) {
+    calls.push({ prompt, mode, threadId });
+    const summary = calls.length === 1 ? 'Scout found parser' : 'Plan parser migration';
+    return { result: mode === 'side' ? JSON.stringify({ summary, findings: [], nextSteps: [], checks: [], risks: [] }) : 'Implemented', threadId: mode === 'main' ? 'main-thread' : undefined, completed: true, usage };
+  } };
+  const requests: VexRequest[] = [];
+  const vex = { choose: async (request: VexRequest) => {
+    requests.push(request);
+    return decision(request, request.options[0]?.id === 'single' ? 'scout_plan_execute' : '0:low');
+  } };
+  const session = newSession('/example/project', 'auto');
+  const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('Implement broad migration', session, config, () => {});
+  expect(calls.map(call => call.mode)).toEqual(['side', 'side', 'main']);
+  expect(calls[1]?.prompt).toContain('Scout found parser');
+  expect(calls[2]?.prompt).toContain('Scout found parser');
+  expect(calls[2]?.prompt).toContain('Plan parser migration');
+  expect(calls.map(call => call.threadId)).toEqual([undefined, undefined, undefined]);
+  expect(requests[2]?.context.priorStageHandoff).toContain('Scout found parser');
+  expect(outcome.stages).toHaveLength(3);
+  expect(outcome.routing).toHaveLength(4);
+  expect(outcome.usage?.input_tokens).toBe(300);
+  expect(outcome.estimatedCostUsd).toBeCloseTo(outcome.stages.reduce((sum, stage) => sum + stage.estimatedCostUsd!, 0), 12);
+  expect(session.threadId).toBe('main-thread');
+});
+
+it('starts a fresh main thread from a valid checkpoint and counts turns per thread', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  let session = newSession('/example/project', 'manual');
+  session.route = { model: 'gpt-6-sol', effort: 'high' };
+  session.threadId = 'old-thread';
+  session.turns = Array.from({ length: 16 }, (_, index) => ({ prompt: `old-${index}`, result: `result-${index}`, at: `turn-${index}` }));
+  session.checkpoint = { createdAt: 'now', sourceTurnAt: 'turn-15', threadId: 'old-thread', route: session.route,
+    note: { complete: true, goal: 'Finish parser', constraints: [], findings: [], changes: [], checks: [], unfinished: ['Add tests'], questions: [], risks: [] }, durationMs: 10 };
+  const calls: { prompt: string; threadId?: string }[] = [];
+  const runner: CodexRunner = { async run(prompt, _project, _route, threadId) {
+    calls.push({ prompt, threadId });
+    return { threadId: threadId ?? 'fresh-thread', result: 'done', completed: true };
+  } };
+  const store = new PaceStore(dir);
+  await store.save(session);
+  session = (await store.latest(session.projectPath))!;
+  const orchestrator = new Orchestrator(store, runner);
+  const manual = { ...config, routingMode: 'manual' as const };
+  await orchestrator.turn('Add tests', session, manual, () => {});
+  expect(calls[0]?.threadId).toBeUndefined();
+  expect(calls[0]?.prompt).toContain('Finish parser');
+  expect(calls[0]?.prompt).not.toContain('old-0');
+  expect(session.threadId).toBe('fresh-thread');
+  expect(session.threadTurnCount).toBe(1);
+  expect(checkpointDue(session)).toBe(false);
+  session = (await store.latest(session.projectPath))!;
+  await orchestrator.turn('Check results', session, manual, () => {});
+  expect(calls[1]?.threadId).toBe('fresh-thread');
+  expect(calls[1]?.prompt).not.toContain('Finish parser');
+  expect(session.threadTurnCount).toBe(2);
+});
+
+it('does not resume the old thread when a fresh run omits its new ID', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  const session = newSession('/example/project', 'manual');
+  session.route = { model: 'gpt-6-sol', effort: 'high' };
+  session.threadId = 'old-thread';
+  session.turns = [{ prompt: 'Original work', result: 'Partial work', at: 'turn-1' }];
+  session.checkpoint = { createdAt: 'now', sourceTurnAt: 'turn-1', threadId: 'old-thread', route: session.route,
+    note: { complete: true, goal: 'Finish work', constraints: [], findings: [], changes: [], checks: [], unfinished: ['Test'], questions: [], risks: [] }, durationMs: 10 };
+  const runner: CodexRunner = { async run(_prompt, _project, _route, threadId) {
+    expect(threadId).toBeUndefined();
+    return { result: 'done', completed: true };
+  } };
+  await new Orchestrator(new PaceStore(dir), runner).turn('Test', session, { ...config, routingMode: 'manual' }, () => {});
+  expect(session.threadId).toBeUndefined();
+  expect(session.threadTurnCount).toBe(1);
 });
 
 it('asks for clarification without starting Codex', async () => {
