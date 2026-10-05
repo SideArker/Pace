@@ -23,7 +23,7 @@ export function ComposerFrame({ children, width, session, shellMode, approvalMod
   const wide = width >= 112;
   const hints = (
     <Box flexDirection={wide ? "row" : "column"} justifyContent={wide ? "space-between" : "flex-start"} width="100%">
-      <Text color="#64748B" wrap="truncate">/help shortcuts · Shift+Enter newline · Alt+V image</Text>
+      <Text color="#64748B" wrap="truncate">type / for commands · Shift+Enter newline · Alt+V image</Text>
       {width >= 72 ? <Text color="#64748B" wrap="truncate">type ! to run commands</Text> : null}
     </Box>
   );

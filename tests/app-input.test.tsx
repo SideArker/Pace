@@ -28,7 +28,7 @@ function fixture(overrides: Partial<Options> = {}) {
   const queue = new PromptQueue();
   const events = {
     interrupt: vi.fn(), activateSession: vi.fn(async () => {}), focusPicker: vi.fn(() => true),
-    redrawTranscript: vi.fn(), toggleModel: vi.fn(), toggleEffort: vi.fn(),
+    redrawTranscript: vi.fn(), toggleModel: vi.fn(), toggleEffort: vi.fn(), selectManualRoute: vi.fn(async () => {}),
     selectApprovalMode: vi.fn(async () => {}), add: vi.fn(), renderSessionTurns: vi.fn(),
     setPickerFocused: vi.fn(), setPickerIndex: vi.fn(), setOutputsExpanded: vi.fn(),
     setApprovalMenu: vi.fn(), setModelMenu: vi.fn(), setMenuIndex: vi.fn(),
@@ -42,7 +42,7 @@ function fixture(overrides: Partial<Options> = {}) {
     pendingApprovals: { current: new Map() }, activeSessionId: { current: session.id },
     jobs: { current: new Map() }, sideAbort: { current: undefined },
     outputsExpanded: false, modelMenu: undefined, approvalMenu: false,
-    menuModels: ["first", "second", "third"], menuIndex: 0,
+    menuModels: ["first", "second", "third"], menuEfforts: ["medium", "ultra"], menuIndex: 0,
     resumeMenu: false, resumeChoices: [session, second], missingProjectPaths: [],
     convoMenu: false, session, store: { save: vi.fn(async () => {}) },
     queueMenu: false, promptQueue: { current: queue },
@@ -207,6 +207,13 @@ describe("application keyboard input", () => {
     expect(events.toggleEffort).toHaveBeenCalledOnce();
     await ui.key("", { escape: true });
     expect(events.setModelMenu).toHaveBeenCalledWith("models");
+  });
+
+  it("uses the highlighted discovered effort for a manual route", async () => {
+    const { options, events } = fixture({ modelMenu: "efforts", menuIndex: 1 });
+    const ui = await mount(options);
+    await ui.key("m");
+    expect(events.selectManualRoute).toHaveBeenCalledWith("ultra");
   });
 
   it("approval mode menu wraps and confirms the selected mode", async () => {

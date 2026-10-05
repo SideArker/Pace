@@ -14,6 +14,7 @@ import { existingFolder, sameFolder } from "../core/system/folders.js";
 import { configuredSkills, defaultSkillFolder, enabledSkills, skillCommand, skillOption, skillRequest, type Skill } from "../core/system/skills.js";
 import { formatTurnFooter, modelName } from "./turn-format.js";
 import { readUsageLimits, usageWarnings } from "../integrations/usage.js";
+import { readAvailableModels, type AvailableModel } from "../integrations/models.js";
 import type { UsageLimits, UsageWarningLevels } from "../integrations/usage.js";
 import { Composer, commandToken } from "./Composer.js";
 import { saveClipboardImage } from "./pasted-images.js";
@@ -28,24 +29,26 @@ import { HeaderLogo, HeaderStatus } from "./Header.js";
 import { UsageBar } from "./UsageBar.js";
 import { ApprovalModeMenu, CommandMenu, ConversationPicker, ConvoMenu, ModelMenu, QueueMenu, ResumeMenu, sectionConversations, type ConversationChoice } from "./Menus.js";
 import { resolve } from "node:path";
+import { readFileSync } from "node:fs";
 import { createShellRunner, displayCommand, formatCommandActivity, oneOffShellCommand } from "./shell-runner.js";
 import { RunningProcesses, updateProcesses, type RunningProcess } from "./RunningProcesses.js";
 import { TaskPanel } from "./TaskPanel.js";
 import { conversationState } from "./approval-state.js";
 import { taskSummary } from "../core/tasks.js";
 import { createTurnRunner, type PendingApproval, type PendingQuestion, type TurnJob } from "./turn-runner.js";
-import { costForUsage } from "../core/routing/pricing.js";
+import { costForUsage, currentManifestSource, currentVersionManifest, modelRates, newerPaceVersion, refreshVersionManifest } from "../core/routing/pricing.js";
 import { formatLatestRoute } from "./route-format.js";
 import { contextPercent, measuredContext } from "../core/context.js";
 const commands = [
-  "/help",
   "/models",
+  "/version",
   "/auto",
   "/new",
   "/resume",
   "/convo",
   "/undo",
   "/usage",
+  "/cancelretry",
   "/btw",
   "/artifacts",
   "/trust",
@@ -61,14 +64,15 @@ const commands = [
   "/exit",
 ];
 const commandDescriptions: Record<string, string> = {
-  "/help": "Show commands and keyboard shortcuts",
   "/models": "Choose models and reasoning levels",
+  "/version": "Check Pace and price catalog versions",
   "/auto": "Let Pace choose a model",
   "/new": "Start a new conversation",
   "/resume": "Switch to a saved conversation",
   "/convo": "Browse and manage conversation turns",
   "/undo": "Undo the latest change",
   "/usage": "Refresh Codex account usage",
+  "/cancelretry": "Cancel a saved usage-limit retry and its queue",
   "/btw": "Ask a side question about this conversation",
   "/artifacts": "Show generated artifacts",
   "/trust": "Manage trusted project folders",
@@ -83,22 +87,20 @@ const commandDescriptions: Record<string, string> = {
   "/.clear": "Clear the conversation and terminal",
   "/exit": "Quit Pace",
 };
-const modelCatalog = ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra"];
 const spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 export const normalizeNewCommand = (input: string) => input.trim().replace(/^(?:\.\/|\/\.)(new|clear|approval)(?=\s|$)/, "/$1");
-// Words shown beside the animated spinner during agent thinking.
-const thinkingWords = [
-  "Pondering",
-  "Connecting dots",
-  "Untangling",
-  "Scheming",
-  "Percolating",
-  "Chasing clues",
-  "Cooking",
-  "Daydreaming",
+const workingTips = [
+  "Type / to browse commands",
+  "Use /context to check thread size",
+  "Use /route to inspect routing decisions",
+  "Use /tasks to review current steps",
+  "Send another prompt to queue it",
+  "Ctrl+O toggles command and reasoning details",
+  "Use /models to adjust available routes",
 ] as const;
 const folderArgument = (value: string) => value.trim().replace(/^(?:"(.*)"|'(.*)')$/, (_match, double: string | undefined, single: string | undefined) => double ?? single ?? value);
 const project = process.cwd();
+const installedVersion = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version as string;
 const store = new PaceStore();
 const vex = new VexRouter();
 const runner = new AppServerRunner();
@@ -130,6 +132,10 @@ export default function App({ onClear }: { onClear: () => void }) {
   }, [stdout]);
 
   const [config, setConfig] = useState<Config>();
+  const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
+  const [knownModels, setKnownModels] = useState(() => Object.keys(currentVersionManifest().pricing.rates));
+  const [modelCatalogStatus, setModelCatalogStatus] = useState<"loading" | "ready" | "unavailable">("loading");
+  const modelCatalogRequest = useRef(0);
   const latestConfig = useRef<Config | undefined>(undefined);
   if (config) latestConfig.current = config;
   const [skills, setSkills] = useState<Skill[]>([]);
@@ -198,6 +204,20 @@ export default function App({ onClear }: { onClear: () => void }) {
   const switchingSession = useRef(false);
   const staticHistory = useRef<{ sessionId?: string; firstId?: number; key: number }>({ key: 0 });
   const busy = !!session && runningIds.includes(session.id);
+  const [workingTip, setWorkingTip] = useState<string>();
+  useEffect(() => {
+    setWorkingTip(undefined);
+    if (!busy) return;
+    let previous = Math.floor(Math.random() * workingTips.length);
+    let interval: ReturnType<typeof setInterval> | undefined;
+    const chooseTip = () => {
+      const offset = 1 + Math.floor(Math.random() * (workingTips.length - 1));
+      previous = (previous + offset + workingTips.length) % workingTips.length;
+      setWorkingTip(workingTips[previous]);
+    };
+    const delay = setTimeout(() => { chooseTip(); interval = setInterval(chooseTip, 15_000); }, 8_000);
+    return () => { clearTimeout(delay); if (interval) clearInterval(interval); };
+  }, [busy, session?.id]);
   const queued = session ? promptQueue.current.list(session.id) : [];
   const [showConversationsTab, setShowConversationsTab] = useState(false);
   const rememberSession = (target: Session) => setOpenSessions(old => {
@@ -375,10 +395,42 @@ export default function App({ onClear }: { onClear: () => void }) {
   };
   const menuModels = [
     ...new Set([
-      ...modelCatalog,
       ...(config?.models.map((model) => model.model) ?? []),
+      ...availableModels.map((model) => model.model),
+      ...knownModels,
     ]),
   ];
+  const menuEfforts = availableModels.find((model) => model.model === menuModel)?.efforts ?? currentVersionManifest().models?.[menuModel]?.efforts ?? EFFORTS;
+  const refreshModelCatalog = (forceManifest = false) => {
+    const request = ++modelCatalogRequest.current;
+    setModelCatalogStatus("loading");
+    void refreshVersionManifest(fetch, undefined, forceManifest).then(manifest => {
+      if (request === modelCatalogRequest.current) setKnownModels(Object.keys(manifest.pricing.rates));
+    });
+    void readAvailableModels()
+      .then((models) => {
+        if (request !== modelCatalogRequest.current) return;
+        setAvailableModels(models);
+        setModelCatalogStatus("ready");
+      })
+      .catch(() => {
+        if (request === modelCatalogRequest.current) setModelCatalogStatus("unavailable");
+      });
+  };
+  useEffect(() => {
+    refreshModelCatalog();
+    return () => { modelCatalogRequest.current++; };
+  }, []);
+  useEffect(() => {
+    let active = true;
+    void refreshVersionManifest().then(manifest => {
+      if (!active) return;
+      setKnownModels(Object.keys(manifest.pricing.rates));
+      if (newerPaceVersion(installedVersion, manifest.pace.latest))
+        add("info", `Pace ${manifest.pace.latest} is available: ${manifest.pace.releaseUrl}`);
+    });
+    return () => { active = false; };
+  }, []);
   useEffect(() => {
     if (!runningIds.length && !sideBusy && shellJobs === 0 && !processes.length) return;
     const timer = setInterval(() => setTick((value) => value + 1), 80);
@@ -462,8 +514,10 @@ export default function App({ onClear }: { onClear: () => void }) {
       } else {
         setOpenSessions([fresh]);
       }
+      const waiting = saved.filter(item => item.deferredTurn);
+      if (waiting.length) add("info", `${waiting.length} saved conversation${waiting.length === 1 ? "" : "s"} waiting for Codex usage reset. Pace will resume pending requests when due.`);
       for (const notice of notices) add("error", notice);
-      setStatus("Ready · /help for commands");
+      setStatus("Ready");
     };
     void load().catch((error) => {
       add(
@@ -490,6 +544,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const toggleModel = (name: string) => {
     if (!config) return;
     const found = config.models.find((model) => model.model === name);
+    const discovered = availableModels.find((model) => model.model === name) ?? currentVersionManifest().models?.[name];
     const enabled = found?.enabled === false || !found;
     const models = found
       ? config.models.map((model) =>
@@ -499,8 +554,8 @@ export default function App({ onClear }: { onClear: () => void }) {
           ...config.models,
           {
             model: name,
-            efforts: ["medium" as const],
-            defaultEffort: "medium" as const,
+            efforts: [discovered?.defaultEffort ?? "medium"],
+            defaultEffort: discovered?.defaultEffort ?? "medium",
             enabled: true,
           },
         ];
@@ -546,6 +601,32 @@ export default function App({ onClear }: { onClear: () => void }) {
       `${menuModel}: ${effort} ${present ? "disabled" : "enabled"}.`,
     );
   };
+  const selectManualRoute = async (effort: (typeof EFFORTS)[number]) => {
+    if (!config || !session || !menuModel) return;
+    if (jobs.current.has(session.id)) {
+      add("error", "Wait for the current turn to finish before changing its manual route.");
+      return;
+    }
+    try {
+      const existing = config.models.find((model) => model.model === menuModel);
+      const models = existing
+        ? config.models.map((model) => model.model === menuModel
+          ? { ...model, enabled: true, efforts: model.efforts.includes(effort) ? model.efforts : [...model.efforts, effort] }
+          : model)
+        : [...config.models, { model: menuModel, efforts: [effort], defaultEffort: effort, enabled: true }];
+      const updatedConfig = withModels(config, models);
+      await store.saveConfig(updatedConfig);
+      const updatedSession = { ...session, routingMode: "manual" as const, route: { model: menuModel, effort } };
+      await store.save(updatedSession);
+      setConfig(updatedConfig);
+      setSession(updatedSession);
+      rememberSession(updatedSession);
+      setModelMenu(undefined);
+      add("info", `Manual route: ${menuModel} ${effort}.${modelRates(menuModel) ? " Use /auto to return to Vex routing." : " This model has no verified auto-routing price; disable it before using /auto."}`);
+    } catch (error) {
+      add("error", `Could not select model: ${String(error)}`);
+    }
+  };
   const renderSessionTurns = (targetSession: Session) => {
     const newLines: Line[] = [];
     let id = nextId.current;
@@ -555,9 +636,6 @@ export default function App({ onClear }: { onClear: () => void }) {
         role: "you",
         text: turn.prompt,
         spaceBefore: newLines.length > 0,
-      });
-      for (const message of turn.systemMessages ?? []) newLines.push({
-        id: id++, role: "system", text: message, spaceBefore: false,
       });
       for (const action of turn.activities ?? []) newLines.push({
         id: id++, role: "activity", text: action.text, spaceBefore: false,
@@ -596,6 +674,10 @@ export default function App({ onClear }: { onClear: () => void }) {
         spaceBefore: false,
       });
     }
+    if (targetSession.deferredTurn) newLines.push({
+      id: id++, role: "meta", spaceBefore: false,
+      text: `Usage limit reached. Pace will resume this request after ${new Date(targetSession.deferredTurn.retryAt).toLocaleString()} while open, or on next launch.`,
+    });
     nextId.current = id;
     sessionLines.current.set(targetSession.id, newLines);
     if (activeSessionId.current === targetSession.id) setLines(newLines);
@@ -626,7 +708,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       setApproval(pendingApprovals.current.get(target.id));
       setQuestion(pendingQuestions.current.get(target.id));
       setHistory(target.turns.map(t => t.prompt));
-      setStatus(sessionStatuses.current.get(target.id) ?? "Ready");
+      setStatus(sessionStatuses.current.get(target.id) ?? (target.deferredTurn ? "Waiting for Codex usage reset" : "Ready"));
     } catch (error) {
       activeSessionId.current = previousId;
       if (previousId) setLines(sessionLines.current.get(previousId) ?? []);
@@ -680,7 +762,7 @@ export default function App({ onClear }: { onClear: () => void }) {
     openSessions: sortedSessions, activateSession, approval, question, focusPicker, pendingApprovals,
     activeSessionId, jobs, sideAbort, outputsExpanded, setOutputsExpanded,
     redrawTranscript: () => { onClear(); setTranscriptRevision(value => value + 1); },
-    modelMenu, setModelMenu, menuModels,
+    modelMenu, setModelMenu, menuModels, menuEfforts,
     approvalMenu, setApprovalMenu, selectApprovalMode: async (mode: ApprovalMode) => {
       try {
         const updated = { ...latestConfig.current!, approvalMode: mode };
@@ -691,7 +773,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         add("info", `Approval mode: ${mode}. Active turns keep their starting mode.`);
       } catch (error) { add("error", `Could not save approval mode: ${String(error)}`); }
     },
-    menuIndex, setMenuIndex, setMenuModel, toggleModel, toggleEffort,
+    menuIndex, setMenuIndex, setMenuModel, toggleModel, toggleEffort, selectManualRoute,
     resumeMenu, setResumeMenu, resumeChoices, missingProjectPaths, add,
     convoMenu, setConvoMenu, session, store, setSession, renderSessionTurns,
     setDraft, setHistory, queueMenu, setQueueMenu, promptQueue, setQueueVersion,
@@ -896,14 +978,6 @@ export default function App({ onClear }: { onClear: () => void }) {
         exit();
         return;
       }
-      if (command === "/help") {
-        add(
-          "info",
-          "/models · /auto · /approval [full-access|request-approval|limited] · /tasks · /new · /resume · /convo · /undo · /compact · /context · /usage · /btw <q> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /stats · /route · /clear · /exit · Esc twice/Ctrl+C cancel · Ctrl+Z undo · ! Bash · Ctrl+O toggle command, diff, and reasoning details · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
-        );
-        add("info", "With multiple open conversations, press Down from the input to focus the picker. Use arrows and Enter to switch; Esc returns to input. Ctrl+C cancels the selected turn. /exit quits.");
-        return;
-      }
       if (command === "/auto") {
         // Auto selection uses the enabled model list in the orchestrator.
         const updated = { ...session, routingMode: "auto" as const };
@@ -948,8 +1022,10 @@ export default function App({ onClear }: { onClear: () => void }) {
         if (parts.length) { add("error", "Type /context without arguments."); return; }
         const reading = measuredContext(session);
         const percent = contextPercent(reading);
+        const freshOnNextTurn = session.checkpoint?.threadId === session.threadId &&
+          session.turns.some(turn => turn.at === session.checkpoint?.sourceTurnAt);
         add("info", session.threadId
-          ? `Current Codex thread: ${session.threadId}. The next turn resumes this thread.`
+          ? `Current Codex thread: ${session.threadId}. The next turn ${freshOnNextTurn ? "starts a fresh thread from the checkpoint" : "resumes this thread"}.`
           : "No Codex thread is attached. The next turn starts a thread with retained conversation history.");
         add("info", reading && percent !== undefined
           ? `Last model request: ${reading.tokens.toLocaleString()} / ${reading.windowTokens.toLocaleString()} context tokens (${percent}%)${reading.model ? ` on ${reading.model}` : ""}.`
@@ -1011,6 +1087,13 @@ export default function App({ onClear }: { onClear: () => void }) {
         }
         setModelMenu("models");
         setMenuIndex(0);
+        refreshModelCatalog(true);
+        return;
+      }
+      if (command === "/version") {
+        const manifest = await refreshVersionManifest(fetch, undefined, true);
+        setKnownModels(Object.keys(manifest.pricing.rates));
+        add("info", `Pace ${installedVersion}; ${currentManifestSource()} catalog reports ${manifest.pace.latest}${newerPaceVersion(installedVersion, manifest.pace.latest) ? ` · ${manifest.pace.releaseUrl}` : ""}. Prices checked ${manifest.pricing.checkedAt}.`);
         return;
       }
       if (command === "/artifacts") {
@@ -1168,6 +1251,25 @@ export default function App({ onClear }: { onClear: () => void }) {
         add("info", "Undid last turn. Prompt restored to composer.");
         return;
       }
+      if (command === "/cancelretry") {
+        if (parts.length) { add("error", "Type /cancelretry without arguments."); return; }
+        if (!session.deferredTurn) { add("info", "No usage-limit retry is scheduled."); return; }
+        const pending = session.deferredTurn;
+        session.deferredTurn = undefined;
+        try {
+          await store.save(session);
+          const removed = promptQueue.current.clear(session.id);
+          setQueueVersion(value => value + 1);
+          setSession({ ...session });
+          rememberSession(session);
+          setStatusFor(session.id, "Ready");
+          add("info", `Automatic retry cancelled${removed ? `; ${removed} queued prompt${removed === 1 ? "" : "s"} cleared` : ""}.`);
+        } catch (error) {
+          session.deferredTurn = pending;
+          add("error", `Could not cancel automatic retry: ${String(error)}`);
+        }
+        return;
+      }
       if (command === "/convo" || command === "/turns") {
         if (!session.turns.length) {
           add("info", "No messages in conversation yet.");
@@ -1178,7 +1280,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         return;
       }
       if (!skillCommand(text, enabledSkills(skills, config)) || commands.includes(command)) {
-        add("error", `Unknown command ${command}. Use /help.`);
+        add("error", `Unknown command ${command}. Type / to browse commands.`);
         return;
       }
     }
@@ -1186,6 +1288,16 @@ export default function App({ onClear }: { onClear: () => void }) {
     const skillArgument = invokedSkill ? skillRequest(text, invokedSkill) : undefined;
     const localSkillCommand = invokedSkill && (!skillArgument || skillArgument === "off" || !!skillOption(invokedSkill, skillArgument));
     const stopCaveman = /^(?:stop caveman|normal mode)$/i.test(text) && session.activeSkills?.includes("caveman");
+    if (session.deferredTurn && !localSkillCommand && !stopCaveman) {
+      if (text === session.deferredTurn.prompt) {
+        add("info", "That request is already saved for automatic retry.");
+        return;
+      }
+      const position = promptQueue.current.add(session.id, text);
+      setQueueVersion(value => value + 1);
+      add("info", `Queued prompt ${position} until the usage-limit retry finishes.`);
+      return;
+    }
     if (vexState !== "connected" && session.routingMode === "auto" && !localSkillCommand && !stopCaveman) {
       add(
         "error",
@@ -1210,6 +1322,23 @@ export default function App({ onClear }: { onClear: () => void }) {
     setStatusFor, showApproval, showQuestion, dismissQuestion, setSession, setVexState, refreshUsage, setQueueVersion,
     setProcesses, setLiveUsage, getConfig: () => latestConfig.current ?? config!,
   });
+  useEffect(() => {
+    if (!config) return;
+    const check = () => {
+      for (const target of openSessions) {
+        const pending = target.deferredTurn;
+        if (!pending || jobs.current.has(target.id)) continue;
+        if (target.routingMode === "auto" && vexState !== "connected") continue;
+        if (Date.parse(pending.retryAt) > Date.now()) continue;
+        if (!sessionLines.current.has(target.id)) renderSessionTurns(target);
+        addFor(target.id, "meta", "Codex usage retry time reached. Resuming saved request…");
+        void runTurn(pending.prompt, target, latestConfig.current ?? config);
+      }
+    };
+    check();
+    const timer = setInterval(check, 30_000);
+    return () => clearInterval(timer);
+  }, [config, openSessions, vexState]);
   const { history: settledLines, live: liveLines } = useMemo(() => splitTranscript(lines), [lines]);
   const staticState = staticHistory.current;
   if (session?.id && staticState.sessionId && session.id !== staticState.sessionId) {
@@ -1240,12 +1369,12 @@ export default function App({ onClear }: { onClear: () => void }) {
       </Static>
       {showHeader ? <HeaderStatus project={project} vexState={vexState} width={contentWidth} /> : null}
       <Transcript lines={liveLines.slice(-Math.max(1, Math.floor(((terminalRows - 12) / 4))))} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} livePreview width={contentWidth} />
-      {modelMenu ? <ModelMenu mode={modelMenu} models={menuModels} selectedModel={menuModel} selectedIndex={menuIndex} config={config} /> : null}
+      {modelMenu ? <ModelMenu mode={modelMenu} models={menuModels} availableModels={availableModels.map(model => model.model)} efforts={menuEfforts} catalogStatus={modelCatalogStatus} selectedModel={menuModel} selectedIndex={menuIndex} config={config} /> : null}
       {approvalMenu ? <ApprovalModeMenu selectedIndex={menuIndex} currentMode={config?.approvalMode ?? "request-approval"} /> : null}
       {convoMenu && session ? <ConvoMenu turns={session.turns} selectedIndex={menuIndex} /> : null}
       {queueMenu && session ? <QueueMenu prompts={queued} selectedIndex={menuIndex} /> : null}
       {runningIds.length || shellJobs ? (
-      <Box gap={1}><Text color="#59E6A7" bold>{spinner[tick % spinner.length]}</Text><Text color="#38BDF8">{busy ? status === "Thinking" ? thinkingWords[Math.floor(tick / 30) % thinkingWords.length] : status : runningIds.length ? `${runningIds.length} background turn${runningIds.length === 1 ? "" : "s"} running` : "Ready"}</Text>{busy && session && liveUsage[session.id] ? <Text color="#94A3B8">· {liveUsage[session.id]}</Text> : null}{shellJobs ? <Text color="#FBBF24">· ⚡ {shellJobs} Bash command{shellJobs === 1 ? "" : "s"} running</Text> : null}</Box>
+      <Box gap={1}><Text color="#59E6A7" bold>{spinner[tick % spinner.length]}</Text><Text color="#38BDF8">{busy ? status : runningIds.length ? `${runningIds.length} background turn${runningIds.length === 1 ? "" : "s"} running` : "Ready"}</Text>{busy && workingTip ? <Text color="#64748B" wrap="truncate">· Tip: {workingTip}</Text> : null}{busy && session && liveUsage[session.id] ? <Text color="#94A3B8">· {liveUsage[session.id]}</Text> : null}{shellJobs ? <Text color="#FBBF24">· ⚡ {shellJobs} Bash command{shellJobs === 1 ? "" : "s"} running</Text> : null}</Box>
       ) : null}
       {backgroundApprovals.length ? <Text color="#FBBF24" bold>⚠ {backgroundApprovals.length} background approval{backgroundApprovals.length === 1 ? "" : "s"} waiting · ↓ select conversation · Enter open</Text> : null}
       {backgroundQuestions.length ? <Text color="#A5B4FC" bold>◆ {backgroundQuestions.length} background question{backgroundQuestions.length === 1 ? "" : "s"} waiting · {question ? "Shift+Tab" : "↓"} select conversation · Enter open</Text> : null}
@@ -1262,6 +1391,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       ) : null}
       {question ? <QuestionPanel key={`${session?.id}-${question.id}`} questions={question.questions} onSubmit={question.respond} isActive={!pickerFocused && !approval} /> : null}
       {cancelArmed ? <Text color="#FBBF24">Press Esc again to cancel the turn</Text> : null}
+      {session?.deferredTurn && !busy ? <Text color="#FBBF24">Usage limit: saved request resumes after {new Date(session.deferredTurn.retryAt).toLocaleString()} while Pace is open, or on next launch.</Text> : null}
       <ComposerFrame width={contentWidth} session={session} shellMode={shellMode} approvalMode={config?.approvalMode}>
         <Composer key={session?.id} value={draft} onChange={value => { setDraft(value); setSelection(0); }} onSubmit={value => { void submit(value); }} history={history}
           onImagePaste={async () => {

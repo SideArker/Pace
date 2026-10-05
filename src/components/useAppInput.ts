@@ -39,11 +39,13 @@ export function useAppInput(options: {
   selectApprovalMode: (mode: ApprovalMode) => Promise<void>;
   setModelMenu: Dispatch<SetStateAction<"models" | "efforts" | undefined>>;
   menuModels: string[];
+  menuEfforts: readonly (typeof EFFORTS)[number][];
   menuIndex: number;
   setMenuIndex: Dispatch<SetStateAction<number>>;
   setMenuModel: Dispatch<SetStateAction<string>>;
   toggleModel: (name: string) => void;
   toggleEffort: (effort: (typeof EFFORTS)[number]) => void;
+  selectManualRoute: (effort: (typeof EFFORTS)[number]) => Promise<void>;
   resumeMenu: boolean;
   setResumeMenu: Dispatch<SetStateAction<boolean>>;
   resumeChoices: Session[];
@@ -66,8 +68,8 @@ export function useAppInput(options: {
     interrupt, pickerFocused, setPickerFocused, pickerIndex, setPickerIndex,
     openSessions, activateSession, approval, question, focusPicker, pendingApprovals,
     activeSessionId, jobs, sideAbort, outputsExpanded, setOutputsExpanded, redrawTranscript,
-    modelMenu, setModelMenu, approvalMenu, setApprovalMenu, selectApprovalMode, menuModels, menuIndex,
-    setMenuIndex, setMenuModel, toggleModel, toggleEffort, resumeMenu,
+    modelMenu, setModelMenu, approvalMenu, setApprovalMenu, selectApprovalMode, menuModels, menuEfforts, menuIndex,
+    setMenuIndex, setMenuModel, toggleModel, toggleEffort, selectManualRoute, resumeMenu,
     setResumeMenu, resumeChoices, missingProjectPaths, add, convoMenu,
     setConvoMenu, session, store, setSession, renderSessionTurns, setDraft,
     setHistory, queueMenu, setQueueMenu, promptQueue, setQueueVersion,
@@ -137,7 +139,7 @@ export function useAppInput(options: {
       return;
     }
     if (modelMenu) {
-      const size = modelMenu === "models" ? menuModels.length : EFFORTS.length;
+      const size = modelMenu === "models" ? menuModels.length : menuEfforts.length;
       if (key.escape) {
         setModelMenu(modelMenu === "efforts" ? "models" : undefined);
         setMenuIndex(0);
@@ -149,7 +151,9 @@ export function useAppInput(options: {
         setMenuIndex(0);
       } else if (input === " " || (key.return && modelMenu === "efforts")) {
         if (modelMenu === "models") toggleModel(menuModels[menuIndex]!);
-        else toggleEffort(EFFORTS[menuIndex]!);
+        else toggleEffort(menuEfforts[menuIndex]!);
+      } else if (input.toLowerCase() === "m" && modelMenu === "efforts") {
+        void selectManualRoute(menuEfforts[menuIndex]!);
       }
       return;
     }
