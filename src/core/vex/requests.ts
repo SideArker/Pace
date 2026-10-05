@@ -19,7 +19,11 @@ export type RoutingState = {
   activeTask?: Session["activeTask"];
 };
 function excerpt(value: string, limit: number): string {
-  return value.length <= limit ? value : `${value.slice(0, limit - 800)}\n[Earlier text omitted for routing; full text goes to Codex.]\n${value.slice(-700)}`;
+  if (value.length <= limit) return value;
+  const marker = "\n[Earlier text omitted for routing; full text goes to Codex.]\n";
+  const available = limit - marker.length;
+  const head = Math.ceil(available * 0.6);
+  return `${value.slice(0, head)}${marker}${value.slice(-(available - head))}`;
 }
 function recentConversation(turns: TurnSummary[]) {
   return turns.slice(-10).map(turn => ({
@@ -28,10 +32,22 @@ function recentConversation(turns: TurnSummary[]) {
     ...(turn.failed ? { failed: true } : {}),
   }));
 }
+function compactState(state: RoutingState): RoutingState {
+  return {
+    ...state,
+    openTasks: state.openTasks?.slice(-8).map(item => excerpt(item, 300)),
+    activeTask: state.activeTask ? {
+      originalRequest: excerpt(state.activeTask.originalRequest, 3000),
+      instructions: state.activeTask.instructions.slice(-4).map(item => excerpt(item, 800)),
+      latestOutcome: state.activeTask.latestOutcome ? excerpt(state.activeTask.latestOutcome, 800) : undefined,
+      failed: state.activeTask.failed,
+    } : undefined,
+  };
+}
 export function taskRelationRequest(prompt: string, turns: TurnSummary[], state: RoutingState, prompts = DEFAULT_ROUTING_PROMPTS): VexRequest {
   return {
     question: prompts.taskRelation.question,
-    context: { latestRequest: excerpt(prompt, 12000), recentConversation: recentConversation(turns), conversationState: state },
+    context: { latestRequest: excerpt(prompt, 12000), recentConversation: recentConversation(turns), conversationState: compactState(state) },
     options: Object.entries(prompts.taskRelation.choices).map(([id, description]) => ({ id, description })),
     constraints: prompts.taskRelation.constraints,
     decisionType: "routing",
@@ -52,7 +68,7 @@ function taskContext(
   return {
     originalRequest: excerpt(prompt, 12000),
     recentConversation: recentConversation(turns),
-    ...(state ? { conversationState: state } : {}),
+    ...(state ? { conversationState: compactState(state) } : {}),
     availableModels: models.map((model) => ({
       id: model.model,
       capability:

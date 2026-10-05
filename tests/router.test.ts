@@ -2,7 +2,7 @@ import { expect, it } from 'vitest';
 import { DEFAULT_CONFIG, parseConfig } from '../src/shared/config.js';
 import { chosenRoute, routeChoices, validateDecision } from '../src/core/routing/router.js';
 import { costForUsage, PRICE_SNAPSHOT } from '../src/core/routing/pricing.js';
-import { shapeRequest, stageRequest } from '../src/core/vex/client.js';
+import { shapeRequest, stageRequest, taskRelationRequest } from '../src/core/vex/client.js';
 import { parseRoutingSuite, summarizeRouting } from '../src/entrypoints/routing-benchmark.js';
 import { handoffPrompt } from '../src/core/orchestrator-helpers.js';
 import { DEFAULT_ROUTING_PROMPTS } from '../src/core/routing/routing-prompts.js';
@@ -42,9 +42,21 @@ it('gives Vex full route choice and task context for paraphrased follow-ups', ()
 
 it('bounds Vex conversation excerpts while keeping the full request for Codex', () => {
   const long = 'x'.repeat(20_000);
-  const request = shapeRequest(long, [{ prompt: long, result: long, at: 'now' }], DEFAULT_CONFIG.models);
+  const state = { openTasks: Array.from({ length: 15 }, () => long), activeTask: {
+    originalRequest: long, instructions: Array.from({ length: 12 }, () => long), latestOutcome: long,
+  } };
+  const request = shapeRequest(long, [{ prompt: long, result: long, at: 'now' }], DEFAULT_CONFIG.models, undefined, state);
+  const relation = taskRelationRequest(long, [], state);
   expect((request.context.originalRequest as string).length).toBeLessThan(12_100);
   expect((request.context.recentConversation as { user: string; assistant: string }[])[0]?.user.length).toBeLessThan(1_300);
+  for (const context of [request.context, relation.context]) {
+    const compact = context.conversationState as typeof state;
+    expect(compact.activeTask.originalRequest.length).toBeLessThanOrEqual(3000);
+    expect(compact.activeTask.instructions).toHaveLength(4);
+    expect(compact.activeTask.instructions[0]?.length).toBeLessThanOrEqual(800);
+    expect(compact.openTasks).toHaveLength(8);
+  }
+  expect(state.activeTask.originalRequest).toHaveLength(20_000);
 });
 
 it('offers Sol 6.1 with its current verified price and capability', () => {
