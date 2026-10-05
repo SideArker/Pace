@@ -10,7 +10,7 @@ Benchmarks answer three different questions. Keep their results separate.
 
 ## Source layout
 
-- `suites/routing-suite.json`: 63-case development set for shape and stage choices.
+- `suites/routing-suite.json`: 64-case development set for shape and stage choices.
 - `suites/routing-holdout.json`: 24-case holdout; do not tune against it.
 - `suites/pilot.json`: short executed comparison.
 - `suites/validation.json`: 12 executed tasks on a fixed Pace commit.
@@ -29,9 +29,9 @@ npm run benchmark:routing -- --suite benchmark/suites/routing-suite.json --repea
 npm run benchmark:routing -- --suite benchmark/suites/routing-holdout.json --repeat 3
 ```
 
-Use `--case <id>` for one case, `--shape-only` to omit stage choices, or `--out <new-directory>` to set the result path. The runner records `manifest.json`, `runs.jsonl`, `summary.json`, and Vex statistics. It alternates case order on repetitions. Stage routing after a split uses a **simulated** report; this benchmark cannot establish scout quality or Codex savings.
+Use `--case <id>` for one case, `--shape-only` to omit stage choices, or `--out <new-directory>` to set the result path. The runner records `manifest.json`, `runs.jsonl`, `summary.json`, and Vex statistics. It alternates case order on repetitions. Stage routing after a split uses **simulated** reports; this benchmark cannot establish scout quality or Codex savings.
 
-`acceptable` labels encode intent constraints and plausible workflows. `preferred` is a cost hypothesis, not a measured best route. The 60-case development suite was used to tune guidance. Run the holdout after changing guidance, then use executed comparisons before claiming quality or savings. Do not use holdout results for further tuning and still describe them as independent validation.
+`acceptable` labels encode intent constraints and plausible workflows. `preferred` is a cost hypothesis, not a measured best route. Run the holdout after changing guidance, then use executed comparisons before claiming quality or savings. Do not use holdout results for further tuning and still describe them as independent validation.
 
 ## 2. Executed workflows
 
