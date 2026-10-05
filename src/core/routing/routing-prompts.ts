@@ -9,7 +9,8 @@ const defaultPath = fileURLToPath(
   new URL("../../../routing-prompts.default.json", import.meta.url),
 );
 export const routingPromptFile = "routing-prompts.json";
-const choiceIds = ["single", "scout", "plan_execute", "clarify"] as const;
+const choiceIds = ["single", "scout", "plan_execute", "scout_plan_execute", "clarify"] as const;
+const legacyChoiceIds = ["single", "scout", "plan_execute", "clarify"] as const;
 
 export type RoutingPrompts = {
   version: 1;
@@ -19,11 +20,18 @@ export type RoutingPrompts = {
     choices: Record<(typeof choiceIds)[number], string>;
   };
   stage: { question: string; constraints: string };
+  taskRelation: {
+    question: string;
+    constraints: string;
+    choices: Record<"continue" | "replace" | "aside", string>;
+  };
+  routingRules: { workflowResolution: string; stageResolution: string };
   objectives: {
     scout: string;
     plan: string;
     single: string;
     afterHandoff: string;
+    afterPlanHandoff: string;
   };
   modelCapabilities: Record<string, string>;
   effortCapabilities: Record<string, string>;
@@ -32,6 +40,7 @@ export type RoutingPrompts = {
   handoff: {
     scoutObjective: string;
     planObjective: string;
+    planExecutionInstruction: string;
     instructions: string;
     recentConversationLabel: string;
     originalRequestLabel: string;
@@ -57,20 +66,30 @@ export function parseRoutingPrompts(value: unknown): RoutingPrompts {
   if (!isRecord(value) || value.version !== 1)
     throw new Error("routing-prompts.json: version must be 1");
   const { workflow, stage, objectives, handoff } = value;
+  const shipped = JSON.parse(defaultText) as RoutingPrompts;
+  const taskRelation = value.taskRelation ?? shipped.taskRelation;
+  const routingRules = value.routingRules ?? shipped.routingRules;
   if (
     !isRecord(workflow) ||
     !isRecord(stage) ||
     !isRecord(objectives) ||
-    !isRecord(handoff)
+    !isRecord(handoff) ||
+    !isRecord(taskRelation) ||
+    !isRecord(routingRules)
   )
     throw new Error(
-      "routing-prompts.json: workflow, stage, objectives, and handoff must be objects",
+      "routing-prompts.json: workflow, stage, objectives, handoff, taskRelation, and routingRules must be objects",
     );
   const choices = stringMap(workflow.choices, "workflow.choices");
-  for (const id of choiceIds) nonempty(choices[id], `workflow.choices.${id}`);
-  if (Object.keys(choices).length !== choiceIds.length)
+  const relationChoices = stringMap(taskRelation.choices, "taskRelation.choices");
+  for (const id of ["continue", "replace", "aside"] as const) nonempty(relationChoices[id], `taskRelation.choices.${id}`);
+  if (Object.keys(relationChoices).length !== 3)
+    throw new Error("routing-prompts.json: taskRelation.choices contains an unknown choice");
+  for (const id of legacyChoiceIds) nonempty(choices[id], `workflow.choices.${id}`);
+  if (choices.scout_plan_execute !== undefined) nonempty(choices.scout_plan_execute, "workflow.choices.scout_plan_execute");
+  if (Object.keys(choices).some(id => !choiceIds.includes(id as (typeof choiceIds)[number])))
     throw new Error(
-      "routing-prompts.json: workflow.choices must contain exactly single, scout, plan_execute, clarify",
+      "routing-prompts.json: workflow.choices contains an unknown choice",
     );
   return {
     version: 1,
@@ -78,12 +97,21 @@ export function parseRoutingPrompts(value: unknown): RoutingPrompts {
       question: nonempty(workflow.question, "workflow.question"),
       constraints: nonempty(workflow.constraints, "workflow.constraints"),
       choices: Object.fromEntries(
-        choiceIds.map((id) => [id, choices[id]]),
+        choiceIds.map((id) => [id, choices[id] ?? shipped.workflow.choices[id]]),
       ) as RoutingPrompts["workflow"]["choices"],
     },
     stage: {
       question: nonempty(stage.question, "stage.question"),
       constraints: nonempty(stage.constraints, "stage.constraints"),
+    },
+    taskRelation: {
+      question: nonempty(taskRelation.question, "taskRelation.question"),
+      constraints: nonempty(taskRelation.constraints, "taskRelation.constraints"),
+      choices: relationChoices as RoutingPrompts["taskRelation"]["choices"],
+    },
+    routingRules: {
+      workflowResolution: nonempty(routingRules.workflowResolution, "routingRules.workflowResolution"),
+      stageResolution: nonempty(routingRules.stageResolution, "routingRules.stageResolution"),
     },
     objectives: {
       scout: nonempty(objectives.scout, "objectives.scout"),
@@ -92,6 +120,10 @@ export function parseRoutingPrompts(value: unknown): RoutingPrompts {
       afterHandoff: nonempty(
         objectives.afterHandoff,
         "objectives.afterHandoff",
+      ),
+      afterPlanHandoff: nonempty(
+        objectives.afterPlanHandoff ?? shipped.objectives.afterPlanHandoff,
+        "objectives.afterPlanHandoff",
       ),
     },
     modelCapabilities: stringMap(value.modelCapabilities, "modelCapabilities"),
@@ -113,6 +145,10 @@ export function parseRoutingPrompts(value: unknown): RoutingPrompts {
         "handoff.scoutObjective",
       ),
       planObjective: nonempty(handoff.planObjective, "handoff.planObjective"),
+      planExecutionInstruction: nonempty(
+        handoff.planExecutionInstruction ?? shipped.handoff.planExecutionInstruction,
+        "handoff.planExecutionInstruction",
+      ),
       instructions: nonempty(handoff.instructions, "handoff.instructions"),
       recentConversationLabel: nonempty(
         handoff.recentConversationLabel,
@@ -132,15 +168,18 @@ export function parseRoutingPrompts(value: unknown): RoutingPrompts {
 
 const defaultText = readFileSync(defaultPath, "utf8");
 // The first shipped editable default. Refresh only this exact file, never user edits.
-const legacyDefaultSha256 = "d4ab14ad9720473b296e2456111b859c226eae99f1a3dd580d57c319dc8441d9";
+const legacyDefaultSha256 = new Set([
+  "d4ab14ad9720473b296e2456111b859c226eae99f1a3dd580d57c319dc8441d9",
+  "32e9fecdb9404f8b4a756c0a62b46b7a3655297a331981385ba335e9b58b383a",
+]);
 export const DEFAULT_ROUTING_PROMPTS = parseRoutingPrompts(
   JSON.parse(defaultText),
 );
 
 export function completionObjective(shape: string, prompts: RoutingPrompts): string {
   if (shape === "single") return prompts.objectives.single;
-  if (shape === "plan_execute")
-    return `${prompts.objectives.afterHandoff}. The previous stage produced a read-only plan; this stage must implement the requested change and verify it.`;
+  if (shape === "plan_execute" || shape === "scout_plan_execute")
+    return prompts.objectives.afterPlanHandoff;
   return prompts.objectives.afterHandoff;
 }
 
@@ -156,7 +195,7 @@ export function loadRoutingPrompts(
   }
   try {
     let content = readFileSync(path, "utf8");
-    if (createHash("sha256").update(content.replace(/\r\n/g, "\n")).digest("hex") === legacyDefaultSha256) {
+    if (legacyDefaultSha256.has(createHash("sha256").update(content.replace(/\r\n/g, "\n")).digest("hex"))) {
       writeFileSync(path, defaultText, "utf8");
       content = defaultText;
     }

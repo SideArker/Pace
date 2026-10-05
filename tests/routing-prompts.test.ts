@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_ROUTING_PROMPTS, loadRoutingPrompts, routingPromptFile } from "../src/core/routing/routing-prompts.js";
-import { shapeRequest, stageRequest, type VexRequest } from "../src/core/vex/client.js";
+import { shapeRequest, stageRequest, taskRelationRequest, type VexRequest } from "../src/core/vex/client.js";
 import { Orchestrator } from "../src/core/orchestrator.js";
 import { PaceStore, newSession } from "../src/core/sessions.js";
 import { decision } from "./routing-fixture.js";
@@ -21,6 +21,8 @@ it("creates an editable routing file and applies changes to Vex requests", async
   edited.workflow.question = "Choose my workflow";
   edited.workflow.choices.single = "Use one agent";
   edited.stage.constraints = "Choose the least costly route";
+  edited.taskRelation.question = "Continue this task?";
+  edited.routingRules.workflowResolution = "Custom conversation rule";
   edited.modelCapabilities["gpt-6-sol"] = "Custom Sol description";
   await writeFile(path, JSON.stringify(edited));
   const prompts = loadRoutingPrompts(dir);
@@ -31,6 +33,8 @@ it("creates an editable routing file and applies changes to Vex requests", async
   expect(shape.options[0]?.description).toBe("Use one agent");
   expect(stage.constraints).toContain("Choose the least costly route");
   expect(stage.constraints).toContain("full remaining deliverable");
+  expect(shape.constraints).toContain("Custom conversation rule");
+  expect(taskRelationRequest("work", [], {}, prompts).question).toBe("Continue this task?");
   expect((stage.context.availableModels as { capability: string }[])[0]?.capability).toBe("Custom Sol description");
   expect(JSON.parse(await readFile(path, "utf8"))).toEqual(edited);
 });
@@ -46,6 +50,16 @@ it("refreshes the untouched older default while preserving edited prompt files",
   edited.workflow.question = "My custom routing question";
   await writeFile(path, JSON.stringify(edited));
   expect(loadRoutingPrompts(dir).workflow.question).toBe("My custom routing question");
+  const legacyEdited = JSON.parse(JSON.stringify(edited));
+  delete legacyEdited.workflow.choices.scout_plan_execute;
+  delete legacyEdited.taskRelation;
+  delete legacyEdited.routingRules;
+  delete legacyEdited.objectives.afterPlanHandoff;
+  delete legacyEdited.handoff.planExecutionInstruction;
+  await writeFile(path, JSON.stringify(legacyEdited));
+  expect(loadRoutingPrompts(dir).workflow.choices.scout_plan_execute).toBe(DEFAULT_ROUTING_PROMPTS.workflow.choices.scout_plan_execute);
+  expect(loadRoutingPrompts(dir).taskRelation.question).toBe(DEFAULT_ROUTING_PROMPTS.taskRelation.question);
+  expect(loadRoutingPrompts(dir).objectives.afterPlanHandoff).toBe(DEFAULT_ROUTING_PROMPTS.objectives.afterPlanHandoff);
 });
 
 it("rejects malformed routing text with the field name", async () => {

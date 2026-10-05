@@ -2,11 +2,12 @@
   "version": 1,
   "workflow": {
     "question": "Using the latest user request, recent conversation, and task state, which Codex workflow can complete the actual requested deliverable at the least total Codex cost while meeting Sol High quality?",
-    "constraints": "First resolve the latest user's intent in conversation: identify the referenced task, what was already done, what remains, and whether the latest turn asks for an answer, a plan, or action. A short follow-up can authorize substantial implementation; a previous plan-only limit does not forbid implementation requested in a later turn. A request to continue means carry forward unfinished work if the conversation identifies it. Do not infer workload from message length. Ask for clarification only if no actionable referent or outcome can be inferred. A concrete command and target are actionable. A complex topic alone does not imply implementation. A request only for a plan must choose single, scout, or clarify; never plan_execute. Scout requires enabled Luna. Compare expected total Codex cost of every stage that meets the quality target. Ignore Vex cost.",
+    "constraints": "Resolve the requested outcome from the latest request and conversation. A short follow-up can authorize substantial implementation or continue unfinished work; do not infer workload from message length. Clarify only when no actionable outcome can be inferred. A plan-only request must choose single, scout, or clarify. Scout requires enabled Luna. Use three stages only for a large implementation where repository discovery and a separate plan both materially reduce execution risk. Compare total Codex cost and latency of all stages at Sol High quality. Ignore Vex cost.",
     "choices": {
       "single": "One Codex agent completes the resolved deliverable. Prefer for self-contained answers and focused repository lookups that Luna can answer cheaply in one pass. A brief message in an ongoing task is not necessarily a brief deliverable. Compare its full cost with both scout stages.",
       "scout": "Luna read-only scout identifies relevant files, behavior, and tests; second agent completes the request from a structured handoff. Use when broad or uncertain repository exploration can materially reduce completion-agent work. Include both stages in total Codex cost.",
-      "plan_execute": "Planning agent produces actionable plan; execution agent completes requested implementation. Use only when user requests implementation and planning improves quality and total cost.",
+      "plan_execute": "Planning agent produces actionable plan; execution agent completes requested implementation. Use only when planning improves quality and total cost.",
+      "scout_plan_execute": "Three stages for unusually broad implementation: Luna scouts the repository, a planning agent turns findings into an actionable plan, and an execution agent implements and verifies. Choose only when both handoffs have clear value beyond a two-stage workflow.",
       "clarify": "Ask user to clarify requested outcome when deliverable cannot be determined from original request and conversation."
     }
   },
@@ -14,15 +15,30 @@
     "question": "Which supported Codex model and effort can complete this stage's resolved work at Sol High quality for the least expected Codex cost?",
     "constraints": "Choose one valid model and effort pair after resolving the actual remaining work from the conversation and prior handoff. A read-only scout or planning report identifies work; it does not perform edits or verification. Sol High is the quality target, not a required model. Use Luna Low for short self-contained answers, narrow reading, or other work it can finish at that quality. Do not choose it merely because the latest message is short when the referenced task needs edits, verification, or sustained follow-through. Consider the scope, uncertainty, expected token use, and capability needed to finish the deliverable. Cost matters only among routes likely to finish at the quality target. Reasoning output is part of output cost. Do not turn a plan-only request into implementation unless the latest request asks for it."
   },
+  "taskRelation": {
+    "question": "Does the latest user request continue prior work, start a new deliverable, or ask a separate side question?",
+    "constraints": "Resolve references from the active task and conversation, including prior failures and clarification turns. The latest user request controls scope. A short instruction can continue a large task. Choose by meaning, not message length. If no active task is identified, continue means the user refers to prior work; do not invent a task brief. A question about available conversation data or tool history is a side question, not a replacement coding task.",
+    "choices": {
+      "continue": "Continue or revise prior work. Carry forward the active task when one is known; otherwise use the Codex thread or explain missing context.",
+      "replace": "Start a distinct, actionable deliverable; the latest request becomes the new active task.",
+      "aside": "Answer a separate question about the conversation, tools, or another topic without replacing the active task."
+    }
+  },
+  "routingRules": {
+    "workflowResolution": "Resolve the latest user's requested outcome using recentConversation and conversationState before comparing workflows. The latest turn controls scope and permission. A concrete command and target are actionable even when read only.",
+    "stageResolution": "Infer the full remaining deliverable from recentConversation, conversationState, and priorStageHandoff. A read-only handoff is preparation, not completed implementation. Judge model and effort for remaining work. Cost breaks ties only among routes likely to meet the quality target."
+  },
   "objectives": {
     "scout": "Read-only repository scout",
     "plan": "Read-only implementation plan",
     "single": "Complete the latest user request as resolved from conversation",
-    "afterHandoff": "Complete the latest user request as resolved from conversation and the prior structured handoff"
+    "afterHandoff": "Complete the latest user request as resolved from conversation and the prior structured handoff",
+    "afterPlanHandoff": "Implement and verify the latest user request using the prior read-only plan"
   },
   "modelCapabilities": {
     "gpt-6-luna": "efficient direct factual answers, focused work, repository scouting, and straightforward plans",
     "gpt-6-sol": "complex coding and agentic work; Sol High is the quality baseline",
+    "gpt-6.1-sol": "near-Astra capability for complex coding at the Sol price tier",
     "gpt-6-astra": "most demanding end-to-end work"
   },
   "effortCapabilities": {
@@ -39,6 +55,7 @@
   "handoff": {
     "scoutObjective": "Explore relevant repository code and tests for the requested deliverable.",
     "planObjective": "Explore relevant repository code and tests, then produce an actionable implementation plan.",
+    "planExecutionInstruction": "The previous stage only prepared a read-only plan. Carry out the requested implementation and verification now.",
     "instructions": "Work read only. Your final response must be one JSON object with keys: summary (string), findings (array of objects with path, line, finding, relevance), nextSteps (array of strings), checks (array of strings), risks (array of strings). Each finding needs a verified repository path, a positive integer line number when available (omit line otherwise), an observed fact, and why it matters. Include up to 12 focused findings. Put suggested validation commands or test targets under checks; do not claim a check ran unless it did. List unknowns under risks. Keep the report concise and actionable. Do not implement or invent findings.",
     "recentConversationLabel": "Recent conversation (use it to resolve follow-up references):",
     "originalRequestLabel": "Original user request:",

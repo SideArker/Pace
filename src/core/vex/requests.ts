@@ -1,4 +1,4 @@
-import type { ModelOption, Route, TurnSummary } from "../../shared/types.js";
+import type { ModelOption, Route, Session, TurnSummary } from "../../shared/types.js";
 import { PRICE_SNAPSHOT, modelRates } from "../routing/pricing.js";
 import { routeChoices, type RoutingChoice } from "../routing/router.js";
 import {
@@ -16,7 +16,27 @@ export type RoutingState = {
   previousRoute?: Route;
   openTasks?: string[];
   hasCodexThread?: boolean;
+  activeTask?: Session["activeTask"];
 };
+function excerpt(value: string, limit: number): string {
+  return value.length <= limit ? value : `${value.slice(0, limit - 800)}\n[Earlier text omitted for routing; full text goes to Codex.]\n${value.slice(-700)}`;
+}
+function recentConversation(turns: TurnSummary[]) {
+  return turns.slice(-10).map(turn => ({
+    user: excerpt(turn.prompt, 1200),
+    assistant: excerpt(turn.result, 1200),
+    ...(turn.failed ? { failed: true } : {}),
+  }));
+}
+export function taskRelationRequest(prompt: string, turns: TurnSummary[], state: RoutingState, prompts = DEFAULT_ROUTING_PROMPTS): VexRequest {
+  return {
+    question: prompts.taskRelation.question,
+    context: { latestRequest: excerpt(prompt, 12000), recentConversation: recentConversation(turns), conversationState: state },
+    options: Object.entries(prompts.taskRelation.choices).map(([id, description]) => ({ id, description })),
+    constraints: prompts.taskRelation.constraints,
+    decisionType: "routing",
+  };
+}
 export class VexDiagnosticError extends Error {
   constructor(readonly stage: "discovery" | "startup" | "connection" | "tool validation", cause: unknown) {
     super(`${stage}: ${String(cause)}`, { cause });
@@ -30,10 +50,8 @@ function taskContext(
   state?: RoutingState,
 ) {
   return {
-    originalRequest: prompt,
-    recentConversation: turns
-      .slice(-10)
-      .map((turn) => ({ user: turn.prompt, assistant: turn.result, ...(turn.failed ? { failed: true } : {}) })),
+    originalRequest: excerpt(prompt, 12000),
+    recentConversation: recentConversation(turns),
     ...(state ? { conversationState: state } : {}),
     availableModels: models.map((model) => ({
       id: model.model,
@@ -70,13 +88,13 @@ export function shapeRequest(
   );
   const options = models.some((model) => model.model === "gpt-6-luna")
     ? configuredChoices
-    : configuredChoices.filter((choice) => choice.id !== "scout");
+    : configuredChoices.filter((choice) => choice.id !== "scout" && choice.id !== "scout_plan_execute");
   return {
     question: prompts.workflow.question,
     context: taskContext(prompt, turns, models, prompts, state),
     options,
     decisionType: "routing",
-    constraints: `${prompts.workflow.constraints}\n\nPace routing rule: resolve the latest user's requested outcome using recentConversation and conversationState before comparing workflows. Treat the latest user turn as authoritative for changes of scope or permission. Use prior unfinished work as context, and do not infer task size from the length of the latest message. Clarify only when the conversation lacks an actionable referent. A concrete command and target are actionable even when the command is read-only.`,
+    constraints: `${prompts.workflow.constraints}\n\n${prompts.routingRules.workflowResolution}`,
   };
 }
 export function stageRequest(
@@ -99,6 +117,6 @@ export function stageRequest(
     },
     options,
     decisionType: "routing",
-    constraints: `${prompts.stage.constraints}\n\nPace routing rule: first infer the full remaining deliverable from recentConversation, conversationState, and any priorStageHandoff. A read-only handoff records preparation and remaining steps; it is not completion of an implementation request. Judge model and effort for the work this stage must still perform, not the wording or length of the latest user message. Cost breaks ties only among routes likely to complete it at the stated quality target.`,
+    constraints: `${prompts.stage.constraints}\n\n${prompts.routingRules.stageResolution}`,
   };
 }
