@@ -51,3 +51,17 @@ it("limits resume and model menus while retaining selected entry", () => {
   expect(model).not.toContain("model0");
   expect(model).not.toContain("model11");
 });
+
+it("shows discovered model status and its supported reasoning choices", () => {
+  const models = renderToString(React.createElement(ModelMenu, {
+    mode: "models", models: ["gpt-5.6-sol"], selectedModel: "gpt-5.6-sol", selectedIndex: 0, catalogStatus: "ready",
+  }));
+  expect(models).toContain("gpt-5.6-sol");
+  const efforts = renderToString(React.createElement(ModelMenu, {
+    mode: "efforts", models: ["gpt-5.6-sol"], efforts: ["medium", "ultra"], selectedModel: "gpt-5.6-sol", selectedIndex: 0,
+  }));
+  expect(efforts).toContain("medium");
+  expect(efforts).toContain("ultra");
+  expect(efforts).not.toContain("xhigh");
+  expect(efforts).toContain("M use manually");
+});
