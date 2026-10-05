@@ -105,14 +105,14 @@ it("frames input with command help and compact routing mode below it", () => {
   expect(output).toContain("Shift");
   const lines = output.split("\n");
   expect(lines.filter(line => line.includes("───"))).toHaveLength(2);
-  expect(output.indexOf("/help shortcuts")).toBeLessThan(output.indexOf("type ! to run commands"));
+  expect(output.indexOf("type / for commands")).toBeLessThan(output.indexOf("type ! to run commands"));
 });
 
 it("keeps both composer hints on one footer row in wide terminals", () => {
   const output = renderToString(React.createElement(ComposerFrame, {
     width: 140, shellMode: false, children: React.createElement(Text, null, "Input"),
   }), { columns: 140 });
-  const hintLine = output.split("\n").find(line => line.includes("/help shortcuts"));
+  const hintLine = output.split("\n").find(line => line.includes("type / for commands"));
   expect(hintLine).toContain("type ! to run commands");
 });
 

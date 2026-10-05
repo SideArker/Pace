@@ -86,7 +86,7 @@ it('keeps a skill active across turns and routes only user requests', async () =
   const prompts: string[] = [];
   const baseVex = singleVex('0:medium');
   const vex = { verify: async () => {}, choose: async (request: VexRequest) => {
-    requests.push(String(request.context.originalRequest));
+    if (request.context.originalRequest) requests.push(String(request.context.originalRequest));
     return baseVex.choose(request);
   } };
   const runner: CodexRunner = { async run(prompt) { prompts.push(prompt); return { result: 'done', completed: true }; } };
@@ -118,7 +118,7 @@ it('routes an @skill mention unchanged and applies the skill for that turn', asy
   const prompts: string[] = [];
   const baseVex = singleVex('0:medium');
   const vex = { verify: async () => {}, choose: async (request: VexRequest) => {
-    requests.push(request);
+    if (request.context.originalRequest) requests.push(request);
     return baseVex.choose(request);
   } };
   const runner: CodexRunner = { async run(prompt) { prompts.push(prompt); return { result: 'done', completed: true }; } };
