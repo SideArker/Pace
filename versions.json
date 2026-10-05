@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "pace": {
+    "latest": "0.1.0",
+    "releaseUrl": "https://github.com/SideArker/Pace/releases"
+  },
+  "models": {
+    "gpt-6.1-sol": { "efforts": ["low", "medium", "high", "xhigh"], "defaultEffort": "medium" }
+  },
+  "pricing": {
+    "checkedAt": "2026-10-05",
+    "source": "https://developers.openai.com/api/docs/pricing",
+    "processing": "standard",
+    "context": "short (at most 272K input tokens per request)",
+    "rates": {
+      "gpt-6.1-sol": { "input": 2, "cachedInput": 0.1, "cacheWriteInput": 2.5, "output": 10 },
+      "gpt-6-luna": { "input": 0.1, "cachedInput": 0.01, "cacheWriteInput": 0.125, "output": 0.5 },
+      "gpt-6-sol": { "input": 2, "cachedInput": 0.2, "cacheWriteInput": 2.5, "output": 10 },
+      "gpt-6-astra": { "input": 10, "cachedInput": 1, "cacheWriteInput": 12.5, "output": 50 },
+      "gpt-5.6-sol": { "input": 4, "cachedInput": 0.4, "cacheWriteInput": 5, "output": 20 },
+      "gpt-5.6-terra": { "input": 2, "cachedInput": 0.2, "cacheWriteInput": 2.5, "output": 12 },
+      "gpt-5.6-luna": { "input": 0.2, "cachedInput": 0.02, "cacheWriteInput": 0.25, "output": 1.2 },
+      "gpt-5.5": { "input": 5, "cachedInput": 0.5, "cacheWriteInput": 5, "output": 30 }
+    }
+  }
+}

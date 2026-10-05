@@ -18,8 +18,9 @@ it('sends original request, recent conversation, all valid pairs, capabilities, 
   expect(stage.options).toEqual(routeChoices(DEFAULT_CONFIG.models));
   expect(stage.options).toHaveLength(10);
   expect(shape.decisionType).toBe('routing');
-  expect(shape.constraints).toContain('plan must choose single, scout, or clarify');
+  expect(shape.constraints).toContain('plan-only request must choose single, scout, or clarify');
   expect(shapeRequest(prompt, turns, DEFAULT_CONFIG.models.filter(model => model.model !== 'gpt-6-luna')).options.map(option => option.id)).not.toContain('scout');
+  expect(shapeRequest(prompt, turns, DEFAULT_CONFIG.models.filter(model => model.model !== 'gpt-6-luna')).options.map(option => option.id)).not.toContain('scout_plan_execute');
 });
 
 it('gives Vex full route choice and task context for paraphrased follow-ups', () => {
@@ -29,7 +30,7 @@ it('gives Vex full route choice and task context for paraphrased follow-ups', ()
     const shape = shapeRequest(prompt, turns, DEFAULT_CONFIG.models, undefined, state);
     const stage = stageRequest(prompt, turns, DEFAULT_CONFIG.models, 'Complete task', undefined, DEFAULT_CONFIG.models, undefined, state);
     expect(shape.context).toMatchObject({ originalRequest: prompt, recentConversation: [{ user: turns[0]!.prompt, assistant: turns[0]!.result }], conversationState: state });
-    expect(shape.constraints).toContain('do not infer task size from the length');
+    expect(shape.constraints).toContain('do not infer workload from message length');
     expect(stage.constraints).toContain('full remaining deliverable');
     expect(stage.options).toEqual(routeChoices(DEFAULT_CONFIG.models));
   }
@@ -37,6 +38,23 @@ it('gives Vex full route choice and task context for paraphrased follow-ups', ()
   const tenTurns = Array.from({ length: 10 }, (_, index) => ({ prompt: `Task detail ${index}`, result: `Progress ${index}`, at: '2026-09-30' }));
   expect(shapeRequest('Proceed', tenTurns, DEFAULT_CONFIG.models).context.recentConversation).toHaveLength(10);
   expect(handoffPrompt('scout', 'Proceed', tenTurns, DEFAULT_ROUTING_PROMPTS)).toContain('Task detail 0');
+});
+
+it('bounds Vex conversation excerpts while keeping the full request for Codex', () => {
+  const long = 'x'.repeat(20_000);
+  const request = shapeRequest(long, [{ prompt: long, result: long, at: 'now' }], DEFAULT_CONFIG.models);
+  expect((request.context.originalRequest as string).length).toBeLessThan(12_100);
+  expect((request.context.recentConversation as { user: string; assistant: string }[])[0]?.user.length).toBeLessThan(1_300);
+});
+
+it('offers Sol 6.1 with its current verified price and capability', () => {
+  const model = { model: 'gpt-6.1-sol', efforts: ['medium', 'high'] as const, defaultEffort: 'medium' as const };
+  const request = shapeRequest('Implement the feature', [], [model]);
+  expect(request.context.availableModels).toEqual([expect.objectContaining({
+    id: 'gpt-6.1-sol',
+    capability: expect.stringContaining('near-Astra'),
+    standardUsdPerMillionTokens: { input: 2, cachedInput: 0.1, cacheWriteInput: 2.5, output: 10 },
+  })]);
 });
 
 it('accepts narrow leads and exact ties, rejects invalid or inconsistent choices', () => {
