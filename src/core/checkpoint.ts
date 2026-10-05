@@ -3,9 +3,11 @@ import type { ApprovalMode, CheckpointNote, Session, CheckpointRecord, Checkpoin
 import type { CodexRunner, Progress } from "../integrations/codex.js";
 import { CodexRunError } from "../integrations/codex-types.js";
 import { costForUsage } from "./routing/pricing.js";
+import { contextPercent, measuredContext } from "./context.js";
 export type { CheckpointNote } from "../shared/types.js";
 
 export const CHECKPOINT_MAX_CHARS = 10_000;
+export const CHECKPOINT_CONTEXT_PERCENT = 75;
 
 export function checkpointPrompt(): string {
   return `Create a checkpoint for continuing this coding task in a fresh Codex thread. Use the tool results and conversation still visible to you. Return exactly one JSON object, no Markdown fence, with these fields: complete (boolean), goal (string), constraints (string[]), findings ({detail,file?}[]), changes ({detail,file?}[]), checks ({command,outcome}[]), unfinished (string[]), questions (string[]), risks (string[]). Include exact user constraints, verified findings with file references, changes and check outcomes, and remaining work. Do not perform new work. Aim for roughly 2,000 tokens and keep the JSON under ${CHECKPOINT_MAX_CHARS} characters. Complete means this note faithfully captures all known relevant state; it does not mean the task is finished or that open questions are resolved. Set complete to false only if the state cannot fit or known relevant facts are missing; never silently omit them.`;
@@ -39,11 +41,13 @@ export function parseCheckpoint(text: string): CheckpointNote {
 }
 
 export function checkpointHandoff(note: CheckpointNote, recent: { user: string; assistant: string }[], request: string): string {
-  return `Continue this coding task from the validated checkpoint. Verify any important repository state before editing.\n\nCheckpoint:\n${JSON.stringify(note)}\n\nRecent exchanges:\n${JSON.stringify(recent.slice(-3))}\n\nCurrent user request:\n${request}`;
+  return `Start a fresh Codex thread using this validated checkpoint as conversation context. The current user request controls the task. Verify important repository state before editing.\n\nCheckpoint:\n${JSON.stringify(note)}\n\nRecent exchanges:\n${JSON.stringify(recent.slice(-3))}\n\nCurrent user request:\n${request}`;
 }
 
 export function checkpointDue(session: Session): boolean {
-  if (!session.threadId || session.turns.length < 16) return false;
+  if (!session.threadId || !session.turns.length) return false;
+  if ((session.threadTurnCount ?? session.turns.length) < 16 &&
+    (contextPercent(measuredContext(session)) ?? 0) < CHECKPOINT_CONTEXT_PERCENT) return false;
   const checkpoint = session.checkpoint;
   if (!checkpoint || checkpoint.threadId !== session.threadId) {
     const lastAttempt = [...(session.checkpointGenerations ?? [])].reverse()

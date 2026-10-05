@@ -41,6 +41,18 @@ it("requests a checkpoint before retention and invalidates it after undo", () =>
   expect(session.checkpoint).toBeUndefined();
 });
 
+it("checkpoints early when measured context reaches 75 percent", () => {
+  const session = newSession(process.cwd(), "manual");
+  session.threadId = "thread-1";
+  session.route = { model: "gpt-6-sol", effort: "high" };
+  session.threadTurnCount = 3;
+  session.turns = [{ prompt: "work", result: "done", at: "turn-1" }];
+  session.contextByThread = { "thread-1": { tokens: 74_000, windowTokens: 100_000, model: "gpt-6-sol" } };
+  expect(checkpointDue(session)).toBe(false);
+  session.contextByThread["thread-1"]!.tokens = 75_000;
+  expect(checkpointDue(session)).toBe(true);
+});
+
 it("creates a checkpoint in the current thread and records both validation attempts", async () => {
   const session = newSession(process.cwd(), "manual");
   session.threadId = "thread-1";
