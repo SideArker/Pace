@@ -37,6 +37,11 @@ export type RoutingPrompts = {
   effortCapabilities: Record<string, string>;
   unknownModelCapability: string;
   unknownEffortCapability: string;
+  execution: {
+    savedTaskInstruction: string;
+    existingThreadInstruction: string;
+    usageRetryInstruction: string;
+  };
   handoff: {
     scoutObjective: string;
     planObjective: string;
@@ -69,16 +74,18 @@ export function parseRoutingPrompts(value: unknown): RoutingPrompts {
   const shipped = JSON.parse(defaultText) as RoutingPrompts;
   const taskRelation = value.taskRelation ?? shipped.taskRelation;
   const routingRules = value.routingRules ?? shipped.routingRules;
+  const execution = value.execution ?? shipped.execution;
   if (
     !isRecord(workflow) ||
     !isRecord(stage) ||
     !isRecord(objectives) ||
     !isRecord(handoff) ||
     !isRecord(taskRelation) ||
-    !isRecord(routingRules)
+    !isRecord(routingRules) ||
+    !isRecord(execution)
   )
     throw new Error(
-      "routing-prompts.json: workflow, stage, objectives, handoff, taskRelation, and routingRules must be objects",
+      "routing-prompts.json: workflow, stage, objectives, handoff, taskRelation, routingRules, and execution must be objects",
     );
   const choices = stringMap(workflow.choices, "workflow.choices");
   const relationChoices = stringMap(taskRelation.choices, "taskRelation.choices");
@@ -139,6 +146,11 @@ export function parseRoutingPrompts(value: unknown): RoutingPrompts {
       value.unknownEffortCapability,
       "unknownEffortCapability",
     ),
+    execution: {
+      savedTaskInstruction: nonempty(execution.savedTaskInstruction, "execution.savedTaskInstruction"),
+      existingThreadInstruction: nonempty(execution.existingThreadInstruction, "execution.existingThreadInstruction"),
+      usageRetryInstruction: nonempty(execution.usageRetryInstruction, "execution.usageRetryInstruction"),
+    },
     handoff: {
       scoutObjective: nonempty(
         handoff.scoutObjective,
@@ -171,6 +183,7 @@ const defaultText = readFileSync(defaultPath, "utf8");
 const legacyDefaultSha256 = new Set([
   "d4ab14ad9720473b296e2456111b859c226eae99f1a3dd580d57c319dc8441d9",
   "32e9fecdb9404f8b4a756c0a62b46b7a3655297a331981385ba335e9b58b383a",
+  "1be219548f02b21b7103bc26f7ca6f604e244dc33144243a46bf6e2619b56538",
 ]);
 export const DEFAULT_ROUTING_PROMPTS = parseRoutingPrompts(
   JSON.parse(defaultText),

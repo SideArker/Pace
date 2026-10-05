@@ -23,6 +23,7 @@ it("creates an editable routing file and applies changes to Vex requests", async
   edited.stage.constraints = "Choose the least costly route";
   edited.taskRelation.question = "Continue this task?";
   edited.routingRules.workflowResolution = "Custom conversation rule";
+  edited.execution.existingThreadInstruction = "Custom thread instruction";
   edited.modelCapabilities["gpt-6-sol"] = "Custom Sol description";
   await writeFile(path, JSON.stringify(edited));
   const prompts = loadRoutingPrompts(dir);
@@ -35,6 +36,7 @@ it("creates an editable routing file and applies changes to Vex requests", async
   expect(stage.constraints).toContain("full remaining deliverable");
   expect(shape.constraints).toContain("Custom conversation rule");
   expect(taskRelationRequest("work", [], {}, prompts).question).toBe("Continue this task?");
+  expect(prompts.execution.existingThreadInstruction).toBe("Custom thread instruction");
   expect((stage.context.availableModels as { capability: string }[])[0]?.capability).toBe("Custom Sol description");
   expect(JSON.parse(await readFile(path, "utf8"))).toEqual(edited);
 });
@@ -54,11 +56,13 @@ it("refreshes the untouched older default while preserving edited prompt files",
   delete legacyEdited.workflow.choices.scout_plan_execute;
   delete legacyEdited.taskRelation;
   delete legacyEdited.routingRules;
+  delete legacyEdited.execution;
   delete legacyEdited.objectives.afterPlanHandoff;
   delete legacyEdited.handoff.planExecutionInstruction;
   await writeFile(path, JSON.stringify(legacyEdited));
   expect(loadRoutingPrompts(dir).workflow.choices.scout_plan_execute).toBe(DEFAULT_ROUTING_PROMPTS.workflow.choices.scout_plan_execute);
   expect(loadRoutingPrompts(dir).taskRelation.question).toBe(DEFAULT_ROUTING_PROMPTS.taskRelation.question);
+  expect(loadRoutingPrompts(dir).execution.usageRetryInstruction).toBe(DEFAULT_ROUTING_PROMPTS.execution.usageRetryInstruction);
   expect(loadRoutingPrompts(dir).objectives.afterPlanHandoff).toBe(DEFAULT_ROUTING_PROMPTS.objectives.afterPlanHandoff);
 });
 

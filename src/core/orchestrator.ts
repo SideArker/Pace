@@ -353,12 +353,12 @@ export class Orchestrator {
       });
       const resumedAfterLimit = session.deferredTurn?.prompt === prompt;
       const resolvedPrompt = taskRelation === "continue" && priorTask && !session.threadId
-        ? `${prompt}\n\nPace's saved task brief (verify against conversation): ${priorTask.originalRequest}\nLater instructions: ${JSON.stringify(priorTask.instructions)}\nLast outcome: ${priorTask.latestOutcome ?? "Unknown"}\nThe latest user request controls scope, including when it asks to implement a prior plan. Inspect the current repository and retained conversation, continue the remaining work, and report what is done and what remains. If this brief is stale or the prior task cannot be identified, say so clearly and suggest /resume for work in another saved conversation. Do not repeat completed changes.`
+        ? `${prompt}\n\nPace's saved task brief (verify against conversation): ${priorTask.originalRequest}\nLater instructions: ${JSON.stringify(priorTask.instructions)}\nLast outcome: ${priorTask.latestOutcome ?? "Unknown"}\n${prompts.execution.savedTaskInstruction}`
         : (taskRelation === "continue" || usedThreadForClarification) && session.threadId
-          ? `${prompt}\n\nUse this Codex thread's earlier conversation and tool history to identify the task. Inspect current files, continue unfinished work, and report what is done and what remains. If the task cannot be identified, say so clearly and suggest /resume for work in another saved conversation.`
+          ? `${prompt}\n\n${prompts.execution.existingThreadInstruction}`
           : prompt;
       const safePrompt = resumedAfterLimit
-        ? `${resolvedPrompt}\n\nThis request was interrupted by a Codex usage limit. Inspect current files and prior conversation before editing. Continue only unfinished work. Report completed work, remaining work, and checks.`
+        ? `${resolvedPrompt}\n\n${prompts.execution.usageRetryInstruction}`
         : resolvedPrompt;
       const executionPrompt = handoff
         ? `${skillPrompt(safePrompt, skills, session.activeSkills, session.skillOptions)}${shape === "plan_execute" || shape === "scout_plan_execute" ? `\n\n${prompts.handoff.planExecutionInstruction}` : ""}\n\n${prompts.handoff.reportInstruction}\n${handoff}`
