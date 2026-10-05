@@ -2,7 +2,7 @@ import { isRecord } from "../shared/config.js";
 import type { RoutingSuite } from "./routing-types.js";
 export type { RoutingCase, RoutingSuite } from "./routing-types.js";
 
-const SHAPES = ["single", "scout", "plan_execute", "clarify"];
+const SHAPES = ["single", "scout", "plan_execute", "scout_plan_execute", "clarify"];
 export function parseRoutingSuite(value: unknown): RoutingSuite {
   if (
     !isRecord(value) ||

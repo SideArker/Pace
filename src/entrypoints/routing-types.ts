@@ -2,7 +2,7 @@ export type RoutingCase = {
   id: string;
   category: string;
   prompt: string;
-  preferred: "single" | "scout" | "plan_execute" | "clarify";
+  preferred: "single" | "scout" | "plan_execute" | "scout_plan_execute" | "clarify";
   acceptable: string[];
   reason: string;
   conversation?: { user: string; assistant: string }[];
