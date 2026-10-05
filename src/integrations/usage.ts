@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 
-export type UsageWindow = { usedPercent: number; windowDurationMins: number | null };
+export type UsageWindow = { usedPercent: number; windowDurationMins: number | null; resetsAt?: number };
 export type UsageLimits = { primary?: UsageWindow; secondary?: UsageWindow };
 export type UsageWarningLevels = Partial<Record<"5h" | "7d", 50 | 25 | 10>>;
 
@@ -34,7 +34,8 @@ function validWindow(value: unknown): value is UsageWindow {
   if (!value || typeof value !== "object") return false;
   const window = value as Partial<UsageWindow>;
   return typeof window.usedPercent === "number" && Number.isFinite(window.usedPercent)
-    && (window.windowDurationMins === null || typeof window.windowDurationMins === "number");
+    && (window.windowDurationMins === null || typeof window.windowDurationMins === "number")
+    && (window.resetsAt === undefined || (typeof window.resetsAt === "number" && Number.isFinite(window.resetsAt)));
 }
 
 export function parseUsageLimits(value: unknown): UsageLimits | undefined {

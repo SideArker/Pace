@@ -70,6 +70,7 @@ export function parseSession(value: unknown, project: string): Session | undefin
     typeof value.createdAt !== "string" ||
     typeof value.updatedAt !== "string" ||
     (value.threadId !== undefined && typeof value.threadId !== "string") ||
+    (value.threadTurnCount !== undefined && (!Number.isInteger(value.threadTurnCount) || (value.threadTurnCount as number) < 0)) ||
     (value.contextByThread !== undefined && (!isRecord(value.contextByThread) ||
       !Object.entries(value.contextByThread).every(([id, reading]) => !!id && isContextMeasurement(reading)))) ||
     (value.compactions !== undefined && (!Array.isArray(value.compactions) || !value.compactions.every(isCompaction))) ||
@@ -114,6 +115,17 @@ export function parseSession(value: unknown, project: string): Session | undefin
       !value.tasks.every((task: unknown) => isRecord(task) && typeof task.id === "string" && task.id.length <= 100 &&
         typeof task.text === "string" && task.text.length <= 500 && typeof task.completed === "boolean" &&
         (task.source === "user" || task.source === "agent")))) ||
+    (value.activeTask !== undefined && (!isRecord(value.activeTask) ||
+      typeof value.activeTask.originalRequest !== "string" || value.activeTask.originalRequest.length > 8000 ||
+      !Array.isArray(value.activeTask.instructions) || value.activeTask.instructions.length > 12 ||
+      !value.activeTask.instructions.every((item: unknown) => typeof item === "string" && item.length <= 4000) ||
+      (value.activeTask.latestOutcome !== undefined &&
+        (typeof value.activeTask.latestOutcome !== "string" || value.activeTask.latestOutcome.length > 2000)) ||
+      (value.activeTask.failed !== undefined && typeof value.activeTask.failed !== "boolean"))) ||
+    (value.deferredTurn !== undefined && (!isRecord(value.deferredTurn) ||
+      typeof value.deferredTurn.prompt !== "string" || !value.deferredTurn.prompt.trim() ||
+      typeof value.deferredTurn.retryAt !== "string" || !Number.isFinite(Date.parse(value.deferredTurn.retryAt)) ||
+      !Number.isInteger(value.deferredTurn.attempt) || (value.deferredTurn.attempt as number) < 1)) ||
     (value.routingMode !== "auto" && value.routingMode !== "manual")
   )
     return undefined;

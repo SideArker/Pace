@@ -97,6 +97,7 @@ export type Session = {
   title?: string;
   projectPath: string;
   threadId?: string;
+  threadTurnCount?: number;
   contextByThread?: Record<string, ContextMeasurement>;
   createdAt: string;
   updatedAt: string;
@@ -104,6 +105,8 @@ export type Session = {
   route: Route;
   activeSkills?: string[];
   tasks?: Task[];
+  activeTask?: { originalRequest: string; instructions: string[]; latestOutcome?: string; failed?: boolean };
+  deferredTurn?: { prompt: string; retryAt: string; attempt: number };
   skillOptions?: Record<string, string>;
   turns: TurnSummary[];
   compactions?: CompactionRecord[];
