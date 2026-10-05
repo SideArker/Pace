@@ -9,6 +9,8 @@ import { formatLiveUsage, formatTurnFooter, modelName } from "./turn-format.js";
 import type { Line } from "./Transcript.js";
 import { updateAgentTasks } from "../core/tasks.js";
 import { formatCommandActivity } from "./shell-runner.js";
+import { readUsageLimits, type UsageLimits } from "../integrations/usage.js";
+import { isUsageLimitError, usageRetryAt } from "../core/usage-retry.js";
 import type { RunningProcess } from "./RunningProcesses.js";
 
 type TurnJob = { session: Session; controller: AbortController; prompt: string };
@@ -23,6 +25,7 @@ export function createTurnRunner({
   turnSequence, activeSessionId, jobs, promptQueue, titleAborts, pendingApprovals, pendingQuestions, unreadCompletions,
   runner, orchestrator, store, rememberSession, onTurnStart, setRunningIds, addFor, activityFor, recordThoughtUsage, resetThoughtUsage, getTurnActivities, setStatusFor,
   showApproval, showQuestion, dismissQuestion, setSession, setVexState, refreshUsage, setQueueVersion, setProcesses, setLiveUsage, getConfig,
+  readLimits = readUsageLimits,
 }: {
   turnSequence: MutableRefObject<number>;
   activeSessionId: MutableRefObject<string | undefined>;
@@ -54,9 +57,11 @@ export function createTurnRunner({
   setProcesses: Dispatch<SetStateAction<RunningProcess[]>>;
   setLiveUsage: Dispatch<SetStateAction<Record<string, string>>>;
   getConfig: () => Config;
+  readLimits?: () => Promise<UsageLimits | undefined>;
 }) {
   const runTurn = async (text: string, turnSession: Session, turnConfig: Config) => {
     let tasksChanged = false;
+    let deferredForUsage = false;
     let activeRoute: Route = turnSession.route;
     const controller = new AbortController();
     const turnId = ++turnSequence.current;
@@ -137,6 +142,10 @@ export function createTurnRunner({
         controller.signal,
         () => activeSessionId.current === sessionId,
       );
+      if (turnSession.deferredTurn?.prompt === text) {
+        turnSession.deferredTurn = undefined;
+        await store.save(turnSession, () => activeSessionId.current === sessionId);
+      }
       if (activeSessionId.current === sessionId) setSession({ ...outcome.session });
       addFor(sessionId, "codex", outcome.result);
       if (outcome.stages.length) addFor(sessionId,
@@ -151,7 +160,7 @@ export function createTurnRunner({
       );
       for (const artifact of outcome.artifacts) addFor(sessionId, "artifact", artifact);
       addFor(sessionId, "divider", "");
-      if (checkpointDue(turnSession)) {
+      if (!turnSession.deferredTurn && checkpointDue(turnSession)) {
         try {
           const checkpoint = await createCheckpointIfDue(turnSession, runner, progress => {
             if (progress.kind === "status") setStatusFor(sessionId, progress.text);
@@ -162,7 +171,7 @@ export function createTurnRunner({
           }, controller.signal, turnConfig.approvalMode);
           await store.save(turnSession, () => activeSessionId.current === sessionId);
           if (activeSessionId.current === sessionId) setSession({ ...turnSession });
-          if (checkpoint) addFor(sessionId, "meta", "Context checkpoint saved for a future handoff.");
+          if (checkpoint) addFor(sessionId, "meta", "Context checkpoint saved. The next turn starts a fresh thread.");
           else addFor(sessionId, "meta", "Context checkpoint could not be validated; the existing thread remains available.");
         } catch (error) {
           addFor(sessionId, "error", `Could not save context checkpoint: ${String(error)}`);
@@ -172,9 +181,34 @@ export function createTurnRunner({
       refreshUsage();
     } catch (error) {
       if (controller.signal.aborted) {
+        if (turnSession.deferredTurn?.prompt === text) {
+          turnSession.deferredTurn = undefined;
+          await store.save(turnSession, () => activeSessionId.current === sessionId).catch(() => {});
+        }
         addFor(sessionId, "meta", "Turn cancelled by user");
         setStatusFor(sessionId, "Cancelled");
+      } else if (!(error instanceof VexUnavailableError) && isUsageLimitError(error)) {
+        const limits = await readLimits().catch(() => undefined);
+        const retryAt = usageRetryAt(error, limits);
+        const attempt = (turnSession.deferredTurn?.prompt === text ? turnSession.deferredTurn.attempt : 0) + 1;
+        turnSession.deferredTurn = { prompt: text, retryAt: retryAt.toISOString(), attempt };
+        try {
+          await store.save(turnSession, () => activeSessionId.current === sessionId);
+          deferredForUsage = true;
+          rememberSession(turnSession);
+          if (activeSessionId.current === sessionId) setSession({ ...turnSession });
+          addFor(sessionId, "error", String(error));
+          addFor(sessionId, "meta", `Usage limit reached. Pace saved this request and will resume it after ${retryAt.toLocaleString()} while Pace is open, or on next launch. Existing changes remain; the resumed agent will inspect them before continuing.`);
+          setStatusFor(sessionId, "Waiting for Codex usage reset");
+        } catch (saveError) {
+          addFor(sessionId, "error", `Could not save automatic retry: ${String(saveError)}`);
+          setStatusFor(sessionId, "Failed");
+        }
       } else {
+        if (turnSession.deferredTurn?.prompt === text) {
+          turnSession.deferredTurn = undefined;
+          await store.save(turnSession, () => activeSessionId.current === sessionId).catch(() => {});
+        }
         addFor(sessionId, "error", String(error));
         if (error instanceof VexUnavailableError && error.source === "connection") setVexState("failed");
         setStatusFor(sessionId, "Failed");
@@ -205,7 +239,7 @@ export function createTurnRunner({
       if (typeof performance !== "undefined" && typeof performance.clearMeasures === "function") {
         try { performance.clearMeasures(); } catch {}
       }
-      const next = promptQueue.current.take(sessionId);
+      const next = deferredForUsage || turnSession.deferredTurn ? undefined : promptQueue.current.take(sessionId);
       if (next !== undefined) {
         setQueueVersion(value => value + 1);
         void runTurn(next, turnSession, getConfig());
