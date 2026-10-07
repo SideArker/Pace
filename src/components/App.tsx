@@ -1359,6 +1359,8 @@ export default function App({ onClear }: { onClear: () => void }) {
   const terminalColumns = terminalDimensions.columns;
   const terminalRows = terminalDimensions.rows;
   const contentWidth = Math.max(20, terminalColumns - 2);
+  const composerChromeRows = contentWidth < 50 || (contentWidth >= 72 && contentWidth < 112) ? 6 : 5;
+  const maxComposerRows = Math.max(1, terminalRows - composerChromeRows - 1);
 
   return (
     // Ink clears the terminal on every update when the live frame exceeds the viewport.
@@ -1398,7 +1400,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       {session?.deferredTurn && !busy ? <Text color="#FBBF24">Usage limit: saved request resumes after {new Date(session.deferredTurn.retryAt).toLocaleString()} while Pace is open, or on next launch.</Text> : null}
       </Box>
       <ComposerFrame width={contentWidth} session={session} shellMode={shellMode} approvalMode={config?.approvalMode}>
-        <Composer key={session?.id} value={draft} width={contentWidth} maxRows={Math.max(1, Math.min(4, Math.floor(terminalRows / 5)))} onChange={value => { setDraft(value); setSelection(0); }} onSubmit={value => { void submit(value); }} history={history}
+        <Composer key={session?.id} value={draft} width={contentWidth} maxRows={maxComposerRows} onChange={value => { setDraft(value); setSelection(0); }} onSubmit={value => { void submit(value); }} history={history}
           onImagePaste={async () => {
             try {
               const path = await saveClipboardImage(project);

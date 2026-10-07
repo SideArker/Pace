@@ -1,7 +1,8 @@
 import React from "react";
-import { renderToString, Text } from "ink";
+import { PassThrough, Writable } from "node:stream";
+import { render, renderToString, Text } from "ink";
 import { expect, it } from "vitest";
-import { Composer, commandRanges, commandToken, deleteWordBackward, deleteWordForward, inputColumns, isAltBackspaceKey, isAltDeleteKey, isNewlineKey, paceGradient, verticalCursor, visibleInputRows } from "../src/components/Composer.js";
+import { Composer, commandRanges, commandToken, deleteDraftRange, deleteWordBackward, deleteWordForward, displayPastedBlocks, inputColumns, insertDraftText, insertPastedBlock, isAltBackspaceKey, isAltDeleteKey, isNewlineKey, paceGradient, skipPastedBlock, verticalCursor, visibleInputRows } from "../src/components/Composer.js";
 import { ComposerFrame } from "../src/components/ComposerFrame.js";
 import { newSession } from "../src/core/sessions.js";
 import { normalizeNewCommand } from "../src/components/App.js";
@@ -62,6 +63,75 @@ it("keeps long input bounded around the cursor", () => {
   expect(visibleInputRows(value, 0, 5, 2)).toEqual([{ start: 0, end: 5 }, { start: 5, end: 10 }]);
   expect(visibleInputRows("first\nsecond", 5, 20, 2)).toEqual([{ start: 0, end: 5 }, { start: 6, end: 12 }]);
   expect(visibleInputRows("abcdefghij", 5, 5, 2)).toEqual([{ start: 0, end: 5 }, { start: 5, end: 10 }]);
+  const long = "x".repeat(200);
+  const fullScreenRows = visibleInputRows(long, long.length, 10, 17);
+  expect(fullScreenRows).toHaveLength(17);
+  expect(fullScreenRows[0]).toEqual({ start: 30, end: 40 });
+  expect(fullScreenRows.at(-1)).toEqual({ start: 190, end: 200 });
+});
+
+it("shows pasted text as one block and removes it with one backspace", () => {
+  const pasted = insertPastedBlock("before ", 7, "alpha\nbeta", []);
+  expect(displayPastedBlocks(pasted.value, pasted.cursor, pasted.blocks)).toMatchObject({
+    value: "before [Pasted 2 lines]", cursor: "before [Pasted 2 lines]".length,
+  });
+  expect(deleteDraftRange(pasted.value, pasted.cursor - 1, pasted.cursor, pasted.blocks)).toEqual({
+    value: "before ", cursor: 7, blocks: [],
+  });
+  expect(skipPastedBlock(pasted.cursor - 1, "left", pasted.blocks)).toBe(7);
+  const extended = insertDraftText(pasted.value, pasted.cursor, "!", pasted.blocks);
+  expect(displayPastedBlocks(extended.value, extended.cursor, extended.blocks).value).toBe("before [Pasted 2 lines]!");
+});
+
+it("submits full pasted text while showing its marker", async () => {
+  class Output extends Writable {
+    isTTY = true;
+    columns = 80;
+    rows = 24;
+    writes: string[] = [];
+    override _write(chunk: Buffer, _encoding: BufferEncoding, done: (error?: Error | null) => void) {
+      this.writes.push(chunk.toString());
+      done();
+    }
+  }
+  const stdout = new Output();
+  const stdin = new PassThrough() as PassThrough & { isTTY: boolean; setRawMode: (enabled: boolean) => void; ref: () => void; unref: () => void };
+  stdin.isTTY = true;
+  stdin.setRawMode = () => {};
+  stdin.ref = () => {};
+  stdin.unref = () => {};
+  let submitted = "";
+  let currentDraft = "";
+  const Harness = () => {
+    const [draft, setDraft] = React.useState("");
+    currentDraft = draft;
+    return React.createElement(Composer, {
+      value: draft, onChange: setDraft, onSubmit: text => { submitted = text; setDraft(""); },
+      history: [], disabled: false, shellMode: false, placeholder: "Ask Pace", onComplete: () => {}, width: 78,
+    });
+  };
+  const instance = render(React.createElement(Harness), {
+    stdin, stdout, stderr: new PassThrough(), interactive: true, patchConsole: false, alternateScreen: false,
+  });
+  try {
+    await instance.waitUntilRenderFlush();
+    stdin.write("\x1b[200~alpha\nbeta\x1b[201~");
+    await new Promise(resolve => setTimeout(resolve, 10));
+    await instance.waitUntilRenderFlush();
+    expect(stdout.writes.join("")).toContain("[Pasted 2 lines]");
+    expect(stdout.writes.join("")).not.toContain("alpha");
+    stdin.write("\r");
+    await new Promise(resolve => setTimeout(resolve, 10));
+    await instance.waitUntilRenderFlush();
+    expect(submitted).toBe("alpha\nbeta");
+    stdin.write("\x1b[200~alpha\nbeta\x1b[201~");
+    await new Promise(resolve => setTimeout(resolve, 10));
+    await instance.waitUntilRenderFlush();
+    stdin.write("\x7f");
+    await new Promise(resolve => setTimeout(resolve, 10));
+    await instance.waitUntilRenderFlush();
+    expect(currentDraft).toBe("");
+  } finally { instance.unmount(); }
 });
 
 it("recognizes modified Enter and Ctrl+J as newline input", () => {

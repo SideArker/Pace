@@ -57,6 +57,71 @@ export function visibleInputRows(value: string, cursor: number, width: number, m
   return rows.slice(Math.max(0, cursorRow - maxRows + 1), Math.max(maxRows, cursorRow + 1));
 }
 
+export type PastedBlock = { start: number; end: number; lines: number };
+
+export function insertDraftText(value: string, cursor: number, text: string, blocks: PastedBlock[]) {
+  const length = text.length;
+  return {
+    value: value.slice(0, cursor) + text + value.slice(cursor),
+    cursor: cursor + length,
+    blocks: blocks.map(block => block.start >= cursor
+      ? { ...block, start: block.start + length, end: block.end + length }
+      : block),
+  };
+}
+
+export function insertPastedBlock(value: string, cursor: number, text: string, blocks: PastedBlock[]) {
+  const next = insertDraftText(value, cursor, text, blocks);
+  return { ...next, blocks: [...next.blocks, { start: cursor, end: cursor + text.length, lines: text.split("\n").length }]
+    .sort((a, b) => a.start - b.start) };
+}
+
+export function deleteDraftRange(value: string, start: number, end: number, blocks: PastedBlock[]) {
+  let expanded = true;
+  while (expanded) {
+    expanded = false;
+    for (const block of blocks) {
+      if (start < block.end && end > block.start && (start > block.start || end < block.end)) {
+        start = Math.min(start, block.start);
+        end = Math.max(end, block.end);
+        expanded = true;
+      }
+    }
+  }
+  const length = end - start;
+  return {
+    value: value.slice(0, start) + value.slice(end),
+    cursor: start,
+    blocks: blocks.filter(block => block.end <= start || block.start >= end).map(block => block.start >= end
+      ? { ...block, start: block.start - length, end: block.end - length }
+      : block),
+  };
+}
+
+export function skipPastedBlock(cursor: number, direction: "left" | "right", blocks: PastedBlock[]): number {
+  const block = blocks.find(item => cursor > item.start && cursor < item.end);
+  return block ? direction === "left" ? block.start : block.end : cursor;
+}
+
+export function displayPastedBlocks(value: string, cursor: number, blocks: PastedBlock[]) {
+  let display = "";
+  let rawIndex = 0;
+  let displayCursor = cursor;
+  const markers: { start: number; end: number }[] = [];
+  for (const block of blocks) {
+    display += value.slice(rawIndex, block.start);
+    const marker = `[Pasted ${block.lines} line${block.lines === 1 ? "" : "s"}]`;
+    const start = display.length;
+    display += marker;
+    markers.push({ start, end: display.length });
+    if (cursor >= block.end) displayCursor += marker.length - (block.end - block.start);
+    else if (cursor > block.start) displayCursor = start;
+    rawIndex = block.end;
+  }
+  display += value.slice(rawIndex);
+  return { value: display, cursor: displayCursor, markers };
+}
+
 export function verticalCursor(value: string, cursor: number, direction: "up" | "down"): number | undefined {
   const lineStart = value.lastIndexOf("\n", cursor - 1) + 1;
   const column = cursor - lineStart;
@@ -163,23 +228,34 @@ export function Composer({ value, onChange, onSubmit, onImagePaste, history, dis
     };
   }, [width, stdout]);
   const [cursor, setCursor] = useState(0);
+  const [pastedBlocks, setPastedBlocks] = useState<PastedBlock[]>([]);
   const [historyIndex, setHistoryIndex] = useState<number>();
   const [savedDraft, setSavedDraft] = useState("");
   const previousValue = useRef(value);
+  const expectedValue = useRef(value);
   useEffect(() => {
     if (!previousValue.current && value) setCursor(value.length);
+    if (value !== expectedValue.current) setPastedBlocks([]);
     previousValue.current = value;
+    expectedValue.current = value;
   }, [value]);
-  const insert = (text: string) => {
-    onChange(value.slice(0, cursor) + text + value.slice(cursor));
-    setCursor(cursor + text.length);
+  const changeDraft = (next: { value: string; cursor: number; blocks: PastedBlock[] }) => {
+    expectedValue.current = next.value;
+    onChange(next.value);
+    setCursor(next.cursor);
+    setPastedBlocks(next.blocks);
     setHistoryIndex(undefined);
+  };
+  const insert = (text: string) => {
+    changeDraft(insertDraftText(value, cursor, text, pastedBlocks));
   };
   const insertLatest = useRef(insert);
   insertLatest.current = insert;
   const active = useRef(true);
   useEffect(() => () => { active.current = false; }, []);
-  usePaste((text) => { if (!disabled) insert(text.replace(/\r\n?/g, "\n")); }, { isActive: !disabled });
+  usePaste((text) => {
+    if (!disabled && text) changeDraft(insertPastedBlock(value, cursor, text.replace(/\r\n?/g, "\n"), pastedBlocks));
+  }, { isActive: !disabled });
   useInput((input, key) => {
     if (key.ctrl && input === "c") return;
     if (!shellMode && onImagePaste && ((key.ctrl && input === "v") || (key.meta && input === "v"))) {
@@ -189,7 +265,7 @@ export function Composer({ value, onChange, onSubmit, onImagePaste, history, dis
     if (isNewlineKey(input, key)) { insert("\n"); return; }
     if (key.upArrow || key.downArrow) {
       const nextCursor = verticalCursor(value, cursor, key.upArrow ? "up" : "down");
-      if (nextCursor !== undefined) { setCursor(nextCursor); return; }
+      if (nextCursor !== undefined) { setCursor(skipPastedBlock(nextCursor, key.upArrow ? "left" : "right", pastedBlocks)); return; }
       if (onHistory?.(key.upArrow ? "up" : "down")) return;
       if (key.downArrow && historyIndex === undefined && onMoveDown?.()) return;
       if (!history.length) return;
@@ -199,6 +275,7 @@ export function Composer({ value, onChange, onSubmit, onImagePaste, history, dis
       const recalled = next === history.length ? savedDraft : history[next]!;
       onChange(recalled);
       setCursor(recalled.length);
+      setPastedBlocks([]);
       setHistoryIndex(next === history.length ? undefined : next);
       return;
     }
@@ -211,54 +288,54 @@ export function Composer({ value, onChange, onSubmit, onImagePaste, history, dis
       }
       if (value.trim()) onSubmit(value);
       setCursor(0);
+      setPastedBlocks([]);
       setHistoryIndex(undefined);
       return;
     }
-    if (key.leftArrow) { setCursor(Math.max(0, cursor - 1)); return; }
+    if (key.leftArrow) { setCursor(skipPastedBlock(Math.max(0, cursor - 1), "left", pastedBlocks)); return; }
     if (key.rightArrow) {
       if (!value) {
         const queued = onQueueEdit?.();
-        if (queued !== undefined) { onChange(queued); setCursor(queued.length); setHistoryIndex(undefined); return; }
+        if (queued !== undefined) { onChange(queued); setCursor(queued.length); setPastedBlocks([]); setHistoryIndex(undefined); return; }
       }
-      setCursor(Math.min(value.length, cursor + 1));
+      setCursor(skipPastedBlock(Math.min(value.length, cursor + 1), "right", pastedBlocks));
       return;
     }
-    if (key.home) { setCursor(value.lastIndexOf("\n", cursor - 1) + 1); return; }
-    if (key.end) { const end = value.indexOf("\n", cursor); setCursor(end < 0 ? value.length : end); return; }
+    if (key.home) { setCursor(skipPastedBlock(value.lastIndexOf("\n", cursor - 1) + 1, "left", pastedBlocks)); return; }
+    if (key.end) { const end = value.indexOf("\n", cursor); setCursor(skipPastedBlock(end < 0 ? value.length : end, "right", pastedBlocks)); return; }
     if (isAltDeleteKey(input, key)) {
       if (!value) {
         if (onDeleteQueued?.()) return;
       }
       if (cursor < value.length) {
         const next = deleteWordForward(value, cursor);
-        onChange(next.value);
-        setCursor(next.cursor);
+        changeDraft(deleteDraftRange(value, cursor, cursor + value.length - next.value.length, pastedBlocks));
       } else if (cursor > 0) {
         const next = deleteWordBackward(value, cursor);
-        onChange(next.value);
-        setCursor(next.cursor);
+        changeDraft(deleteDraftRange(value, next.cursor, cursor, pastedBlocks));
       }
       return;
     }
     if (isAltBackspaceKey(input, key)) {
       if (cursor > 0) {
         const next = deleteWordBackward(value, cursor);
-        onChange(next.value);
-        setCursor(next.cursor);
+        changeDraft(deleteDraftRange(value, next.cursor, cursor, pastedBlocks));
       }
       return;
     }
     if (key.backspace || key.delete) {
-      if (key.backspace && cursor > 0) { onChange(value.slice(0, cursor - 1) + value.slice(cursor)); setCursor(cursor - 1); }
-      if (key.delete && cursor < value.length) onChange(value.slice(0, cursor) + value.slice(cursor + 1));
+      if (key.backspace && cursor > 0) changeDraft(deleteDraftRange(value, cursor - 1, cursor, pastedBlocks));
+      if (key.delete && cursor < value.length) changeDraft(deleteDraftRange(value, cursor, cursor + 1, pastedBlocks));
       return;
     }
     if (!key.escape && !key.ctrl && !key.meta && input) insert(input);
   }, { isActive: !disabled });
-  const ranges = shellMode ? [] : commandRanges(value);
-  const isCommand = (index: number) => shellMode || value.startsWith("!") || ranges.some(range => index >= range.start && index < range.end);
-  const colorAt = (index: number) => isCommand(index) ? "#38BDF8" : paceGradient(columns[index]!, terminalWidth);
-  const columns = inputColumns(value, terminalWidth, shellMode);
+  const display = displayPastedBlocks(value, cursor, pastedBlocks);
+  const ranges = shellMode ? [] : commandRanges(display.value);
+  const isMarker = (index: number) => display.markers.some(marker => index >= marker.start && index < marker.end);
+  const isCommand = (index: number) => shellMode || display.value.startsWith("!") || ranges.some(range => index >= range.start && index < range.end);
+  const colorAt = (index: number) => isMarker(index) ? "#A5B4FC" : isCommand(index) ? "#38BDF8" : paceGradient(columns[index]!, terminalWidth);
+  const columns = inputColumns(display.value, terminalWidth, shellMode);
   const renderText = (text: string, start: number) => {
     let position = start;
     // Keep styled spans grouped within each visible row.
@@ -275,7 +352,7 @@ export function Composer({ value, onChange, onSubmit, onImagePaste, history, dis
   const hasGhost = !!(completion && prefix && completion.startsWith(prefix) && cursor === value.length);
   const ghostText = hasGhost ? completion.slice(prefix.length) : "";
   const inputWidth = Math.max(1, terminalWidth - (shellMode ? 10 : 3) - 1);
-  const visibleRows = visibleInputRows(value, cursor, inputWidth, maxRows);
+  const visibleRows = visibleInputRows(display.value, display.cursor, inputWidth, maxRows);
 
   return (
     <Box flexDirection="column" width="100%">
@@ -292,16 +369,16 @@ export function Composer({ value, onChange, onSubmit, onImagePaste, history, dis
         )}
         <Box flexGrow={1} flexShrink={1} minWidth={1} flexDirection="column">
           {visibleRows.map(({ start, end }) => {
-            const hasCursor = cursor >= start && (cursor < end || (cursor === end && (value[cursor] === "\n" || cursor === value.length)));
-            const before = value.slice(start, hasCursor ? cursor : end);
-            const at = value[cursor] && cursor < end ? value[cursor]! : " ";
-            const after = hasCursor ? value.slice(cursor + (cursor < end ? 1 : 0), end) : "";
+            const hasCursor = display.cursor >= start && (display.cursor < end || (display.cursor === end && (display.value[display.cursor] === "\n" || display.cursor === display.value.length)));
+            const before = display.value.slice(start, hasCursor ? display.cursor : end);
+            const at = display.value[display.cursor] && display.cursor < end ? display.value[display.cursor]! : " ";
+            const after = hasCursor ? display.value.slice(display.cursor + (display.cursor < end ? 1 : 0), end) : "";
             return <Text key={start} wrap="truncate">
-              {value ? renderText(before, start) : null}
-              {hasCursor ? <Text inverse color={value ? colorAt(cursor) : "gray"}>
-                {value ? <Text bold={isCommand(cursor)}>{at}</Text> : placeholder[0] ?? " "}
+              {display.value ? renderText(before, start) : null}
+              {hasCursor ? <Text inverse color={display.value ? colorAt(display.cursor) : "gray"}>
+                {display.value ? <Text bold={isCommand(display.cursor)}>{at}</Text> : placeholder[0] ?? " "}
               </Text> : null}
-              {value ? renderText(after, hasCursor ? cursor + (cursor < end ? 1 : 0) : end) : <Text color="gray">{placeholder.slice(1)}</Text>}
+              {display.value ? renderText(after, hasCursor ? display.cursor + (display.cursor < end ? 1 : 0) : end) : <Text color="gray">{placeholder.slice(1)}</Text>}
               {hasCursor && hasGhost ? <Text color="#64748B" italic>{ghostText}<Text color="#475569" dimColor> (Tab)</Text></Text> : null}
             </Text>;
           })}
