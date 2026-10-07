@@ -1361,14 +1361,17 @@ export default function App({ onClear }: { onClear: () => void }) {
   const contentWidth = Math.max(20, terminalColumns - 2);
 
   return (
-    <Box flexDirection="column" paddingX={1} width={terminalColumns}>
+    // Ink clears the terminal on every update when the live frame exceeds the viewport.
+    <Box flexDirection="column" paddingX={1} width={terminalColumns} maxHeight={Math.max(1, terminalRows - 1)} overflowY="hidden">
       <Static key={staticKey} items={staticItems} style={{ width: contentWidth }}>
         {item => item.kind === "logo"
           ? <HeaderLogo key="logo" width={contentWidth} />
           : <Transcript key={item.group[0]?.id} lines={item.group} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} width={contentWidth} />}
       </Static>
       {showHeader ? <HeaderStatus project={project} vexState={vexState} width={contentWidth} /> : null}
-      <Transcript lines={liveLines.slice(-Math.max(1, Math.floor(((terminalRows - 12) / 4))))} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} livePreview width={contentWidth} />
+      <Box flexDirection="column" flexShrink={1} minHeight={0} overflowY="hidden">
+        <Transcript lines={liveLines.slice(-Math.max(1, Math.floor(((terminalRows - 12) / 4))))} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} livePreview width={contentWidth} />
+      </Box>
       {modelMenu ? <ModelMenu mode={modelMenu} models={menuModels} availableModels={availableModels.map(model => model.model)} efforts={menuEfforts} catalogStatus={modelCatalogStatus} selectedModel={menuModel} selectedIndex={menuIndex} config={config} /> : null}
       {approvalMenu ? <ApprovalModeMenu selectedIndex={menuIndex} currentMode={config?.approvalMode ?? "request-approval"} /> : null}
       {convoMenu && session ? <ConvoMenu turns={session.turns} selectedIndex={menuIndex} /> : null}
