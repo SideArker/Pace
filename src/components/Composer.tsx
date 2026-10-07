@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useInput, usePaste, useStdout } from "ink";
+import stringWidth from "string-width";
 import { letterGradients } from "./Transcript.js";
 
 export function paceGradient(column: number, width: number): string {
@@ -26,6 +27,34 @@ export function inputColumns(value: string, width: number, shellMode: boolean): 
     else offset = (offset + 1) % lineWidth;
   }
   return columns;
+}
+
+export function visibleInputRows(value: string, cursor: number, width: number, maxRows: number): { start: number; end: number }[] {
+  const rows: { start: number; end: number }[] = [];
+  let start = 0;
+  let column = 0;
+  let cursorRow = 0;
+  for (let index = 0; index < value.length; index++) {
+    const char = value[index]!;
+    if (char === "\n") {
+      if (index === cursor) cursorRow = rows.length;
+      rows.push({ start, end: index });
+      start = index + 1;
+      column = 0;
+    } else {
+      const charWidth = stringWidth(char);
+      if (column && column + charWidth > width) {
+        rows.push({ start, end: index });
+        start = index;
+        column = 0;
+      }
+      column += charWidth;
+      if (index === cursor) cursorRow = rows.length;
+    }
+  }
+  rows.push({ start, end: value.length });
+  if (cursor === value.length) cursorRow = rows.length - 1;
+  return rows.slice(Math.max(0, cursorRow - maxRows + 1), Math.max(maxRows, cursorRow + 1));
 }
 
 export function verticalCursor(value: string, cursor: number, direction: "up" | "down"): number | undefined {
@@ -111,9 +140,10 @@ type Props = {
   onQueueEdit?: () => string | undefined;
   onDeleteQueued?: () => boolean;
   width?: number;
+  maxRows?: number;
 };
 
-export function Composer({ value, onChange, onSubmit, onImagePaste, history, disabled, shellMode, placeholder, completion, completionStart, onComplete, onHistory, onMoveDown, onQueueEdit, onDeleteQueued, width }: Props) {
+export function Composer({ value, onChange, onSubmit, onImagePaste, history, disabled, shellMode, placeholder, completion, completionStart, onComplete, onHistory, onMoveDown, onQueueEdit, onDeleteQueued, width, maxRows = 4 }: Props) {
   const { stdout } = useStdout();
   const [terminalWidth, setTerminalWidth] = useState(width ?? stdout?.columns ?? 80);
 
@@ -225,17 +255,13 @@ export function Composer({ value, onChange, onSubmit, onImagePaste, history, dis
     }
     if (!key.escape && !key.ctrl && !key.meta && input) insert(input);
   }, { isActive: !disabled });
-  const before = value.slice(0, cursor);
-  const at = value[cursor] ?? " ";
-  const after = value.slice(cursor + (cursor < value.length ? 1 : 0));
   const ranges = shellMode ? [] : commandRanges(value);
   const isCommand = (index: number) => shellMode || value.startsWith("!") || ranges.some(range => index >= range.start && index < range.end);
   const colorAt = (index: number) => isCommand(index) ? "#38BDF8" : paceGradient(columns[index]!, terminalWidth);
   const columns = inputColumns(value, terminalWidth, shellMode);
   const renderText = (text: string, start: number) => {
     let position = start;
-    // Keep each word together as one Ink text node so its word-aware wrapper
-    // can move it intact to the next line.
+    // Keep styled spans grouped within each visible row.
     return text
       .split(/(\s+)/)
       .filter((part) => part.length > 0)
@@ -248,6 +274,8 @@ export function Composer({ value, onChange, onSubmit, onImagePaste, history, dis
   const prefix = completionStart === undefined ? "" : value.slice(completionStart);
   const hasGhost = !!(completion && prefix && completion.startsWith(prefix) && cursor === value.length);
   const ghostText = hasGhost ? completion.slice(prefix.length) : "";
+  const inputWidth = Math.max(1, terminalWidth - (shellMode ? 10 : 3) - 1);
+  const visibleRows = visibleInputRows(value, cursor, inputWidth, maxRows);
 
   return (
     <Box flexDirection="column" width="100%">
@@ -262,20 +290,21 @@ export function Composer({ value, onChange, onSubmit, onImagePaste, history, dis
             <Text color="#59E6A7" bold>❯</Text>
           </Box>
         )}
-        <Box flexGrow={1} flexShrink={1} minWidth={1}>
-          <Text wrap="wrap">
-            {value ? renderText(before, 0) : null}
-            <Text inverse color={value ? colorAt(cursor) : "gray"}>
-              {value ? <Text bold={isCommand(cursor)}>{at}</Text> : placeholder[0] ?? " "}
-            </Text>
-            {value ? renderText(after, cursor + (cursor < value.length ? 1 : 0)) : <Text color="gray">{placeholder.slice(1)}</Text>}
-            {hasGhost ? (
-              <Text color="#64748B" italic>
-                {ghostText}
-                <Text color="#475569" dimColor> (Tab)</Text>
-              </Text>
-            ) : null}
-          </Text>
+        <Box flexGrow={1} flexShrink={1} minWidth={1} flexDirection="column">
+          {visibleRows.map(({ start, end }) => {
+            const hasCursor = cursor >= start && (cursor < end || (cursor === end && (value[cursor] === "\n" || cursor === value.length)));
+            const before = value.slice(start, hasCursor ? cursor : end);
+            const at = value[cursor] && cursor < end ? value[cursor]! : " ";
+            const after = hasCursor ? value.slice(cursor + (cursor < end ? 1 : 0), end) : "";
+            return <Text key={start} wrap="truncate">
+              {value ? renderText(before, start) : null}
+              {hasCursor ? <Text inverse color={value ? colorAt(cursor) : "gray"}>
+                {value ? <Text bold={isCommand(cursor)}>{at}</Text> : placeholder[0] ?? " "}
+              </Text> : null}
+              {value ? renderText(after, hasCursor ? cursor + (cursor < end ? 1 : 0) : end) : <Text color="gray">{placeholder.slice(1)}</Text>}
+              {hasCursor && hasGhost ? <Text color="#64748B" italic>{ghostText}<Text color="#475569" dimColor> (Tab)</Text></Text> : null}
+            </Text>;
+          })}
         </Box>
       </Box>
     </Box>

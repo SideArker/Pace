@@ -1,7 +1,7 @@
 import React from "react";
 import { renderToString, Text } from "ink";
 import { expect, it } from "vitest";
-import { Composer, commandRanges, commandToken, deleteWordBackward, deleteWordForward, inputColumns, isAltBackspaceKey, isAltDeleteKey, isNewlineKey, paceGradient, verticalCursor } from "../src/components/Composer.js";
+import { Composer, commandRanges, commandToken, deleteWordBackward, deleteWordForward, inputColumns, isAltBackspaceKey, isAltDeleteKey, isNewlineKey, paceGradient, verticalCursor, visibleInputRows } from "../src/components/Composer.js";
 import { ComposerFrame } from "../src/components/ComposerFrame.js";
 import { newSession } from "../src/core/sessions.js";
 import { normalizeNewCommand } from "../src/components/App.js";
@@ -54,6 +54,14 @@ it("maps the PACE gradient across terminal columns", () => {
 it("tracks input position across wraps and newlines", () => {
   expect(inputColumns("abcde\nx", 8, false)).toEqual([3, 4, 5, 6, 3, 4, 3, 4]);
   expect(inputColumns("a", 20, true)).toEqual([10, 11]);
+});
+
+it("keeps long input bounded around the cursor", () => {
+  const value = "abcdefghijklmnopqrst";
+  expect(visibleInputRows(value, value.length, 5, 2)).toEqual([{ start: 10, end: 15 }, { start: 15, end: 20 }]);
+  expect(visibleInputRows(value, 0, 5, 2)).toEqual([{ start: 0, end: 5 }, { start: 5, end: 10 }]);
+  expect(visibleInputRows("first\nsecond", 5, 20, 2)).toEqual([{ start: 0, end: 5 }, { start: 6, end: 12 }]);
+  expect(visibleInputRows("abcdefghij", 5, 5, 2)).toEqual([{ start: 0, end: 5 }, { start: 5, end: 10 }]);
 });
 
 it("recognizes modified Enter and Ctrl+J as newline input", () => {
@@ -146,12 +154,23 @@ it("wraps long drafts inside narrow terminals", () => {
     history: [],
     disabled: false,
     shellMode: false,
+    width: 15,
     placeholder: "Ask Pace",
     onComplete: () => {},
   }), { columns: 15 });
   expect(output.split("\n").every(line => line.length <= 15), JSON.stringify(output)).toBe(true);
-  expect(output).toContain("seven");
-  expect(output).toContain("one two three\n  four five six\n  seven eight");
+  expect(output.split("\n").length).toBeLessThanOrEqual(4);
+  expect(output).toContain("one two");
+});
+
+it("bounds long unbroken input to composer width and height", () => {
+  const output = renderToString(React.createElement(Composer, {
+    value: "s".repeat(100), onChange: () => {}, onSubmit: () => {}, history: [],
+    disabled: false, shellMode: false, width: 15, maxRows: 2,
+    placeholder: "Ask Pace", onComplete: () => {},
+  }), { columns: 15 });
+  expect(output.split("\n")).toHaveLength(2);
+  expect(output.split("\n").every(line => line.length <= 15)).toBe(true);
 });
 
 it("keeps multiline shell input within a narrow terminal", () => {

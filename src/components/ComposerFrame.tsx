@@ -28,7 +28,7 @@ export function ComposerFrame({ children, width, session, shellMode, approvalMod
     </Box>
   );
   return (
-    <Box flexDirection="column" width="100%" marginTop={1}>
+    <Box flexDirection="column" width="100%" marginTop={1} flexShrink={0}>
       <Text color="#334155" wrap="truncate">{rule}</Text>
       {children}
       <Text color="#334155" wrap="truncate">{rule}</Text>

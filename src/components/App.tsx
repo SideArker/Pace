@@ -1368,6 +1368,7 @@ export default function App({ onClear }: { onClear: () => void }) {
           ? <HeaderLogo key="logo" width={contentWidth} />
           : <Transcript key={item.group[0]?.id} lines={item.group} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} width={contentWidth} />}
       </Static>
+      <Box flexDirection="column" flexShrink={1} minHeight={0} overflowY="hidden">
       {showHeader ? <HeaderStatus project={project} vexState={vexState} width={contentWidth} /> : null}
       <Box flexDirection="column" flexShrink={1} minHeight={0} overflowY="hidden">
         <Transcript lines={liveLines.slice(-Math.max(1, Math.floor(((terminalRows - 12) / 4))))} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} livePreview width={contentWidth} />
@@ -1395,8 +1396,9 @@ export default function App({ onClear }: { onClear: () => void }) {
       {question ? <QuestionPanel key={`${session?.id}-${question.id}`} questions={question.questions} onSubmit={question.respond} isActive={!pickerFocused && !approval} /> : null}
       {cancelArmed ? <Text color="#FBBF24">Press Esc again to cancel the turn</Text> : null}
       {session?.deferredTurn && !busy ? <Text color="#FBBF24">Usage limit: saved request resumes after {new Date(session.deferredTurn.retryAt).toLocaleString()} while Pace is open, or on next launch.</Text> : null}
+      </Box>
       <ComposerFrame width={contentWidth} session={session} shellMode={shellMode} approvalMode={config?.approvalMode}>
-        <Composer key={session?.id} value={draft} onChange={value => { setDraft(value); setSelection(0); }} onSubmit={value => { void submit(value); }} history={history}
+        <Composer key={session?.id} value={draft} width={contentWidth} maxRows={Math.max(1, Math.min(4, Math.floor(terminalRows / 5)))} onChange={value => { setDraft(value); setSelection(0); }} onSubmit={value => { void submit(value); }} history={history}
           onImagePaste={async () => {
             try {
               const path = await saveClipboardImage(project);
