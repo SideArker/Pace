@@ -151,7 +151,14 @@ export function Composer({ value, onChange, onSubmit, onImagePaste, history, dis
   useEffect(() => () => { active.current = false; }, []);
   usePaste((text) => { if (!disabled) insert(text.replace(/\r\n?/g, "\n")); }, { isActive: !disabled });
   useInput((input, key) => {
-    if (key.ctrl && input === "c") return;
+    if (key.ctrl && input === "c") {
+      if (value) {
+        onChange("");
+        setCursor(0);
+        setHistoryIndex(undefined);
+      }
+      return;
+    }
     if (!shellMode && onImagePaste && ((key.ctrl && input === "v") || (key.meta && input === "v"))) {
       void onImagePaste().then(marker => { if (active.current && marker) insertLatest.current(`${value ? " " : ""}${marker} `); });
       return;

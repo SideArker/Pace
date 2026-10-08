@@ -14,6 +14,7 @@ it('stores a session atomically under a hashed project key and reloads it', asyn
   expect(projectKey('/example/project')).toMatch(/^[a-f0-9]{64}$/);
   expect((await readdir(store.sessionDir('/example/project'))).sort()).toEqual([`${session.id}.json`, 'active.json'].sort());
   expect((await readFile(join(store.sessionDir('/example/project'), `${session.id}.json`), 'utf8'))).toContain('thread-123');
+  expect(store.conversationDir('/example/project', session.id)).toBe(join(store.sessionDir('/example/project'), session.id));
 });
 it('skips corrupted session files', async () => {
   dir = await mkdtemp(join(tmpdir(), 'pace-test-'));

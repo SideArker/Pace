@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { resolve, join } from "node:path";
 import {
+  cp,
   mkdir,
   readFile,
   readdir,
@@ -38,6 +39,9 @@ export class PaceStore {
   ) {}
   sessionDir(project: string): string {
     return join(this.baseDir, "sessions", projectKey(project));
+  }
+  conversationDir(project: string, sessionId: string): string {
+    return join(this.sessionDir(project), sessionId);
   }
   async loadConfig(): Promise<Config> {
     try {
@@ -164,7 +168,13 @@ export class PaceStore {
     const archive = join(archiveRoot, `${projectKey(oldProject)}-${randomUUID()}`);
     await mkdir(staged, { recursive: true });
     try {
-      for (const session of sessions) await atomicJson(join(staged, `${session.id}.json`), session);
+      for (const session of sessions) {
+        await atomicJson(join(staged, `${session.id}.json`), session);
+        const convoDir = join(source, session.id);
+        if (await stat(convoDir).then(s => s.isDirectory()).catch(() => false)) {
+          await cp(convoDir, join(staged, session.id), { recursive: true });
+        }
+      }
       if (activeId) await atomicJson(join(staged, "active.json"), { id: activeId });
       await mkdir(archiveRoot, { recursive: true });
       await rename(source, archive);

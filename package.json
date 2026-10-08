@@ -13,7 +13,9 @@
   "version": "0.1.0",
   "description": "Terminal coding client using Codex App Server and Vex MCP routing",
   "bin": {
-    "pace": "dist/entrypoints/cli.js"
+    "pace": "dist/entrypoints/cli.js",
+    "vex": "bin/vex.js",
+    "jev": "bin/jev.js"
   },
   "main": "index.js",
   "scripts": {
@@ -27,7 +29,8 @@
     "benchmark:routing": "npm run build && node dist/entrypoints/routing-benchmark.js",
     "benchmark:grade": "tsx benchmark/grading/grade.ts",
     "benchmark:check": "tsc -p benchmark/tsconfig.json",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "postinstall": "node bin/setup.js"
   },
   "repository": {
     "type": "git",

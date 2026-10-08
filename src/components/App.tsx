@@ -1266,7 +1266,8 @@ export default function App({ onClear }: { onClear: () => void }) {
         <Composer key={session?.id} value={draft} onChange={value => { setDraft(value); setSelection(0); }} onSubmit={value => { void submit(value); }} history={history}
           onImagePaste={async () => {
             try {
-              const path = await saveClipboardImage(project);
+              const targetDir = session ? store.conversationDir(project, session.id) : join(store.sessionDir(project), "pasted-images");
+              const path = await saveClipboardImage(targetDir);
               if (!path) add("info", "No image found in clipboard. On WSL, use Alt+V when terminal handles Ctrl+V.");
               return path ? `[Pace image: ${path}]` : undefined;
             } catch (error) {

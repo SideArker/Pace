@@ -7,10 +7,15 @@ import { promisify } from "node:util";
 const run = promisify(execFile);
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 21 * 1024 * 1024;
+const CLIPBOARD_TIMEOUT_MS = 5000;
 
 async function clipboardBytes(command: string, args: string[]): Promise<Buffer | undefined> {
   try {
-    const { stdout } = await run(command, args, { encoding: "buffer", maxBuffer: MAX_OUTPUT_BYTES });
+    const { stdout } = await run(command, args, {
+      encoding: "buffer",
+      maxBuffer: MAX_OUTPUT_BYTES,
+      timeout: CLIPBOARD_TIMEOUT_MS,
+    });
     return stdout.length ? stdout : undefined;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER")
@@ -45,15 +50,14 @@ async function readClipboardImage(): Promise<Buffer | undefined> {
   return undefined;
 }
 
-export async function saveClipboardImage(projectPath: string): Promise<string | undefined> {
+export async function saveClipboardImage(targetFolder: string): Promise<string | undefined> {
   const bytes = await readClipboardImage();
   if (!bytes) return undefined;
   if (bytes.length > MAX_IMAGE_BYTES) throw new Error("Clipboard image exceeds 15 MB.");
   const extension = imageExtension(bytes);
   if (!extension) throw new Error("Clipboard contains an unsupported image format.");
-  const folder = join(projectPath, ".pace", "pasted-images");
-  await mkdir(folder, { recursive: true });
-  const path = join(folder, `${randomUUID()}.${extension}`);
+  await mkdir(targetFolder, { recursive: true });
+  const path = join(targetFolder, `${randomUUID()}.${extension}`);
   await writeFile(path, bytes, { flag: "wx" });
   return path;
 }
