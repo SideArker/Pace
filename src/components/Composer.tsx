@@ -257,7 +257,14 @@ export function Composer({ value, onChange, onSubmit, onImagePaste, history, dis
     if (!disabled && text) changeDraft(insertPastedBlock(value, cursor, text.replace(/\r\n?/g, "\n"), pastedBlocks));
   }, { isActive: !disabled });
   useInput((input, key) => {
-    if (key.ctrl && input === "c") return;
+    if (key.ctrl && input === "c") {
+      if (value) {
+        onChange("");
+        setCursor(0);
+        setHistoryIndex(undefined);
+      }
+      return;
+    }
     if (!shellMode && onImagePaste && ((key.ctrl && input === "v") || (key.meta && input === "v"))) {
       void onImagePaste().then(marker => { if (active.current && marker) insertLatest.current(`${value ? " " : ""}${marker} `); });
       return;

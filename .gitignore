@@ -11,6 +11,7 @@ build/
 .env
 .env.*
 !.env.example
+.*_key
 
 # Local application data
 .pace/

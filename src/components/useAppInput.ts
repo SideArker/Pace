@@ -2,7 +2,7 @@ import { useInput } from "ink";
 import { useEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import type { ApprovalDecision, Progress } from "../integrations/codex.js";
 import { EFFORTS } from "../shared/config.js";
-import type { ApprovalMode, Session } from "../shared/types.js";
+import type { ApprovalMode, Route, Session } from "../shared/types.js";
 import { PaceStore, rewindConversation, deleteConversationTurn, undoConversationTurn } from "../core/sessions.js";
 import type { PromptQueue } from "../core/prompt-queue.js";
 import { isAltDeleteKey } from "./Composer.js";
@@ -37,6 +37,10 @@ export function useAppInput(options: {
   approvalMenu: boolean;
   setApprovalMenu: Dispatch<SetStateAction<boolean>>;
   selectApprovalMode: (mode: ApprovalMode) => Promise<void>;
+  manualMenu?: boolean;
+  setManualMenu?: Dispatch<SetStateAction<boolean>>;
+  manualRoutes?: Route[];
+  selectManualRoute?: (route: Route | (typeof EFFORTS)[number]) => Promise<void>;
   setModelMenu: Dispatch<SetStateAction<"models" | "efforts" | undefined>>;
   menuModels: string[];
   menuEfforts: readonly (typeof EFFORTS)[number][];
@@ -45,7 +49,6 @@ export function useAppInput(options: {
   setMenuModel: Dispatch<SetStateAction<string>>;
   toggleModel: (name: string) => void;
   toggleEffort: (effort: (typeof EFFORTS)[number]) => void;
-  selectManualRoute: (effort: (typeof EFFORTS)[number]) => Promise<void>;
   resumeMenu: boolean;
   setResumeMenu: Dispatch<SetStateAction<boolean>>;
   resumeChoices: Session[];
@@ -57,6 +60,7 @@ export function useAppInput(options: {
   store: PaceStore;
   setSession: Dispatch<SetStateAction<Session | undefined>>;
   renderSessionTurns: (session: Session) => void;
+  draft?: string;
   setDraft: Dispatch<SetStateAction<string>>;
   setHistory: Dispatch<SetStateAction<string[]>>;
   queueMenu?: boolean;
@@ -68,10 +72,12 @@ export function useAppInput(options: {
     interrupt, pickerFocused, setPickerFocused, pickerIndex, setPickerIndex,
     openSessions, activateSession, approval, question, focusPicker, pendingApprovals,
     activeSessionId, jobs, sideAbort, outputsExpanded, setOutputsExpanded, redrawTranscript,
-    modelMenu, setModelMenu, approvalMenu, setApprovalMenu, selectApprovalMode, menuModels, menuEfforts, menuIndex,
-    setMenuIndex, setMenuModel, toggleModel, toggleEffort, selectManualRoute, resumeMenu,
+    modelMenu, setModelMenu, approvalMenu, setApprovalMenu, selectApprovalMode,
+    manualMenu, setManualMenu, manualRoutes, selectManualRoute,
+    menuModels, menuEfforts, menuIndex,
+    setMenuIndex, setMenuModel, toggleModel, toggleEffort, resumeMenu,
     setResumeMenu, resumeChoices, missingProjectPaths, add, convoMenu,
-    setConvoMenu, session, store, setSession, renderSessionTurns, setDraft,
+    setConvoMenu, session, store, setSession, renderSessionTurns, draft, setDraft,
     setHistory, queueMenu, setQueueMenu, promptQueue, setQueueVersion,
   } = options;
   const lastEscape = useRef<{ sessionId: string; at: number } | undefined>(undefined);
@@ -102,8 +108,15 @@ export function useAppInput(options: {
   };
   useInput((input, key) => {
     if (!key.escape) clearEscape();
-    else if (pickerFocused || modelMenu || approvalMenu || resumeMenu || convoMenu || queueMenu) clearEscape();
-    if (key.ctrl && input === "c") { interrupt(); return; }
+    else if (pickerFocused || modelMenu || approvalMenu || resumeMenu || convoMenu || queueMenu || manualMenu) clearEscape();
+    if (key.ctrl && input === "c") {
+      if (draft) {
+        setDraft("");
+        return;
+      }
+      interrupt();
+      return;
+    }
     if (pickerFocused) {
       if (key.escape || key.tab) setPickerFocused(false);
       else if (key.upArrow) {
@@ -130,7 +143,7 @@ export function useAppInput(options: {
       else if (key.escape) handleCancelEscape();
       return;
     }
-    if (key.escape && !modelMenu && !approvalMenu && !resumeMenu && !convoMenu && !queueMenu && !pickerFocused) {
+    if (key.escape && !modelMenu && !approvalMenu && !resumeMenu && !convoMenu && !queueMenu && !manualMenu && !pickerFocused) {
       if (handleCancelEscape()) return;
     }
     if (key.ctrl && (input.toLowerCase() === "o" || input === "\x0f")) {
@@ -153,7 +166,7 @@ export function useAppInput(options: {
         if (modelMenu === "models") toggleModel(menuModels[menuIndex]!);
         else toggleEffort(menuEfforts[menuIndex]!);
       } else if (input.toLowerCase() === "m" && modelMenu === "efforts") {
-        void selectManualRoute(menuEfforts[menuIndex]!);
+        void selectManualRoute?.(menuEfforts[menuIndex]!);
       }
       return;
     }
@@ -163,6 +176,17 @@ export function useAppInput(options: {
       else if (key.upArrow || key.downArrow || key.tab)
         setMenuIndex(value => (value + (key.upArrow ? -1 : 1) + modes.length) % modes.length);
       else if (key.return) void selectApprovalMode(modes[menuIndex] ?? modes[0]!);
+      return;
+    }
+    if (manualMenu) {
+      const routes = manualRoutes ?? [];
+      if (key.escape) setManualMenu?.(false);
+      else if (key.upArrow || key.downArrow || key.tab)
+        setMenuIndex(value => (value + (key.upArrow ? -1 : 1) + routes.length) % routes.length);
+      else if (key.return) {
+        const chosen = routes[menuIndex];
+        if (chosen) void selectManualRoute?.(chosen);
+      }
       return;
     }
     if (resumeMenu) {

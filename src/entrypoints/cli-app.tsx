@@ -11,6 +11,7 @@ import { VexRouter } from "../core/vex/client.js";
 import App from "../components/App.js";
 import { execTurn } from "../core/exec.js";
 import { getGitBranch } from "../core/system/git.js";
+import { hasConfiguredKey, promptForKey } from "../core/system/keys.js";
 
 export function runTerminalClear(): void {
   try {
@@ -30,8 +31,11 @@ const args = process.argv.slice(2);
 if (args.includes("--version")) console.log(`pace ${version}`);
 else if (args.includes("--help"))
   console.log(
-    `Pace ${version} · independent Codex SDK terminal client\n\nUsage: pace [doctor|sessions|reconnect "old path" "new path"|exec "prompt"|--help|--version]\n\nInteractive commands: type / to browse; /models /version /auto /approval /tasks /new /resume /convo /compact /context /usage /cancelretry /btw <question> /artifacts /trust /skills /<skill> /stats /route /clear /exit\nSkills: /skills refreshes the default ~/.agents/skills folder; /skills enable|disable <name>; /skills <folder>|default|off\nBash: ! <command> or ! to toggle Bash mode\nInput: Shift/Ctrl/Alt+Enter or Ctrl+J for newline, arrows for history, Ctrl+O toggles command, diff, and reasoning details`,
+    `Pace ${version} · independent Codex SDK terminal client\n\nUsage: pace [doctor|setup|sessions|reconnect "old path" "new path"|exec "prompt"|--help|--version]\n\nInteractive commands: type / to browse; /help /models /version /auto /approval /tasks /task /new /resume /convo /compact /context /usage /cancelretry /btw <question> /artifacts /trust /skills /<skill> /stats /route /clear /exit\nSkills: /skills refreshes the default ~/.agents/skills folder; /skills enable|disable <name>; /skills <folder>|default|off\nBash: ! <command> or ! to toggle Bash mode\nInput: Shift/Ctrl/Alt+Enter or Ctrl+J for newline, arrows for history, Ctrl+O toggles command, diff, and reasoning details`,
   );
+else if (args[0] === "setup" || args[0] === "set-key") {
+  await promptForKey();
+}
 else if (args[0] === "doctor") {
   const notices: string[] = [];
   const store = new PaceStore(undefined, (message) => notices.push(message));
@@ -67,6 +71,9 @@ else if (args[0] === "doctor") {
     process.exitCode = 1;
   } finally {
     await vex.close();
+  }
+  if (!hasConfiguredKey()) {
+    console.log("API key: missing (run 'pace setup' or set OPENROUTER_API_KEY / TYPESAFE_API_KEY)");
   }
   try {
     if (!getGitBranch(process.cwd())) throw new Error("Git metadata not found");
@@ -108,6 +115,9 @@ else if (args[0] === "doctor") {
   console.error(`Unknown command: ${args.join(" ")}. Run pace --help.`);
   process.exitCode = 2;
 } else {
+  if (!hasConfiguredKey() && process.stdin.isTTY) {
+    await promptForKey();
+  }
   let instance: ReturnType<typeof render>;
   instance = render(<App onClear={() => {
     instance?.clear();
