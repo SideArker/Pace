@@ -115,7 +115,7 @@ export class Orchestrator {
     }
     const skills = enabledSkills(await configuredSkills(config), config);
     const invoked = skillCommand(prompt, skills);
-    const request = invoked ? skillRequest(prompt, invoked) : prompt;
+    let request = invoked ? skillRequest(prompt, invoked) : prompt;
     const option = invoked ? skillOption(invoked, request) : undefined;
     if (invoked) {
       const active = session.activeSkills ?? [];
@@ -222,7 +222,8 @@ export class Orchestrator {
     let note = "Manual route";
     let shape = "single";
     let handoff: string | undefined;
-    const auto = session.routingMode === "auto";
+    let userClarification: string | undefined;
+    let auto = session.routingMode === "auto";
     try {
       if (auto) {
         try {
@@ -261,31 +262,151 @@ export class Orchestrator {
           )
         ).choice;
         if (shape === "clarify") {
-          const result =
-            "What outcome would you like from this request? Please describe the deliverable.";
-          const durationMs = Math.round(performance.now() - startedAt);
-          session.turns = [
-            ...session.turns,
-            {
-              prompt,
+          const isInteractive = (onProgress as { interactive?: boolean }).interactive === true;
+          let userDecision: { choice?: string; clarification?: string; cancelled?: boolean } | undefined;
+
+          if (isInteractive) {
+            onProgress({ kind: "status", text: "Waiting for clarification..." });
+            const formatRoute = (r?: Route) => {
+              if (!r?.model) return "Codex default";
+              const name = r.model.replace(
+                /^gpt-(\d+)-(.+)$/,
+                (_match, version: string, n: string) =>
+                  `GPT-${version} ${n[0]!.toUpperCase()}${n.slice(1)}`,
+              );
+              return `${name}${r.effort ? ` ${r.effort[0]!.toUpperCase()}${r.effort.slice(1)}` : ""}`;
+            };
+            const defaultRouteDesc = formatRoute(session.route);
+            const options = [
+              {
+                label: "Run as single agent",
+                description: "Direct answer or action using the standard route",
+              },
+              ...(enabled.some((m) => m.model === "gpt-6-luna")
+                ? [
+                    {
+                      label: "Scout codebase first",
+                      description: "Read-only exploration to find files and report context",
+                    },
+                  ]
+                : []),
+              {
+                label: "Plan & execute",
+                description: "Create an implementation plan first, then execute",
+              },
+            ];
+            if (session.route?.model) {
+              options.push({
+                label: `Use manual route (${defaultRouteDesc})`,
+                description: `Bypass workflow and route stages directly to ${defaultRouteDesc}`,
+              });
+            }
+
+            userDecision = await new Promise<{ choice?: string; clarification?: string; cancelled?: boolean }>((resolve) => {
+              const questionId = `clarify-${Date.now()}`;
+              const abortListener = () => resolve({ cancelled: true });
+              signal?.addEventListener("abort", abortListener, { once: true });
+
+              onProgress({
+                kind: "question",
+                id: questionId,
+                questions: [
+                  {
+                    id: "workflow",
+                    header: "Clarification Needed",
+                    question: "Vex is unsure about the deliverable for this request. How would you like to proceed?",
+                    options,
+                    isOther: true,
+                    isSecret: false,
+                  },
+                ],
+                respond: (answers: UserAnswers) => {
+                  signal?.removeEventListener("abort", abortListener);
+                  const val = answers["workflow"]?.answers[0]?.trim();
+                  if (!val) {
+                    resolve({ cancelled: true });
+                    return;
+                  }
+                  if (val === "Run as single agent") {
+                    resolve({ choice: "single" });
+                  } else if (val === "Scout codebase first") {
+                    resolve({ choice: "scout" });
+                  } else if (val === "Plan & execute") {
+                    resolve({ choice: "plan_execute" });
+                  } else if (val.startsWith("Use manual route")) {
+                    resolve({ choice: "manual" });
+                  } else {
+                    resolve({ clarification: val });
+                  }
+                },
+              });
+            });
+          }
+
+          if (userDecision?.choice === "manual") {
+            shape = "single";
+            auto = false;
+            route = session.route;
+            note = `Manual route to ${session.route.model ?? "Codex default"}`;
+            systemMessage("Bypassing Vex: running with manual route.");
+            answeredQuestions.push({
+              question: "Vex is unsure about the deliverable for this request. How would you like to proceed?",
+              answer: "Use manual route",
+            });
+          } else if (userDecision?.choice) {
+            shape = userDecision.choice;
+            note = `User chose ${shape} workflow`;
+            systemMessage(`User selected ${shape} workflow.`);
+            answeredQuestions.push({
+              question: "Vex is unsure about the deliverable for this request. How would you like to proceed?",
+              answer: userDecision.choice,
+            });
+          } else if (userDecision?.clarification) {
+            userClarification = userDecision.clarification;
+            systemMessage(`Clarification provided: ${userClarification}`);
+            request = `${request}\n\nUser clarification on deliverable: ${userClarification}`;
+            answeredQuestions.push({
+              question: "Vex is unsure about the deliverable for this request. How would you like to proceed?",
+              answer: userClarification,
+            });
+            try {
+              shape = (
+                await choose(
+                  shapeRequest(request, routingTurns, enabled, prompts, routingState),
+                  "workflow",
+                )
+              ).choice;
+              if (shape === "clarify") shape = "single";
+            } catch {
+              shape = "single";
+            }
+          } else {
+            const result =
+              "What outcome would you like from this request? Please describe the deliverable.";
+            const durationMs = Math.round(performance.now() - startedAt);
+            session.turns = [
+              ...session.turns,
+              {
+                prompt,
+                result,
+                at: new Date().toISOString(),
+                routeNote: "Vex requested clarification",
+                systemMessages,
+                durationMs,
+              },
+            ].slice(-20);
+            await save();
+            return {
+              session,
               result,
-              at: new Date().toISOString(),
-              routeNote: "Vex requested clarification",
-              systemMessages,
+              note: "Vex requested clarification",
+              route: {},
               durationMs,
-            },
-          ].slice(-20);
-          await save();
-          return {
-            session,
-            result,
-            note: "Vex requested clarification",
-            route: {},
-            durationMs,
-            artifacts: [],
-            stages,
-            routing,
-          };
+              artifacts: [],
+              stages,
+              routing,
+            };
+          }
         }
       }
       signal?.throwIfAborted();
@@ -348,10 +469,13 @@ export class Orchestrator {
         kind: "status",
         text: `${note}: ${route.model ?? "Codex default"} · ${route.effort ?? "default"}`,
       });
+      const basePrompt = userClarification
+        ? `${prompt}\n\nClarification: ${userClarification}`
+        : prompt;
       const executionPrompt = handoff
-        ? `${skillPrompt(prompt, skills, session.activeSkills, session.skillOptions)}${shape === "plan_execute" ? "\n\nThe previous stage only prepared a read-only plan. Carry out the requested implementation and verification now." : ""}\n\n${prompts.handoff.reportInstruction}\n${handoff}`
+        ? `${skillPrompt(basePrompt, skills, session.activeSkills, session.skillOptions)}${shape === "plan_execute" ? "\n\nThe previous stage only prepared a read-only plan. Carry out the requested implementation and verification now." : ""}\n\n${prompts.handoff.reportInstruction}\n${handoff}`
         : skillPrompt(
-            prompt,
+            basePrompt,
             skills,
             session.activeSkills,
             session.skillOptions,

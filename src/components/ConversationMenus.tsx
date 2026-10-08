@@ -1,7 +1,6 @@
 import React from "react";
 import { Box, Text } from "ink";
-import type { TurnSummary } from "../shared/types.js";
-import type { ApprovalMode } from "../shared/types.js";
+import type { ApprovalMode, Route, TurnSummary } from "../shared/types.js";
 
 export type ConversationChoice = {
   id: string;
@@ -127,6 +126,59 @@ export function ApprovalModeMenu({ selectedIndex, currentMode }: { selectedIndex
     </Box>)}
     <Text color="#64748B">↑/↓ select · Enter save · Esc close</Text>
   </Box>;
+}
+
+export function ManualRouteMenu({
+  routes,
+  selectedIndex,
+  currentRoute,
+}: {
+  routes: Route[];
+  selectedIndex: number;
+  currentRoute: Route;
+}) {
+  const formatName = (route: Route) => {
+    const name =
+      route.model?.replace(
+        /^gpt-(\d+)-(.+)$/,
+        (_match, ver: string, n: string) =>
+          `GPT-${ver} ${n[0]!.toUpperCase()}${n.slice(1)}`,
+      ) ?? route.model ?? "Unknown";
+    const effort = route.effort
+      ? ` · ${route.effort[0]!.toUpperCase()}${route.effort.slice(1)}`
+      : "";
+    return `${name}${effort}`;
+  };
+  const isCurrent = (route: Route) =>
+    route.model === currentRoute.model && route.effort === currentRoute.effort;
+  const { start, end } = menuWindow(routes.length, selectedIndex);
+
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor="#38BDF8" paddingX={1} marginTop={1}>
+      <Text color="#38BDF8" bold>Manual Route</Text>
+      {routes.slice(start, end).map((route, offset) => {
+        const index = start + offset;
+        const selected = index === selectedIndex;
+        const current = isCurrent(route);
+        return (
+          <Box key={`${route.model}-${route.effort}`} gap={1}>
+            <Text color={selected ? "#38BDF8" : "#64748B"}>{selected ? "▶" : " "}</Text>
+            <Text color={current ? "#59E6A7" : "#64748B"}>{current ? "●" : "○"}</Text>
+            <Text color={selected ? "white" : "#CBD5E1"}>
+              {formatName(route)}
+              {current ? " (current)" : ""}
+            </Text>
+          </Box>
+        );
+      })}
+      {routes.length > 5 ? (
+        <Text color="#64748B">
+          {start + 1}–{end} of {routes.length}
+        </Text>
+      ) : null}
+      <Text color="#64748B">↑/↓ select · Enter save · Esc close</Text>
+    </Box>
+  );
 }
 
 export function CommandMenu({

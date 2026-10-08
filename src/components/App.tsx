@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Box, Static, Text, useApp, useStdout } from "ink";
 import type { ApprovalDecision, Progress } from "../integrations/codex.js";
 import type { UserAnswers } from "../integrations/codex-types.js";
-import type { ApprovalMode, Config, Session } from "../shared/types.js";
+import type { ApprovalMode, Config, Route, Session } from "../shared/types.js";
 import { PaceStore, newSession, rewindConversation, deleteConversationTurn, undoConversationTurn } from "../core/sessions.js";
 import { Orchestrator, VexUnavailableError } from "../core/orchestrator.js";
 import { PromptQueue } from "../core/prompt-queue.js";
@@ -26,8 +26,8 @@ import { useAppInput } from "./useAppInput.js";
 import { Transcript, splitTranscript, type Line } from "./Transcript.js";
 import { HeaderLogo, HeaderStatus } from "./Header.js";
 import { UsageBar } from "./UsageBar.js";
-import { ApprovalModeMenu, CommandMenu, ConversationPicker, ConvoMenu, ModelMenu, QueueMenu, ResumeMenu, sectionConversations, type ConversationChoice } from "./Menus.js";
-import { resolve } from "node:path";
+import { ApprovalModeMenu, CommandMenu, ConversationPicker, ConvoMenu, ManualRouteMenu, ModelMenu, QueueMenu, ResumeMenu, sectionConversations, type ConversationChoice } from "./Menus.js";
+import { join, resolve } from "node:path";
 import { createShellRunner, displayCommand, formatCommandActivity, oneOffShellCommand } from "./shell-runner.js";
 import { RunningProcesses, updateProcesses, type RunningProcess } from "./RunningProcesses.js";
 import { TaskPanel } from "./TaskPanel.js";
@@ -41,6 +41,7 @@ const commands = [
   "/help",
   "/models",
   "/auto",
+  "/manual",
   "/new",
   "/resume",
   "/convo",
@@ -64,6 +65,7 @@ const commandDescriptions: Record<string, string> = {
   "/help": "Show commands and keyboard shortcuts",
   "/models": "Choose models and reasoning levels",
   "/auto": "Let Pace choose a model",
+  "/manual": "Switch to manual routing or choose model and effort",
   "/new": "Start a new conversation",
   "/resume": "Switch to a saved conversation",
   "/convo": "Browse and manage conversation turns",
@@ -172,6 +174,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const [resumeMenu, setResumeMenu] = useState(false);
   const [convoMenu, setConvoMenu] = useState(false);
   const [queueMenu, setQueueMenu] = useState(false);
+  const [manualMenu, setManualMenu] = useState(false);
   const [resumeChoices, setResumeChoices] = useState<Session[]>([]);
   const [resumeProcessIds, setResumeProcessIds] = useState<string[]>([]);
   const [missingProjectPaths, setMissingProjectPaths] = useState<string[]>([]);
@@ -667,8 +670,34 @@ export default function App({ onClear }: { onClear: () => void }) {
     process.on("SIGINT", onSignal);
     return () => { process.off("SIGINT", onSignal); };
   }, []);
+  const enabledModels = (config?.models ?? []).filter((m) => m.enabled !== false);
+  const manualRoutes: Route[] = enabledModels.flatMap((m) =>
+    m.efforts.map((e) => ({ model: m.model, effort: e })),
+  );
+  const selectManualRoute = async (route: Route) => {
+    setManualMenu(false);
+    if (!session) return;
+    const updated = { ...session, routingMode: "manual" as const, route };
+    try {
+      await store.save(updated);
+      setSession(updated);
+      rememberSession(updated);
+      const name =
+        route.model?.replace(
+          /^gpt-(\d+)-(.+)$/,
+          (_match: string, ver: string, n: string) =>
+            `GPT-${ver} ${n[0]!.toUpperCase()}${n.slice(1)}`,
+        ) ?? route.model ?? "";
+      const effort = route.effort
+        ? ` ${route.effort[0]!.toUpperCase()}${route.effort.slice(1)}`
+        : "";
+      add("info", `Manual routing enabled: ${name}${effort}.`);
+    } catch (error) {
+      add("error", `Could not save manual route: ${String(error)}`);
+    }
+  };
   const focusPicker = () => {
-    if (sortedSessions.length < 2 || modelMenu || convoMenu || queueMenu || approvalMenu) return false;
+    if (sortedSessions.length < 2 || modelMenu || convoMenu || queueMenu || approvalMenu || manualMenu) return false;
     const pendingIndex = sortedSessions.findIndex(item => item.id !== activeSessionId.current && (pendingApprovals.current.has(item.id) || pendingQuestions.current.has(item.id)));
     const current = sortedSessions.findIndex(item => item.id === activeSessionId.current);
     setPickerIndex(pendingIndex >= 0 ? pendingIndex : current >= 0 ? (current + 1) % sortedSessions.length : 0);
@@ -691,13 +720,14 @@ export default function App({ onClear }: { onClear: () => void }) {
         add("info", `Approval mode: ${mode}. Active turns keep their starting mode.`);
       } catch (error) { add("error", `Could not save approval mode: ${String(error)}`); }
     },
+    manualMenu, setManualMenu, manualRoutes, selectManualRoute,
     menuIndex, setMenuIndex, setMenuModel, toggleModel, toggleEffort,
     resumeMenu, setResumeMenu, resumeChoices, missingProjectPaths, add,
     convoMenu, setConvoMenu, session, store, setSession, renderSessionTurns,
-    setDraft, setHistory, queueMenu, setQueueMenu, promptQueue, setQueueVersion,
+    draft, setDraft, setHistory, queueMenu, setQueueMenu, promptQueue, setQueueVersion,
   });
   const focusQueuedOrPicker = () => {
-    if (queued.length && !modelMenu && !convoMenu && !queueMenu && !approvalMenu) {
+    if (queued.length && !modelMenu && !convoMenu && !queueMenu && !approvalMenu && !manualMenu) {
       setQueueMenu(true);
       setMenuIndex(0);
       return true;
@@ -899,7 +929,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       if (command === "/help") {
         add(
           "info",
-          "/models · /auto · /approval [full-access|request-approval|limited] · /tasks · /new · /resume · /convo · /undo · /compact · /context · /usage · /btw <q> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /stats · /route · /clear · /exit · Esc twice/Ctrl+C cancel · Ctrl+Z undo · ! Bash · Ctrl+O toggle command, diff, and reasoning details · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
+          "/models · /auto · /manual [model] [effort] · /approval [full-access|request-approval|limited] · /tasks · /new · /resume · /convo · /undo · /compact · /context · /usage · /btw <q> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /stats · /route · /clear · /exit · Esc twice/Ctrl+C cancel · Ctrl+Z undo · ! Bash · Ctrl+O toggle command, diff, and reasoning details · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
         );
         add("info", "With multiple open conversations, press Down from the input to focus the picker. Use arrows and Enter to switch; Esc returns to input. Ctrl+C cancels the selected turn. /exit quits.");
         return;
@@ -914,6 +944,75 @@ export default function App({ onClear }: { onClear: () => void }) {
           add("info", "Auto routing enabled for the next turn.");
         } catch (error) {
           add("error", `Could not save routing mode: ${String(error)}`);
+        }
+        return;
+      }
+      if (command === "/manual") {
+        const enabled = (config?.models ?? []).filter((m) => m.enabled !== false);
+        if (!enabled.length) {
+          add("error", "No models enabled. Open /models and enable one first.");
+          return;
+        }
+        if (!parts.length) {
+          setManualMenu(true);
+          const currentIdx = manualRoutes.findIndex(
+            (r) => r.model === session?.route?.model && r.effort === session?.route?.effort,
+          );
+          setMenuIndex(currentIdx >= 0 ? currentIdx : 0);
+          return;
+        }
+        if (parts[0] === "off" || parts[0] === "auto") {
+          const updated = { ...session, routingMode: "auto" as const };
+          try {
+            await store.save(updated);
+            setSession(updated);
+            rememberSession(updated);
+            add("info", "Auto routing enabled for the next turn.");
+          } catch (error) {
+            add("error", `Could not save routing mode: ${String(error)}`);
+          }
+          return;
+        }
+        const query = parts[0]!.toLowerCase();
+        const matched = enabled.find((m) => {
+          const lower = m.model.toLowerCase();
+          return lower === query || lower.endsWith("-" + query) || lower.includes(query);
+        });
+        if (!matched) {
+          add(
+            "error",
+            `Unknown model '${parts[0]}'. Enabled models: ${enabled.map((m) => m.model.replace(/^gpt-\d+-/, "")).join(", ")}.`,
+          );
+          return;
+        }
+        const effortArg = parts[1]?.toLowerCase();
+        const effort = effortArg
+          ? (matched.efforts.find((e) => e.toLowerCase() === effortArg) as Route["effort"])
+          : (matched.defaultEffort ?? matched.efforts[0]);
+        if (!effort || !matched.efforts.includes(effort)) {
+          add(
+            "error",
+            `Invalid effort '${parts[1]}' for ${matched.model}. Available: ${matched.efforts.join(", ")}.`,
+          );
+          return;
+        }
+        const updated = {
+          ...session,
+          routingMode: "manual" as const,
+          route: { model: matched.model, effort },
+        };
+        try {
+          await store.save(updated);
+          setSession(updated);
+          rememberSession(updated);
+          const name = matched.model.replace(
+            /^gpt-(\d+)-(.+)$/,
+            (_match: string, ver: string, n: string) =>
+              `GPT-${ver} ${n[0]!.toUpperCase()}${n.slice(1)}`,
+          );
+          add("info", `Manual routing enabled: ${name} ${effort[0]!.toUpperCase()}${effort.slice(1)}.`);
+        } catch (error) {
+          add("error", `Could not save manual route: ${String(error)}`);
         }
         return;
       }
@@ -1242,6 +1341,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       <Transcript lines={liveLines.slice(-Math.max(1, Math.floor(((terminalRows - 12) / 4))))} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} livePreview width={contentWidth} />
       {modelMenu ? <ModelMenu mode={modelMenu} models={menuModels} selectedModel={menuModel} selectedIndex={menuIndex} config={config} /> : null}
       {approvalMenu ? <ApprovalModeMenu selectedIndex={menuIndex} currentMode={config?.approvalMode ?? "request-approval"} /> : null}
+      {manualMenu ? <ManualRouteMenu routes={manualRoutes} selectedIndex={menuIndex} currentRoute={session?.route ?? config?.defaultRoute ?? {}} /> : null}
       {convoMenu && session ? <ConvoMenu turns={session.turns} selectedIndex={menuIndex} /> : null}
       {queueMenu && session ? <QueueMenu prompts={queued} selectedIndex={menuIndex} /> : null}
       {runningIds.length || shellJobs ? (
@@ -1275,7 +1375,7 @@ export default function App({ onClear }: { onClear: () => void }) {
               return undefined;
             }
           }}
-          disabled={!session || !config || !!approval || !!question || !!modelMenu || approvalMenu || resumeMenu || convoMenu || queueMenu || pickerFocused} shellMode={shellMode}
+          disabled={!session || !config || !!approval || !!question || !!modelMenu || approvalMenu || resumeMenu || convoMenu || queueMenu || manualMenu || pickerFocused} shellMode={shellMode}
           completion={matches[selection] ?? matches[0]} completionStart={token?.start}
           onComplete={() => setDraft(token ? draft.slice(0, token.start) + (matches[selection] ?? matches[0] ?? token.prefix) : draft)}
           onHistory={direction => {
@@ -1286,11 +1386,11 @@ export default function App({ onClear }: { onClear: () => void }) {
           onMoveDown={focusQueuedOrPicker}
           onQueueEdit={() => handleQueueEdit()}
           onDeleteQueued={handleQueueDelete}
-          placeholder={modelMenu || approvalMenu || resumeMenu || convoMenu || queueMenu ? "Close menu to type" : shellMode ? "Bash command; ! returns to Pace" : vexState !== "connected" ? "Vex unavailable; manual turns work" : busy ? "Type next prompt to queue it" : "Ask Pace or type /"}
+          placeholder={modelMenu || approvalMenu || resumeMenu || convoMenu || queueMenu || manualMenu ? "Close menu to type" : shellMode ? "Bash command; ! returns to Pace" : vexState !== "connected" ? "Vex unavailable; manual turns work" : busy ? "Type next prompt to queue it" : "Ask Pace or type /"}
         />
       </ComposerFrame>
       {usageWarning ? <Text color="#FBBF24">{usageWarning}</Text> : null}
-      {!modelMenu && !approvalMenu && !resumeMenu && !convoMenu && !queueMenu && matches.length > 0 ? <CommandMenu matches={matches} descriptions={commandDescriptionsWithSkills} selectedIndex={selection} /> : null}
+      {!modelMenu && !approvalMenu && !resumeMenu && !convoMenu && !queueMenu && !manualMenu && matches.length > 0 ? <CommandMenu matches={matches} descriptions={commandDescriptionsWithSkills} selectedIndex={selection} /> : null}
       <BottomPanel
         width={contentWidth}
         height={terminalRows}

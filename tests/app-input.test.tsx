@@ -30,6 +30,7 @@ function fixture(overrides: Partial<Options> = {}) {
     interrupt: vi.fn(), activateSession: vi.fn(async () => {}), focusPicker: vi.fn(() => true),
     redrawTranscript: vi.fn(), toggleModel: vi.fn(), toggleEffort: vi.fn(),
     selectApprovalMode: vi.fn(async () => {}), add: vi.fn(), renderSessionTurns: vi.fn(),
+    selectManualRoute: vi.fn(async () => {}), setManualMenu: vi.fn(),
     setPickerFocused: vi.fn(), setPickerIndex: vi.fn(), setOutputsExpanded: vi.fn(),
     setApprovalMenu: vi.fn(), setModelMenu: vi.fn(), setMenuIndex: vi.fn(),
     setMenuModel: vi.fn(), setResumeMenu: vi.fn(), setConvoMenu: vi.fn(),
@@ -41,7 +42,8 @@ function fixture(overrides: Partial<Options> = {}) {
     approval: undefined, question: undefined,
     pendingApprovals: { current: new Map() }, activeSessionId: { current: session.id },
     jobs: { current: new Map() }, sideAbort: { current: undefined },
-    outputsExpanded: false, modelMenu: undefined, approvalMenu: false,
+    outputsExpanded: false, modelMenu: undefined, approvalMenu: false, manualMenu: false,
+    manualRoutes: [{ model: "gpt-6-sol", effort: "high" }, { model: "gpt-6-luna", effort: "low" }],
     menuModels: ["first", "second", "third"], menuIndex: 0,
     resumeMenu: false, resumeChoices: [session, second], missingProjectPaths: [],
     convoMenu: false, session, store: { save: vi.fn(async () => {}) },
@@ -337,5 +339,44 @@ describe("application keyboard input", () => {
     await ui.key("", { return: true });
     expect(events.setDraft).not.toHaveBeenCalled();
     expect(events.renderSessionTurns).not.toHaveBeenCalled();
+  });
+
+  it("Ctrl+C clears non-empty draft and does not interrupt", async () => {
+    const { options, events } = fixture({ draft: "some text or image" });
+    const ui = await mount(options);
+    await ui.key("c", { ctrl: true });
+    expect(events.setDraft).toHaveBeenCalledWith("");
+    expect(events.interrupt).not.toHaveBeenCalled();
+  });
+
+  it("Ctrl+C interrupts when draft is empty", async () => {
+    const { options, events } = fixture({ draft: "" });
+    const ui = await mount(options);
+    await ui.key("c", { ctrl: true });
+    expect(events.setDraft).not.toHaveBeenCalled();
+    expect(events.interrupt).toHaveBeenCalled();
+  });
+
+  it("manual route menu selects a route on Enter", async () => {
+    const { options, events } = fixture({ manualMenu: true, menuIndex: 0 });
+    const ui = await mount(options);
+    await ui.key("", { return: true });
+    expect(events.selectManualRoute).toHaveBeenCalledWith({ model: "gpt-6-sol", effort: "high" });
+  });
+
+  it("manual route menu navigates with arrow keys and wraps", async () => {
+    const { options, events } = fixture({ manualMenu: true, menuIndex: 0 });
+    const ui = await mount(options);
+    await ui.key("", { downArrow: true });
+    expect(events.setMenuIndex.mock.calls[0]![0](0)).toBe(1);
+    await ui.key("", { upArrow: true });
+    expect(events.setMenuIndex.mock.calls[1]![0](0)).toBe(1); // (0 - 1 + 2) % 2 = 1
+  });
+
+  it("manual route menu closes on Escape", async () => {
+    const { options, events } = fixture({ manualMenu: true });
+    const ui = await mount(options);
+    await ui.key("", { escape: true });
+    expect(events.setManualMenu).toHaveBeenCalledWith(false);
   });
 });

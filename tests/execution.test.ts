@@ -150,6 +150,80 @@ it('asks for clarification without starting Codex', async () => {
   expect(outcome.stages).toHaveLength(0);
 });
 
+it('prompts user interactively when Vex chooses clarify and proceeds with chosen single workflow', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  let ranPrompt = '';
+  const runner: CodexRunner = { async run(prompt) { ranPrompt = prompt; return { result: 'completed single', completed: true }; } };
+  const vex = {
+    choose: async (request: VexRequest) => {
+      if (request.options.some(o => o.id === 'clarify')) return decision(request, 'clarify');
+      return decision(request, request.options[0]!.id);
+    },
+  };
+  let questionSeen: any;
+  const onProgress = Object.assign((progress: any) => {
+    if (progress.kind === 'question') {
+      questionSeen = progress;
+      progress.respond({ workflow: { answers: ['Run as single agent'] } });
+    }
+  }, { interactive: true });
+
+  const session = newSession('/example/project', 'auto');
+  const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('Fix the thing', session, config, onProgress);
+  expect(questionSeen).toBeDefined();
+  expect(questionSeen.questions[0].header).toBe('Clarification Needed');
+  expect(outcome.result).toBe('completed single');
+  expect(ranPrompt).toContain('Fix the thing');
+  expect(outcome.stages).toHaveLength(1);
+});
+
+it('prompts user interactively when Vex chooses clarify and uses manual route bypass', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  let ranRoute: any;
+  const runner: CodexRunner = { async run(_p, _dir, route) { ranRoute = route; return { result: 'completed manual', completed: true }; } };
+  const vex = {
+    choose: async (request: VexRequest) => decision(request, 'clarify'),
+  };
+  const onProgress = Object.assign((progress: any) => {
+    if (progress.kind === 'question') {
+      progress.respond({ workflow: { answers: ['Use manual route (GPT-6 Sol Medium)'] } });
+    }
+  }, { interactive: true });
+
+  const session = newSession('/example/project', 'auto');
+  session.route = { model: 'gpt-6-sol', effort: 'medium' };
+  const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('Something ambiguous', session, config, onProgress);
+  expect(outcome.result).toBe('completed manual');
+  expect(ranRoute).toEqual({ model: 'gpt-6-sol', effort: 'medium' });
+  expect(outcome.note).toContain('Manual route');
+});
+
+it('prompts user interactively and updates request with typed clarification', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  let ranPrompt = '';
+  const runner: CodexRunner = { async run(prompt) { ranPrompt = prompt; return { result: 'completed with clarification', completed: true }; } };
+  let calls = 0;
+  const vex = {
+    choose: async (request: VexRequest) => {
+      calls++;
+      if (calls === 1) return decision(request, 'clarify');
+      if (request.options.some(o => o.id === 'single')) return decision(request, 'single');
+      return decision(request, request.options[0]!.id);
+    },
+  };
+  const onProgress = Object.assign((progress: any) => {
+    if (progress.kind === 'question') {
+      progress.respond({ workflow: { answers: ['Inspect the auth tests and fix JWT expiration'] } });
+    }
+  }, { interactive: true });
+
+  const session = newSession('/example/project', 'auto');
+  const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('Fix it', session, config, onProgress);
+  expect(outcome.result).toBe('completed with clarification');
+  expect(ranPrompt).toContain('Clarification: Inspect the auth tests and fix JWT expiration');
+  expect(outcome.stages).toHaveLength(1);
+});
+
 it('stops before completion when scout report lacks verifiable findings schema', async () => {
   dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
   let mainRuns = 0;

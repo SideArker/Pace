@@ -96,11 +96,8 @@ export function createTurnRunner({
       }
     }
     try {
-      const outcome = await orchestrator.turn(
-        text,
-        turnSession,
-        turnConfig,
-        (progress) => {
+      const onProgress = Object.assign(
+        (progress: Progress) => {
           if (progress.kind === "status") {
             setStatusFor(sessionId, progress.text);
             if (activeSessionId.current === sessionId) setSession({ ...turnSession });
@@ -134,6 +131,13 @@ export function createTurnRunner({
             setStatusFor(sessionId, "Finishing response…");
           }
         },
+        { interactive: true },
+      );
+      const outcome = await orchestrator.turn(
+        text,
+        turnSession,
+        turnConfig,
+        onProgress,
         controller.signal,
         () => activeSessionId.current === sessionId,
       );
