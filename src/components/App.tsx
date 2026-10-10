@@ -271,6 +271,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const backgroundQuestions = [...pendingQuestions.current.keys()].filter(id => id !== activeSessionId.current);
   const pickerChoices: ConversationChoice[] = sortedSessions.map(item => ({
     id: item.id,
+    kind: item.kind,
     projectPath: item.projectPath,
     title: item.title,
     prompt: item.turns[0]?.prompt ?? jobs.current.get(item.id)?.prompt ?? "",
@@ -1594,7 +1595,7 @@ export default function App({ onClear }: { onClear: () => void }) {
           : <Transcript key={item.group[0]?.id} lines={item.group} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} width={contentWidth} />}
       </Static>
       <Box flexDirection="column" flexShrink={1} minHeight={0} overflowY="hidden">
-      {showHeader ? <HeaderStatus project={session?.projectPath ?? project} vexState={vexState} width={contentWidth} /> : null}
+      {showHeader ? <HeaderStatus project={session?.projectPath ?? project} vexState={vexState} sessionKind={session?.kind} width={contentWidth} /> : null}
       <Box flexDirection="column" flexShrink={1} minHeight={0} overflowY="hidden">
         <Transcript lines={liveLines.slice(-Math.max(1, Math.floor(((terminalRows - 12) / 4))))} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} livePreview width={contentWidth} />
       </Box>

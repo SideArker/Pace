@@ -1,9 +1,10 @@
 import React from "react";
 import { Box, Text } from "ink";
-import type { ApprovalMode, Route, TurnSummary } from "../shared/types.js";
+import type { ApprovalMode, Route, Session, TurnSummary } from "../shared/types.js";
 
 export type ConversationChoice = {
   id: string;
+  kind?: Session["kind"];
   projectPath?: string;
   section?: "pace" | "saved";
   title?: string;
@@ -109,10 +110,11 @@ export function ConversationPicker({
                 ? <Text color={missingProjectPaths.includes(choice.projectPath) ? "#F87171" : "#94A3B8"} wrap="truncate">{choice.projectPath}{missingProjectPaths.includes(choice.projectPath) ? " (missing; use pace reconnect)" : ""}</Text>
                 : null}
               <Box gap={1}>
-                <Box flexShrink={0}><Text color={selected ? "#38BDF8" : "#64748B"}>{selected ? "▶" : " "}</Text></Box>
-                <Box flexShrink={0}><Text color={current ? "#59E6A7" : "#94A3B8"}>{choice.id.slice(0, 8)}</Text></Box>
+                <Box flexShrink={0}><Text color={selected ? (choice.kind === "planning" ? "#C084FC" : "#38BDF8") : "#64748B"}>{selected ? "▶" : " "}</Text></Box>
+                <Box flexShrink={0}><Text color={current ? (choice.kind === "planning" ? "#C084FC" : "#59E6A7") : (choice.kind === "planning" ? "#D8B4FE" : "#94A3B8")}>{choice.id.slice(0, 8)}</Text></Box>
+                {choice.kind === "planning" ? <Box flexShrink={0}><Text color="#C084FC" bold>[plan]</Text></Box> : null}
                 <Box flexShrink={0}><Text color={stateColor}>{stateLabel}</Text></Box>
-                <Text color={selected ? "white" : "#CBD5E1"} wrap="truncate">{prompt.slice(0, 60) || "New conversation"}</Text>
+                <Text color={selected ? "white" : (choice.kind === "planning" ? "#F3E8FF" : "#CBD5E1")} wrap="truncate">{prompt.slice(0, 60) || (choice.kind === "planning" ? "New plan" : "New conversation")}</Text>
               </Box>
             </React.Fragment>;
           })}

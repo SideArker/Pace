@@ -58,9 +58,11 @@ export function HeaderLogo({ width }: { width: number }) {
 export function HeaderStatus({
   project,
   vexState,
+  sessionKind,
 }: {
   project: string;
   vexState: "connecting" | "connected" | "failed";
+  sessionKind?: "normal" | "planning";
   width?: number;
 }) {
   const branch = useMemo(() => getGitBranch(project), [project]);
@@ -72,6 +74,7 @@ export function HeaderStatus({
           📁 {basename(project)}
         </Text>
         {branch ? <Text color="#93C5FD">⎇ {branch}</Text> : null}
+        {sessionKind === "planning" ? <Text color="#C084FC" bold>◈ PLANNING</Text> : null}
         <Text
           color={
             vexState === "connected"

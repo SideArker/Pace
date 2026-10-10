@@ -2,6 +2,7 @@ import React from "react";
 import { Box, Text } from "ink";
 import { contextPercent, measuredContext } from "../core/context.js";
 import type { ApprovalMode, Session } from "../shared/types.js";
+import { getTheme } from "../shared/colors.js";
 
 export function contextLabel(session: Session | undefined): string {
   const percent = session && contextPercent(measuredContext(session));
@@ -16,26 +17,30 @@ export function ComposerFrame({ children, width, session, shellMode, approvalMod
   shellMode: boolean;
   approvalMode?: ApprovalMode;
 }) {
+  const theme = getTheme(session?.kind);
+  const isPlanning = session?.kind === "planning";
   const rule = "─".repeat(Math.max(1, width - 4));
   const mode = shellMode ? "bash" : session?.routingMode === "manual" ? "manual" : "auto";
   const approval = approvalMode === "full-access" ? "Full Access" : approvalMode === "limited" ? "Limited" : "Request Approval";
-  const details = `${contextLabel(session)} · ${mode} · ${approval}`;
+  const details = `${isPlanning ? "◈ PLANNING · " : ""}${contextLabel(session)} · ${mode} · ${approval}`;
   const wide = width >= 112;
   const hints = (
     <Box flexDirection={wide ? "row" : "column"} justifyContent={wide ? "space-between" : "flex-start"} width={wide ? undefined : "100%"} flexGrow={wide ? 1 : 0} flexShrink={1}>
-      <Text color="#64748B" wrap="truncate">type / for commands · Shift+Enter newline · Alt+V image</Text>
-      {width >= 72 ? <Text color="#64748B" wrap="truncate">type ! to run commands</Text> : null}
+      <Text color={isPlanning ? "#A855F7" : "#64748B"} wrap="truncate">
+        {isPlanning ? "/execute to run plan · /verify to review · Shift+Enter newline" : "type / for commands · Shift+Enter newline · Alt+V image"}
+      </Text>
+      {width >= 72 ? <Text color="#64748B" wrap="truncate">{isPlanning ? "Alt+P/Ctrl+P toggle plan" : "type ! to run commands"}</Text> : null}
     </Box>
   );
   return (
     <Box flexDirection="column" width="100%" marginTop={1} flexShrink={0}>
-      <Text color="#334155" wrap="truncate">{rule}</Text>
+      <Text color={theme.border} wrap="truncate">{rule}</Text>
       {children}
-      <Text color="#334155" wrap="truncate">{rule}</Text>
+      <Text color={theme.border} wrap="truncate">{rule}</Text>
       <Box flexDirection={wide ? "row" : "column"} justifyContent="space-between" gap={wide ? 2 : 0} width="100%">
         {hints}
-        {width < 50 ? <Box flexDirection="column"><Text color="#A5B4FC" wrap="truncate">{`${contextLabel(session)} · ${mode}`}</Text><Text color="#A5B4FC" wrap="truncate">{`Approval: ${approval}`}</Text></Box>
-          : <Box flexShrink={0}><Text color="#A5B4FC" wrap="truncate">{details}</Text></Box>}
+        {width < 50 ? <Box flexDirection="column"><Text color={theme.muted} wrap="truncate">{`${isPlanning ? "[PLAN] " : ""}${contextLabel(session)} · ${mode}`}</Text><Text color={theme.muted} wrap="truncate">{`Approval: ${approval}`}</Text></Box>
+          : <Box flexShrink={0}><Text color={theme.muted} wrap="truncate">{details}</Text></Box>}
       </Box>
     </Box>
   );
