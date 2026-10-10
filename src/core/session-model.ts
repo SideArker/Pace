@@ -12,10 +12,12 @@ export function projectKey(path: string): string {
 export function newSession(
   projectPath: string,
   mode: Session["routingMode"],
+  kind?: Session["kind"],
 ): Session {
   const now = new Date().toISOString();
   return {
     id: randomUUID(),
+    ...(kind ? { kind } : {}),
     projectPath: normalizeProject(projectPath),
     createdAt: now,
     updatedAt: now,

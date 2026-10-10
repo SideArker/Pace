@@ -137,6 +137,8 @@ export function parseSession(value: unknown, project: string): Session | undefin
       typeof value.deferredTurn.prompt !== "string" || !value.deferredTurn.prompt.trim() ||
       typeof value.deferredTurn.retryAt !== "string" || !Number.isFinite(Date.parse(value.deferredTurn.retryAt)) ||
       !Number.isInteger(value.deferredTurn.attempt) || (value.deferredTurn.attempt as number) < 1)) ||
+    (value.kind !== undefined && value.kind !== "normal" && value.kind !== "planning") ||
+    (value.plan !== undefined && (typeof value.plan !== "string" || value.plan.length > 50000)) ||
     (value.routingMode !== "auto" && value.routingMode !== "manual")
     || (value.manualWorkflow !== undefined && !isManualWorkflow(value.manualWorkflow))
   )

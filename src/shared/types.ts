@@ -96,8 +96,11 @@ export type CheckpointGeneration = {
   estimatedCostUsd?: number;
   error?: string;
 };
+export type SessionKind = "normal" | "planning";
 export type Session = {
   id: string;
+  kind?: SessionKind;
+  plan?: string;
   title?: string;
   projectPath: string;
   threadId?: string;
