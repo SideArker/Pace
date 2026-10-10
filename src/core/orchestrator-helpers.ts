@@ -1,3 +1,5 @@
+import { existsSync, statSync, readFileSync } from "node:fs";
+import { resolve, isAbsolute } from "node:path";
 import type { Usage } from "@openai/codex-sdk";
 import type { Session, TurnSummary } from "../shared/types.js";
 import type { RoutingPrompts } from "./routing/routing-prompts.js";
@@ -162,4 +164,22 @@ Your verification task:
 1. Inspect the codebase to verify that file paths, methods, types, and assumptions in the plan are accurate.
 2. Identify missing edge cases, architectural risks, performance concerns, or breaking changes.
 3. Return a comprehensive, verified and corrected final plan ready for execution.`;
+}
+
+export function tryReadPlanFile(filePath: string, projectPath: string): { path: string; content: string } | undefined {
+  const trimmed = filePath.trim().replace(/^['"]|['"]$/g, "");
+  if (!trimmed) return undefined;
+  const candidates = [
+    isAbsolute(trimmed) ? trimmed : resolve(projectPath, trimmed),
+    resolve(process.cwd(), trimmed),
+  ];
+  for (const candidate of candidates) {
+    try {
+      if (existsSync(candidate) && statSync(candidate).isFile()) {
+        const content = readFileSync(candidate, "utf8");
+        return { path: candidate, content };
+      }
+    } catch {}
+  }
+  return undefined;
 }

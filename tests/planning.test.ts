@@ -41,4 +41,14 @@ describe("Planning helpers and theme", () => {
     expect(prompt).toContain("Draft plan");
     expect(prompt).toContain("Work read-only; do not implement or edit code");
   });
+
+  it("reads an existing plan file or returns undefined", async () => {
+    const { tryReadPlanFile } = await import("../src/core/orchestrator-helpers.js");
+    const result = tryReadPlanFile("package.json", process.cwd());
+    expect(result).toBeDefined();
+    expect(result?.content).toContain("pace");
+
+    const missing = tryReadPlanFile("non-existent-plan-file-12345.md", process.cwd());
+    expect(missing).toBeUndefined();
+  });
 });

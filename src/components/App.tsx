@@ -29,7 +29,7 @@ import { Transcript, splitTranscript, type Line } from "./Transcript.js";
 import { HeaderLogo, HeaderStatus } from "./Header.js";
 import { UsageBar } from "./UsageBar.js";
 import { ApprovalModeMenu, CommandMenu, ConversationPicker, ConvoMenu, ManualWorkflowMenu, ModelMenu, QueueMenu, ResumeMenu, sectionConversations, type ConversationChoice } from "./Menus.js";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { readFileSync } from "node:fs";
 import { createShellRunner, displayCommand, formatCommandActivity, oneOffShellCommand } from "./shell-runner.js";
 import { RunningProcesses, updateProcesses, type RunningProcess } from "./RunningProcesses.js";
@@ -41,7 +41,7 @@ import { costForUsage, currentManifestSource, currentVersionManifest, modelRates
 import { formatLatestRoute } from "./route-format.js";
 import { contextPercent, measuredContext } from "../core/context.js";
 import { loadResumeChoices } from "./resume-choices.js";
-import { executePlanPrompt, verifyPlanPrompt } from "../core/orchestrator-helpers.js";
+import { executePlanPrompt, tryReadPlanFile, verifyPlanPrompt } from "../core/orchestrator-helpers.js";
 const commands = [
   "/plan",
   "/execute",
@@ -84,8 +84,9 @@ const workflowStages = (shape: WorkflowShape): WorkflowStage[] =>
   shape === "single" ? ["final"] : shape === "scout" ? ["scout", "final"]
     : shape === "scout_plan_execute" ? ["scout", "plan", "final"] : ["plan", "final"];
 export const commandArguments: Record<string, string> = {
-  "/plan": "<prompt>",
-  "/execute": "[prompt]",
+  "/plan": "[prompt|file]",
+  "/execute": "[file] [prompt]",
+  "/verify": "[file]",
   "/manual": "[model] [effort]",
   "/workflow": "[name|auto]",
   "/approval": "[mode]",
@@ -97,9 +98,9 @@ export const skillArguments = (skillName: string): string => {
   return "[request]";
 };
 const commandDescriptions: Record<string, string> = {
-  "/plan": "Start or toggle planning mode",
-  "/execute": "Run approved plan via multi-stage workflow",
-  "/verify": "Verify plan against repository before running",
+  "/plan": "Start/toggle planning or load plan file (e.g. /plan plan.md)",
+  "/execute": "Dispatch plan to fresh session via Vex (e.g. /execute [plan.md])",
+  "/verify": "Verify plan with high quality model (e.g. /verify [plan.md])",
   "/models": "Choose model and reasoning effort",
   "/version": "Show Pace and price catalog versions",
   "/auto": "Let Pace route models automatically",
@@ -922,22 +923,38 @@ export default function App({ onClear }: { onClear: () => void }) {
   };
   const startOrTogglePlanning = async (promptText?: string) => {
     if (!session) return;
+    const planFile = promptText ? tryReadPlanFile(promptText.replace(/^load\s+/i, ""), session.projectPath) : undefined;
+    const loadedPlan = planFile?.content;
+    const planPath = planFile?.path;
+    const planTitle = planPath ? `Plan: ${basename(planPath)}` : undefined;
+
     if (!session.turns.length && !session.title) {
-      const updated: Session = { ...session, kind: (session.kind === "planning" && !promptText ? "normal" : "planning") };
+      const updated: Session = {
+        ...session,
+        kind: "planning",
+        ...(loadedPlan ? { plan: loadedPlan, title: planTitle } : {}),
+      };
       try {
         await store.save(updated);
         setSession(updated);
         rememberSession(updated);
-        add("info", updated.kind === "planning"
-          ? "◈ Planning mode active (purple plan). Prompts are read-only; explore and draft your plan."
-          : "Normal conversation mode active.");
-        if (promptText && config) void runTurnRef.current?.(promptText, updated, config);
+        if (loadedPlan && planPath) {
+          add("info", `◈ Loaded plan from ${basename(planPath)} (${loadedPlan.split("\n").length} lines). Prompts are read-only; use /verify or /execute.`);
+          add("codex", `### Plan loaded from ${basename(planPath)}\n\n${loadedPlan}`);
+        } else {
+          add("info", "◈ Planning mode active (purple plan). Prompts are read-only; explore and draft your plan.");
+          if (promptText && config) void runTurnRef.current?.(promptText, updated, config);
+        }
       } catch (error) {
         add("error", `Could not update session mode: ${String(error)}`);
       }
       return;
     }
     const fresh = newSession(project, session.routingMode, "planning");
+    if (loadedPlan) {
+      fresh.plan = loadedPlan;
+      if (planTitle) fresh.title = planTitle;
+    }
     thisPaceIds.current.add(fresh.id);
     switchingSession.current = true;
     const previousId = activeSessionId.current;
@@ -969,8 +986,13 @@ export default function App({ onClear }: { onClear: () => void }) {
       setShowHeader(true);
       setStatus("Ready");
       setApproval(undefined);
-      add("info", "◈ Started fresh planning session (purple plan). Work is read-only; explore and draft your plan.");
-      if (promptText && config) void runTurnRef.current?.(promptText, fresh, config);
+      if (loadedPlan && planPath) {
+        add("info", `◈ Started planning session with ${basename(planPath)} (${loadedPlan.split("\n").length} lines). Work is read-only; use /verify or /execute.`);
+        add("codex", `### Plan loaded from ${basename(planPath)}\n\n${loadedPlan}`);
+      } else {
+        add("info", "◈ Started fresh planning session (purple plan). Work is read-only; explore and draft your plan.");
+        if (promptText && config) void runTurnRef.current?.(promptText, fresh, config);
+      }
     } catch (error) {
       activeSessionId.current = previousId;
       if (previousId) setLines(sessionLines.current.get(previousId) ?? []);
@@ -979,16 +1001,46 @@ export default function App({ onClear }: { onClear: () => void }) {
       switchingSession.current = false;
     }
   };
-  const handleExecutePlan = async (extraPrompt?: string) => {
+  const handleExecutePlan = async (arg?: string) => {
     if (!session) return;
-    const currentPlan = session.plan || session.turns.slice().reverse().find(t => !t.failed)?.result;
-    if (!currentPlan) {
-      add("error", "No plan found to execute. Create a plan first in planning mode (/plan).");
+    let targetPlan = session.plan;
+    let extraPrompt: string | undefined;
+    let loadedFromPath: string | undefined;
+
+    if (arg) {
+      const trimmed = arg.trim();
+      const wholeFile = tryReadPlanFile(trimmed, session.projectPath);
+      const parts = trimmed.split(/\s+/);
+      const firstFile = !wholeFile && parts.length > 1 ? tryReadPlanFile(parts[0]!, session.projectPath) : undefined;
+      if (wholeFile) {
+        targetPlan = wholeFile.content;
+        loadedFromPath = wholeFile.path;
+      } else if (firstFile) {
+        targetPlan = firstFile.content;
+        loadedFromPath = firstFile.path;
+        extraPrompt = parts.slice(1).join(" ").trim();
+      } else {
+        extraPrompt = trimmed;
+      }
+    }
+
+    if (!targetPlan) {
+      targetPlan = session.turns.slice().reverse().find(t => !t.failed)?.result;
+    }
+
+    if (!targetPlan) {
+      add("error", "No plan found to execute. Provide a plan file (e.g. /execute plan.md) or create one with /plan.");
       return;
+    }
+
+    if (loadedFromPath) {
+      add("info", `◈ Loaded plan from ${basename(loadedFromPath)} (${targetPlan.split("\n").length} lines).`);
     }
     add("info", "◈ Dispatching plan to fresh execution session via Vex (Explore → Implement)...");
     const fresh = newSession(project, "auto", "normal");
-    fresh.title = session.title ? `Exec: ${session.title.replace(/^Exec:\s*/i, "")}` : "Plan Execution";
+    fresh.title = loadedFromPath
+      ? `Exec: ${basename(loadedFromPath)}`
+      : session.title ? `Exec: ${session.title.replace(/^Exec:\s*/i, "")}` : "Plan Execution";
     thisPaceIds.current.add(fresh.id);
     switchingSession.current = true;
     const previousId = activeSessionId.current;
@@ -1021,8 +1073,8 @@ export default function App({ onClear }: { onClear: () => void }) {
       setStatus("Starting…");
       setApproval(undefined);
       const prompt = extraPrompt
-        ? `${executePlanPrompt(currentPlan)}\n\nAdditional user instructions:\n${extraPrompt}`
-        : executePlanPrompt(currentPlan);
+        ? `${executePlanPrompt(targetPlan)}\n\nAdditional user instructions:\n${extraPrompt}`
+        : executePlanPrompt(targetPlan);
       if (config) void runTurnRef.current?.(prompt, fresh, config);
     } catch (error) {
       activeSessionId.current = previousId;
@@ -1032,16 +1084,20 @@ export default function App({ onClear }: { onClear: () => void }) {
       switchingSession.current = false;
     }
   };
-  const handleVerifyPlan = async () => {
+  const handleVerifyPlan = async (arg?: string) => {
     if (!session) return;
-    const currentPlan = session.plan || session.turns.slice().reverse().find(t => !t.failed)?.result;
-    if (!currentPlan) {
-      add("error", "No plan found to verify. Create a plan first with /plan.");
+    const planFile = arg ? tryReadPlanFile(arg, session.projectPath) : undefined;
+    const targetPlan = planFile?.content || session.plan || session.turns.slice().reverse().find(t => !t.failed)?.result;
+    if (!targetPlan) {
+      add("error", "No plan found to verify. Provide a plan file (e.g. /verify plan.md) or create one with /plan.");
       return;
+    }
+    if (planFile) {
+      add("info", `◈ Loaded plan from ${basename(planFile.path)} for verification.`);
     }
     const goal = session.turns[0]?.prompt;
     add("info", "◈ Verifying plan against repository with high quality model...");
-    if (config) void runTurnRef.current?.(verifyPlanPrompt(currentPlan, goal), session, config);
+    if (config) void runTurnRef.current?.(verifyPlanPrompt(targetPlan, goal), session, config);
   };
   const cancelArmed = useAppInput({
     interrupt, pickerFocused, setPickerFocused, pickerIndex, setPickerIndex,
@@ -1275,7 +1331,8 @@ export default function App({ onClear }: { onClear: () => void }) {
         return;
       }
       if (command === "/verify") {
-        await handleVerifyPlan();
+        const arg = parts.join(" ").trim();
+        await handleVerifyPlan(arg || undefined);
         return;
       }
       if (command === "/exit") {
