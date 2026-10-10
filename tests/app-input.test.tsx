@@ -36,6 +36,7 @@ function fixture(overrides: Partial<Options> = {}) {
     setMenuModel: vi.fn(), setResumeMenu: vi.fn(), setConvoMenu: vi.fn(),
     setSession: vi.fn(), setDraft: vi.fn(), setHistory: vi.fn(),
     setQueueMenu: vi.fn(), setQueueVersion: vi.fn(),
+    setPickerSearch: vi.fn(),
   };
   const options = {
     ...events, pickerFocused: false, pickerIndex: 0, openSessions: [session, second],
@@ -411,5 +412,33 @@ describe("application keyboard input", () => {
     expect(onExecutePlan).toHaveBeenCalledTimes(1);
     await ui.key("e", { meta: true });
     expect(onExecutePlan).toHaveBeenCalledTimes(2);
+  });
+
+  it("handles live search typing, backspace, and escape while picker is focused", async () => {
+    const { options, events } = fixture({ pickerFocused: true, pickerSearch: "" });
+    const ui = await mount(options);
+
+    // Type character
+    await ui.key("a");
+    expect(events.setPickerSearch).toHaveBeenCalled();
+    expect(events.setPickerIndex).toHaveBeenCalledWith(0);
+
+    // Backspace
+    await ui.key("", { backspace: true });
+    expect(events.setPickerSearch).toHaveBeenCalled();
+
+    // Escape with non-empty search
+    const { options: withSearch, events: eventsWithSearch } = fixture({ pickerFocused: true, pickerSearch: "hello" });
+    const uiWithSearch = await mount(withSearch);
+    await uiWithSearch.key("", { escape: true });
+    expect(eventsWithSearch.setPickerSearch).toHaveBeenCalledWith("");
+    expect(eventsWithSearch.setPickerIndex).toHaveBeenCalledWith(0);
+    expect(eventsWithSearch.setPickerFocused).not.toHaveBeenCalled();
+
+    // Escape with empty search closes picker
+    const { options: emptySearch, events: eventsEmpty } = fixture({ pickerFocused: true, pickerSearch: "" });
+    const uiEmpty = await mount(emptySearch);
+    await uiEmpty.key("", { escape: true });
+    expect(eventsEmpty.setPickerFocused).toHaveBeenCalledWith(false);
   });
 });

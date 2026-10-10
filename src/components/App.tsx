@@ -187,6 +187,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const thisPaceIds = useRef(new Set<string>());
   const [pickerFocused, setPickerFocused] = useState(false);
   const [pickerIndex, setPickerIndex] = useState(0);
+  const [pickerSearch, setPickerSearch] = useState("");
   const [lines, setLines] = useState<Line[]>([]);
   const [status, setStatus] = useState("Loading…");
   const [runningIds, setRunningIds] = useState<string[]>([]);
@@ -286,7 +287,9 @@ export default function App({ onClear }: { onClear: () => void }) {
     );
   };
   const sortedSessions = useMemo(() => sectionConversations(
-    openSessions.map(item => ({ ...item, state: getSessionState(item.id) })), thisPaceIds.current,
+    openSessions.map(item => ({ ...item, state: getSessionState(item.id) })),
+    thisPaceIds.current,
+    project,
   ), [openSessions, runningIds, approval, question, pendingRevision]);
   const backgroundApprovals = [...pendingApprovals.current.keys()].filter(id => id !== activeSessionId.current);
   const backgroundQuestions = [...pendingQuestions.current.keys()].filter(id => id !== activeSessionId.current);
@@ -299,6 +302,8 @@ export default function App({ onClear }: { onClear: () => void }) {
     state: getSessionState(item.id),
     updatedAt: item.updatedAt,
     section: item.section,
+    sectionTitle: item.sectionTitle,
+    sectionKey: item.sectionKey,
   }));
   const stopSideQuestion = () => {
     const pending = sideAbort.current;
@@ -414,6 +419,9 @@ export default function App({ onClear }: { onClear: () => void }) {
     if (activeSessionId.current === sessionId) setQuestion(undefined);
     setStatusFor(sessionId, "Question expired");
   };
+  const skillNamesSet = useMemo(() => new Set(
+    (config ? enabledSkills(skills, config) : []).map(skill => skill.name),
+  ), [config, skills]);
   const skillCommands = (config ? enabledSkills(skills, config) : [])
     .flatMap(skill => [`/${skill.name}`, `@${skill.name}`])
     .filter(command => !commands.includes(command));
@@ -572,13 +580,10 @@ export default function App({ onClear }: { onClear: () => void }) {
       activeSessionId.current = fresh.id;
       sessionLines.current.set(fresh.id, preSessionLines.current);
       setSession(fresh);
-      const saved = await localStore.list(project);
-      if (saved.length > 0) {
-        setOpenSessions([fresh, ...saved.filter(s => s.id !== fresh.id)]);
-      } else {
-        setOpenSessions([fresh]);
-      }
-      const waiting = saved.filter(item => item.deferredTurn);
+      const loadedChoices = await loadResumeChoices(localStore, [fresh], []);
+      setOpenSessions(loadedChoices.sessions);
+      setMissingProjectPaths(loadedChoices.missingProjectPaths);
+      const waiting = loadedChoices.sessions.filter(item => item.deferredTurn);
       if (waiting.length) add("info", `${waiting.length} saved conversation${waiting.length === 1 ? "" : "s"} waiting for Codex usage reset. Pace will resume pending requests when due.`);
       for (const notice of notices) add("error", notice);
       setStatus("Ready");
@@ -775,10 +780,15 @@ export default function App({ onClear }: { onClear: () => void }) {
     if (switchingSession.current) return;
     switchingSession.current = true;
     const previousId = activeSessionId.current;
-    const target = jobs.current.get(chosen.id)?.session ?? chosen;
+    let target = jobs.current.get(chosen.id)?.session ?? chosen;
     if (previousId) sessionDrafts.current.set(previousId, draft);
     activeSessionId.current = target.id;
     try {
+      if (!thisPaceIds.current.has(target.id) && !jobs.current.has(target.id)) {
+        const full = await store.load(target.projectPath, target.id);
+        if (full) target = full;
+      }
+      thisPaceIds.current.add(target.id);
       await store.activate(target);
       stopSideQuestion();
       onClear();
@@ -1035,6 +1045,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   };
   const cancelArmed = useAppInput({
     interrupt, pickerFocused, setPickerFocused, pickerIndex, setPickerIndex,
+    pickerSearch, setPickerSearch,
     openSessions: sortedSessions, activateSession, approval, question, focusPicker, pendingApprovals,
     activeSessionId, jobs, sideAbort, outputsExpanded, setOutputsExpanded,
     redrawTranscript: () => { onClear(); setTranscriptRevision(value => value + 1); },
@@ -1608,10 +1619,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         return;
       }
       if (command === "/resume") {
-        if (parts.length) {
-          add("error", "Type /resume to open the conversation picker.");
-          return;
-        }
+        const query = parts.join(" ").trim();
         const loaded = await loadResumeChoices(store, openSessions, [...jobs.current.values()].map(job => job.session));
         if (loaded.sessions.length <= 1) {
           add("info", "No saved conversations.");
@@ -1619,6 +1627,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         }
         setOpenSessions(loaded.sessions);
         setMissingProjectPaths(loaded.missingProjectPaths);
+        setPickerSearch(query);
         setShowConversationsTab(true);
         setPickerFocused(true);
         setPickerIndex(0);
@@ -1827,7 +1836,16 @@ export default function App({ onClear }: { onClear: () => void }) {
         />
       </ComposerFrame>
       {usageWarning ? <Text color="#FBBF24">{usageWarning}</Text> : null}
-      {!modelMenu && !approvalMenu && !resumeMenu && !convoMenu && !queueMenu && !manualMenu && matches.length > 0 ? <CommandMenu matches={matches} descriptions={commandDescriptionsWithSkills} args={commandArgsWithSkills} selectedIndex={selection} width={contentWidth} /> : null}
+      {!modelMenu && !approvalMenu && !resumeMenu && !convoMenu && !queueMenu && !manualMenu && matches.length > 0 ? (
+        <CommandMenu
+          matches={matches}
+          descriptions={commandDescriptionsWithSkills}
+          args={commandArgsWithSkills}
+          selectedIndex={selection}
+          width={contentWidth}
+          skillNames={skillNamesSet}
+        />
+      ) : null}
       <BottomPanel
         width={contentWidth}
         height={terminalRows}
@@ -1837,6 +1855,7 @@ export default function App({ onClear }: { onClear: () => void }) {
           activeId: activeSessionId.current,
           selectedIndex: pickerIndex,
           focused: pickerFocused,
+          searchQuery: pickerSearch,
         }}
         showConversations={showConversationsTab || sortedSessions.length > 1 || pickerFocused}
         queuedPrompts={queued}

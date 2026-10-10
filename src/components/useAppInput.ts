@@ -71,6 +71,8 @@ export function useAppInput(options: {
   setQueueVersion?: Dispatch<SetStateAction<number>>;
   onTogglePlan?: () => void;
   onExecutePlan?: () => void;
+  pickerSearch?: string;
+  setPickerSearch?: Dispatch<SetStateAction<string>>;
 }) {
   const {
     interrupt, pickerFocused, setPickerFocused, pickerIndex, setPickerIndex,
@@ -83,7 +85,7 @@ export function useAppInput(options: {
     setResumeMenu, resumeChoices, missingProjectPaths, add, convoMenu,
     setConvoMenu, session, store, setSession, renderSessionTurns, draft, setDraft,
     setHistory, queueMenu, setQueueMenu, promptQueue, setQueueVersion,
-    onTogglePlan, onExecutePlan,
+    onTogglePlan, onExecutePlan, pickerSearch, setPickerSearch,
   } = options;
   const lastEscape = useRef<{ sessionId: string; at: number } | undefined>(undefined);
   const escapeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -123,17 +125,45 @@ export function useAppInput(options: {
       return;
     }
     if (pickerFocused) {
-      if (key.escape || key.tab) setPickerFocused(false);
-      else if (key.upArrow) {
+      const query = (pickerSearch ?? "").trim().toLowerCase();
+      const effectiveSessions = query
+        ? openSessions.filter(session => {
+            const title = (session.title ?? "").toLowerCase();
+            const prompt = (session.turns[0]?.prompt ?? "").toLowerCase();
+            const id = session.id.toLowerCase();
+            const path = (session.projectPath ?? "").toLowerCase();
+            return title.includes(query) || prompt.includes(query) || id.includes(query) || path.includes(query);
+          })
+        : openSessions;
+
+      if (key.escape) {
+        if (pickerSearch) {
+          setPickerSearch?.("");
+          setPickerIndex(0);
+        } else {
+          setPickerFocused(false);
+        }
+      } else if (key.tab) {
+        setPickerFocused(false);
+      } else if (key.upArrow) {
         if (pickerIndex === 0) setPickerFocused(false);
         else setPickerIndex(value => value - 1);
-      } else if (key.downArrow) setPickerIndex(value => (value + 1) % openSessions.length);
-      else if (key.return) {
-        const chosen = openSessions[pickerIndex];
+      } else if (key.downArrow) {
+        const maxLen = effectiveSessions.length || 1;
+        setPickerIndex(value => (value + 1) % maxLen);
+      } else if (key.return) {
+        const chosen = effectiveSessions[pickerIndex];
         setPickerFocused(false);
+        setPickerSearch?.("");
         if (chosen && missingProjectPaths.includes(chosen.projectPath))
           add("error", `Project folder is missing: ${chosen.projectPath}. Restore it here or run pace reconnect "${chosen.projectPath}" "<new path>" in a terminal, then reopen /resume.`);
         else if (chosen && chosen.id !== activeSessionId.current) void activateSession(chosen);
+      } else if (key.backspace || key.delete) {
+        setPickerSearch?.(s => s.slice(0, -1));
+        setPickerIndex(0);
+      } else if (input && !key.ctrl && !key.meta && !key.pageUp && !key.pageDown) {
+        setPickerSearch?.(s => s + input);
+        setPickerIndex(0);
       }
       return;
     }

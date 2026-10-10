@@ -14,6 +14,7 @@ export type BottomPanelProps = {
     selectedIndex: number;
     focused: boolean;
     missingProjectPaths?: string[];
+    searchQuery?: string;
   };
   showConversations?: boolean;
   queuedPrompts?: readonly string[];
@@ -53,6 +54,7 @@ export function BottomPanel({
             selectedIndex={conversations.selectedIndex}
             focused={conversations.focused}
             missingProjectPaths={conversations.missingProjectPaths}
+            searchQuery={conversations.searchQuery}
             width={panelWidth}
             maxItems={maxItems}
           />
