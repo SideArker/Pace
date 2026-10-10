@@ -82,7 +82,7 @@ const commandDescriptions: Record<string, string> = {
   "/models": "Choose models and reasoning levels",
   "/version": "Check Pace and price catalog versions",
   "/auto": "Let Pace choose a model",
-  "/manual": "Switch to manual routing or choose model and effort",
+  "/manual": "Choose workflow, stage models, and effort",
   "/new": "Start a new conversation",
   "/resume": "Switch to a saved conversation",
   "/convo": "Browse and manage conversation turns",

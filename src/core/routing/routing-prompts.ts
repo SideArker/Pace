@@ -182,6 +182,7 @@ export function parseRoutingPrompts(value: unknown): RoutingPrompts {
 const defaultText = readFileSync(defaultPath, "utf8");
 // The first shipped editable default. Refresh only this exact file, never user edits.
 const legacyDefaultSha256 = new Set([
+  "b7598bd321ec4aec3ffb4826e9ff665a342a3c67d0bfe4ecf31cd2567782fc21",
   "d4ab14ad9720473b296e2456111b859c226eae99f1a3dd580d57c319dc8441d9",
   "32e9fecdb9404f8b4a756c0a62b46b7a3655297a331981385ba335e9b58b383a",
   "1be219548f02b21b7103bc26f7ca6f604e244dc33144243a46bf6e2619b56538",
