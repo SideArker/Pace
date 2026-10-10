@@ -11,6 +11,7 @@ export type Line = {
     | "codex"
     | "side"
     | "info"
+    | "question"
     | "system"
     | "meta"
     | "error"
@@ -69,8 +70,11 @@ function activityTitle(line: Line): string {
     const bash = /^Bash: ([\s\S]*)$/.exec(command);
     const body = shell?.[1] ?? bash?.[1] ?? command;
     const read = /^(?:cat|head|tail)\s+([^|;&]+)$/.exec(body);
-    if (read && !read[1]!.trim().startsWith("-")) return `Read(${read[1]!.trim()})`;
-    return `${shell ? "PS" : "Bash"}(${body})`;
+    const maxCmdLen = 45;
+    const trimmed = (read && !read[1]!.trim().startsWith("-") ? read[1]! : body).trim().replace(/\s+/g, " ");
+    const shortBody = trimmed.length > maxCmdLen ? `${trimmed.slice(0, maxCmdLen).trimEnd()}…` : trimmed;
+    const prefix = read && !read[1]!.trim().startsWith("-") ? "Read" : shell ? "PS" : "Bash";
+    return `${prefix}(${shortBody}) ...`;
   }
   if (activity.category === "files") return `Edit(${text.replace(/^(?:Edited|Failed to edit)\s+/, "")})`;
   if (activity.category === "search") return `Search(${text.replace(/^Web search:\s*/, "")})`;
@@ -232,6 +236,34 @@ export function Transcript({
                 <MarkdownText source={line.text} color="#EF4444" width={Math.max(10, width - 10)} />
               </Box>
             </Box>
+          ) : line.role === "question" || (line.role === "info" && line.text.includes("\nYou:")) ? (
+            (() => {
+              const newlineIdx = line.text.indexOf("\nYou:");
+              const question = newlineIdx >= 0 ? line.text.slice(0, newlineIdx).trim() : line.text;
+              const answer = newlineIdx >= 0 ? line.text.slice(newlineIdx + 5).trim() : undefined;
+              return (
+                <Box flexDirection="column" width={width}>
+                  <Box gap={1} width={width}>
+                    <Box flexShrink={0}>
+                      <Text color="#A5B4FC" bold>? Clarification:</Text>
+                    </Box>
+                    <Box flexGrow={1} flexShrink={1}>
+                      <Text color="#E2E8F0">{question}</Text>
+                    </Box>
+                  </Box>
+                  {answer ? (
+                    <Box gap={1} marginLeft={2} width={width ? Math.max(10, width - 2) : undefined}>
+                      <Box flexShrink={0}>
+                        <Text color="#38BDF8" bold>❯ You:</Text>
+                      </Box>
+                      <Box flexGrow={1} flexShrink={1}>
+                        <Text color="white">{answer}</Text>
+                      </Box>
+                    </Box>
+                  ) : null}
+                </Box>
+              );
+            })()
           ) : line.role === "system" ? (
             <Box gap={1} width={width}>
               <Box flexShrink={0}>

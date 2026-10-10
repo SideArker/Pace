@@ -51,6 +51,18 @@ export function displayCommand(command: string): string {
   return `${shell}: ${script || args.trim()}`;
 }
 
+export function formatCommandStatus(title: string): string {
+  const match = /^(?:Running|Ran|Failed): ([\s\S]*?)(?: \(exit [^)]+\))?$/.exec(title);
+  const raw = match ? match[1]! : title;
+  const shellMatch = /^(?:PS \(PowerShell\)|PS|Bash): ([\s\S]*)$/.exec(raw);
+  const isPs = /^(?:PS \(PowerShell\)|PS):/i.test(raw);
+  const body = (shellMatch ? shellMatch[1]! : raw).trim().replace(/\s+/g, " ");
+  const maxLen = 45;
+  const short = body.length > maxLen ? `${body.slice(0, maxLen).trimEnd()}…` : body;
+  const shellName = isPs ? "PS" : "Bash";
+  return `${shellName}(${short}) ...`;
+}
+
 export function formatCommandActivity(title: string, detail?: string): { title: string; detail?: string } {
   const match = /^(Running|Ran|Failed): ([\s\S]*?)( \(exit [^)]+\))?$/.exec(title);
   if (!match) return { title, detail };

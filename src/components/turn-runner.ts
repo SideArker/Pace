@@ -8,7 +8,7 @@ import { checkpointDue, createCheckpointIfDue } from "../core/checkpoint.js";
 import { formatLiveUsage, formatTurnFooter, modelName } from "./turn-format.js";
 import type { Line } from "./Transcript.js";
 import { updateAgentTasks } from "../core/tasks.js";
-import { formatCommandActivity } from "./shell-runner.js";
+import { formatCommandActivity, formatCommandStatus } from "./shell-runner.js";
 import { readUsageLimits, type UsageLimits } from "../integrations/usage.js";
 import { isUsageLimitError, usageRetryAt } from "../core/usage-retry.js";
 import type { RunningProcess } from "./RunningProcesses.js";
@@ -120,7 +120,7 @@ export function createTurnRunner({
           if (progress.kind === "system") addFor(sessionId, "system", progress.text);
           if (progress.kind === "activity") {
             activityFor(sessionId, { ...progress, id: `turn-${turnId}-${progress.id}` });
-            setStatusFor(sessionId, progress.category === "command" ? formatCommandActivity(progress.title).title : progress.title);
+            setStatusFor(sessionId, progress.category === "command" ? formatCommandStatus(progress.title) : progress.title);
           }
           if (progress.kind === "tasks") {
             turnSession.tasks = updateAgentTasks(turnSession.tasks, progress.items);

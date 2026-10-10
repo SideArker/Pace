@@ -55,9 +55,20 @@ describe("activity transcript", () => {
     const first = render();
     expect(first).toContain("□ ◆ Thought");
     expect(first).not.toContain("Ran:");
-    expect(first).toContain("■ ◆ PS(rg -n foo src)");
+    expect(first).toContain("■ ◆ PS(rg -n foo src) ...");
     expect(first).not.toContain("Output");
     expect(render(true)).toContain("■ ◆ Thought");
+  });
+
+  it("renders clarification question and user response with distinct styling", () => {
+    const output = renderToString(React.createElement(Transcript, {
+      lines: [{ id: 1, role: "question", text: "Vex is unsure about the deliverable.\nYou: Run as single agent", spaceBefore: false }],
+      outputsExpanded: false, detailsExpanded: false,
+    }), { columns: 80 });
+    expect(output).toContain("? Clarification:");
+    expect(output).toContain("Vex is unsure about the deliverable.");
+    expect(output).toContain("❯ You:");
+    expect(output).toContain("Run as single agent");
   });
 
   it("groups adjacent thoughts while keeping every summary available", () => {
