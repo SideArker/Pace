@@ -16,6 +16,16 @@ it('stores a session atomically under a hashed project key and reloads it', asyn
   expect((await readFile(join(store.sessionDir('/example/project'), `${session.id}.json`), 'utf8'))).toContain('thread-123');
   expect(store.conversationDir('/example/project', session.id)).toBe(join(store.sessionDir('/example/project'), session.id));
 });
+it('reloads a manual planning and verification workflow', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  const store = new PaceStore(dir);
+  const session = newSession('/example/project', 'manual');
+  session.manualWorkflow = { shape: 'plan_verify', routes: {
+    plan: { model: 'gpt-6-luna', effort: 'high' }, final: { model: 'gpt-6-sol' },
+  } };
+  await store.save(session);
+  expect((await store.latest('/example/project'))?.manualWorkflow).toEqual(session.manualWorkflow);
+});
 it('skips corrupted session files', async () => {
   dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
   const notices: string[] = []; const store = new PaceStore(dir, text => notices.push(text));

@@ -407,6 +407,46 @@ it('passes an actionable read-only plan into the execution stage', async () => {
   expect(outcome.stages.map(stage => stage.route)).toEqual([{ model: 'gpt-6-luna', effort: 'low' }, { model: 'gpt-6-sol', effort: 'high' }]);
 });
 
+it('runs a manual planning and verification workflow read only with separate routes', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  const calls: { prompt: string; route: Route; mode?: string }[] = [];
+  const runner: CodexRunner = { async run(prompt, _project, route, _id, _progress, _signal, mode) {
+    calls.push({ prompt, route, mode });
+    return mode === 'side' && calls.length === 1
+      ? { result: JSON.stringify({ summary: 'Plan parser', findings: [{ path: 'src/parser.ts', line: 4, finding: 'Parser entry', relevance: 'Plan target' }], nextSteps: ['Update parser'], checks: ['npm test'], risks: [] }), completed: true }
+      : { result: 'Verified plan', completed: true };
+  } };
+  const session = newSession('/example/project', 'manual');
+  session.manualWorkflow = { shape: 'plan_verify', routes: {
+    plan: { model: 'gpt-6-luna', effort: 'low' }, final: { model: 'gpt-6-sol', effort: 'high' },
+  } };
+  const outcome = await new Orchestrator(new PaceStore(dir), runner, { choose: async () => { throw new Error('Vex should not choose explicit routes'); } }).turn('Plan parser', session, config, () => {});
+  expect(calls.map(call => call.mode)).toEqual(['side', 'side']);
+  expect(calls[1]?.prompt).toContain('Review the planning report');
+  expect(outcome.result).toBe('Verified plan');
+  expect(outcome.stages.map(stage => stage.route)).toEqual([
+    { model: 'gpt-6-luna', effort: 'low' }, { model: 'gpt-6-sol', effort: 'high' },
+  ]);
+});
+
+it('lets Vex choose effort within a manually selected model', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  const requests: VexRequest[] = [];
+  const runner: CodexRunner = { async run(_prompt, _project, route) {
+    expect(route).toEqual({ model: 'gpt-6-sol', effort: 'high' });
+    return { result: 'done', completed: true };
+  } };
+  const session = newSession('/example/project', 'manual');
+  session.manualWorkflow = { shape: 'single', routes: { final: { model: 'gpt-6-sol' } } };
+  const vex = { choose: async (request: VexRequest) => {
+    requests.push(request);
+    return decision(request, '0:high');
+  } };
+  await new Orchestrator(new PaceStore(dir), runner, vex).turn('Work', session, config, () => {});
+  expect(requests).toHaveLength(1);
+  expect(requests[0]?.options.map(option => option.id)).toEqual(['0:medium', '0:high']);
+});
+
 it('retries invalid decisions once, then exposes error without model fallback', async () => {
   dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
   let calls = 0;
