@@ -193,6 +193,23 @@ export function ManualRouteMenu({
   );
 }
 
+export function ManualWorkflowMenu({ title, options, selectedIndex }: {
+  title: string;
+  options: string[];
+  selectedIndex: number;
+}) {
+  const { start, end } = menuWindow(options.length, selectedIndex);
+  return <Box flexDirection="column" borderStyle="round" borderColor="#38BDF8" paddingX={1} marginTop={1}>
+    <Text color="#38BDF8" bold>{title}</Text>
+    {options.slice(start, end).map((option, offset) => <Box key={start + offset} gap={1}>
+      <Text color={start + offset === selectedIndex ? "#38BDF8" : "#64748B"}>{start + offset === selectedIndex ? "▶" : " "}</Text>
+      <Text color={start + offset === selectedIndex ? "white" : "#CBD5E1"}>{option}</Text>
+    </Box>)}
+    {options.length > 5 ? <Text color="#64748B">{start + 1}–{end} of {options.length}</Text> : null}
+    <Text color="#64748B">↑/↓ select · Enter next · Esc close</Text>
+  </Box>;
+}
+
 export function CommandMenu({
   matches,
   descriptions = {},

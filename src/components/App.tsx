@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Box, Static, Text, useApp, useStdout } from "ink";
 import type { ApprovalDecision, Progress } from "../integrations/codex.js";
 import type { UserAnswers } from "../integrations/codex-types.js";
-import type { ApprovalMode, Config, Route, Session } from "../shared/types.js";
+import type { ApprovalMode, Config, ManualWorkflow, Route, Session } from "../shared/types.js";
 import { PaceStore, newSession, rewindConversation, deleteConversationTurn, undoConversationTurn } from "../core/sessions.js";
 import { Orchestrator, VexUnavailableError } from "../core/orchestrator.js";
 import { PromptQueue } from "../core/prompt-queue.js";
@@ -28,7 +28,7 @@ import { useAppInput } from "./useAppInput.js";
 import { Transcript, splitTranscript, type Line } from "./Transcript.js";
 import { HeaderLogo, HeaderStatus } from "./Header.js";
 import { UsageBar } from "./UsageBar.js";
-import { ApprovalModeMenu, CommandMenu, ConversationPicker, ConvoMenu, ManualRouteMenu, ModelMenu, QueueMenu, ResumeMenu, sectionConversations, type ConversationChoice } from "./Menus.js";
+import { ApprovalModeMenu, CommandMenu, ConversationPicker, ConvoMenu, ManualWorkflowMenu, ModelMenu, QueueMenu, ResumeMenu, sectionConversations, type ConversationChoice } from "./Menus.js";
 import { join, resolve } from "node:path";
 import { readFileSync } from "node:fs";
 import { createShellRunner, displayCommand, formatCommandActivity, oneOffShellCommand } from "./shell-runner.js";
@@ -66,6 +66,18 @@ const commands = [
   "/.clear",
   "/exit",
 ];
+const workflowChoices = [
+  { shape: "single", label: "Single agent" },
+  { shape: "scout", label: "Scout → Completion" },
+  { shape: "plan_execute", label: "Planning → Execution" },
+  { shape: "scout_plan_execute", label: "Scout → Planning → Execution" },
+  { shape: "plan_verify", label: "Planning → Verification" },
+] as const;
+type WorkflowShape = ManualWorkflow["shape"];
+type WorkflowStage = keyof ManualWorkflow["routes"];
+const workflowStages = (shape: WorkflowShape): WorkflowStage[] =>
+  shape === "single" ? ["final"] : shape === "scout" ? ["scout", "final"]
+    : shape === "scout_plan_execute" ? ["scout", "plan", "final"] : ["plan", "final"];
 const commandDescriptions: Record<string, string> = {
   "/models": "Choose models and reasoning levels",
   "/version": "Check Pace and price catalog versions",
@@ -188,6 +200,13 @@ export default function App({ onClear }: { onClear: () => void }) {
   const [convoMenu, setConvoMenu] = useState(false);
   const [queueMenu, setQueueMenu] = useState(false);
   const [manualMenu, setManualMenu] = useState(false);
+  const [manualWizard, setManualWizard] = useState<{
+    step: "workflow" | "model" | "effort";
+    shape?: WorkflowShape;
+    stageIndex: number;
+    model?: string;
+    routes: ManualWorkflow["routes"];
+  }>({ step: "workflow", stageIndex: 0, routes: {} });
   const [resumeChoices, setResumeChoices] = useState<Session[]>([]);
   const [resumeProcessIds, setResumeProcessIds] = useState<string[]>([]);
   const [missingProjectPaths, setMissingProjectPaths] = useState<string[]>([]);
@@ -629,7 +648,7 @@ export default function App({ onClear }: { onClear: () => void }) {
           : [...config.models, { model: menuModel, efforts: [effort], defaultEffort: effort, enabled: true }];
         const updatedConfig = withModels(config, models);
         await store.saveConfig(updatedConfig);
-        const updatedSession = { ...session, routingMode: "manual" as const, route: { model: menuModel, effort } };
+        const updatedSession = { ...session, routingMode: "manual" as const, route: { model: menuModel, effort }, manualWorkflow: undefined };
         await store.save(updatedSession);
         setConfig(updatedConfig);
         setSession(updatedSession);
@@ -644,7 +663,7 @@ export default function App({ onClear }: { onClear: () => void }) {
     const route = target;
     setManualMenu(false);
     if (!session) return;
-    const updated = { ...session, routingMode: "manual" as const, route };
+    const updated = { ...session, routingMode: "manual" as const, route, manualWorkflow: undefined };
     try {
       await store.save(updated);
       setSession(updated);
@@ -789,6 +808,58 @@ export default function App({ onClear }: { onClear: () => void }) {
   const manualRoutes: Route[] = enabledModels.flatMap((m) =>
     m.efforts.map((e) => ({ model: m.model, effort: e })),
   );
+  const availableWorkflows = workflowChoices.filter(choice =>
+    !["scout", "scout_plan_execute"].includes(choice.shape) || enabledModels.some(model => model.model === "gpt-6-luna"));
+  const manualStage = manualWizard.shape ? workflowStages(manualWizard.shape)[manualWizard.stageIndex] : undefined;
+  const manualOptions = manualWizard.step === "workflow"
+    ? ["Delegate choice to Vex", ...availableWorkflows.map(choice => choice.label)]
+    : manualWizard.step === "model"
+      ? ["Delegate choice to Vex", ...(manualStage === "scout" ? enabledModels.filter(m => m.model === "gpt-6-luna") : enabledModels).map(m => m.model)]
+      : ["Delegate choice to Vex", ...(enabledModels.find(m => m.model === manualWizard.model)?.efforts ?? [])];
+  const finishManualStage = async (selection: Route | "vex") => {
+    if (!session || !manualWizard.shape || !manualStage) return;
+    const routes = { ...manualWizard.routes, [manualStage]: selection };
+    const nextIndex = manualWizard.stageIndex + 1;
+    if (nextIndex < workflowStages(manualWizard.shape).length) {
+      setManualWizard({ ...manualWizard, step: "model", stageIndex: nextIndex, model: undefined, routes });
+      setMenuIndex(0);
+      return;
+    }
+    const updated = { ...session, routingMode: "manual" as const, manualWorkflow: { shape: manualWizard.shape, routes } };
+    try {
+      await store.save(updated);
+      setSession(updated);
+      rememberSession(updated);
+      setManualMenu(false);
+      add("info", `Manual ${manualWizard.shape} workflow saved. Send the task as your next message.`);
+    } catch (error) { add("error", `Could not save workflow: ${String(error)}`); }
+  };
+  const selectManualOption = (index: number) => {
+    if (manualWizard.step === "workflow") {
+      if (index === 0) {
+        if (!session) return;
+        const updated = { ...session, routingMode: "auto" as const, manualWorkflow: undefined };
+        void store.save(updated).then(() => {
+          setSession(updated); rememberSession(updated); setManualMenu(false);
+          add("info", "Workflow choice delegated to Vex.");
+        }).catch(error => add("error", `Could not save routing mode: ${String(error)}`));
+        return;
+      }
+      const shape = availableWorkflows[index - 1]?.shape;
+      if (!shape) return;
+      setManualWizard({ step: "model", shape, stageIndex: 0, routes: {} });
+    } else if (manualWizard.step === "model") {
+      if (index === 0) { void finishManualStage("vex"); return; }
+      const model = manualOptions[index];
+      if (!model) return;
+      setManualWizard({ ...manualWizard, step: "effort", model });
+    } else {
+      if (!manualWizard.model) return;
+      const effort = manualOptions[index];
+      void finishManualStage(index === 0 ? { model: manualWizard.model } : { model: manualWizard.model, effort: effort as Route["effort"] });
+    }
+    setMenuIndex(0);
+  };
   const focusPicker = () => {
     if (sortedSessions.length < 2 || modelMenu || convoMenu || queueMenu || approvalMenu || manualMenu) return false;
     const pendingIndex = sortedSessions.findIndex(item => item.id !== activeSessionId.current && (pendingApprovals.current.has(item.id) || pendingQuestions.current.has(item.id)));
@@ -813,7 +884,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         add("info", `Approval mode: ${mode}. Active turns keep their starting mode.`);
       } catch (error) { add("error", `Could not save approval mode: ${String(error)}`); }
     },
-    manualMenu, setManualMenu, manualRoutes, selectManualRoute,
+    manualMenu, setManualMenu, manualRoutes, selectManualRoute, manualOptions, selectManualOption,
     menuIndex, setMenuIndex, setMenuModel, toggleModel, toggleEffort,
     resumeMenu, setResumeMenu, resumeChoices, missingProjectPaths, add,
     convoMenu, setConvoMenu, session, store, setSession, renderSessionTurns,
@@ -972,7 +1043,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         }
         const fresh = newSession(project, session.routingMode);
         thisPaceIds.current.add(fresh.id);
-        if (session.routingMode === "manual") fresh.route = session.route;
+        if (session.routingMode === "manual") { fresh.route = session.route; fresh.manualWorkflow = session.manualWorkflow; }
         switchingSession.current = true;
         const previousId = activeSessionId.current;
         if (previousId) {
@@ -1029,7 +1100,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       }
       if (command === "/auto") {
         // Auto selection uses the enabled model list in the orchestrator.
-        const updated = { ...session, routingMode: "auto" as const };
+        const updated = { ...session, routingMode: "auto" as const, manualWorkflow: undefined };
         try {
           await store.save(updated);
           setSession(updated);
@@ -1047,15 +1118,13 @@ export default function App({ onClear }: { onClear: () => void }) {
           return;
         }
         if (!parts.length) {
+          setManualWizard({ step: "workflow", stageIndex: 0, routes: {} });
           setManualMenu(true);
-          const currentIdx = manualRoutes.findIndex(
-            (r) => r.model === session?.route?.model && r.effort === session?.route?.effort,
-          );
-          setMenuIndex(currentIdx >= 0 ? currentIdx : 0);
+          setMenuIndex(0);
           return;
         }
         if (parts[0] === "off" || parts[0] === "auto") {
-          const updated = { ...session, routingMode: "auto" as const };
+          const updated = { ...session, routingMode: "auto" as const, manualWorkflow: undefined };
           try {
             await store.save(updated);
             setSession(updated);
@@ -1093,6 +1162,7 @@ export default function App({ onClear }: { onClear: () => void }) {
           ...session,
           routingMode: "manual" as const,
           route: { model: matched.model, effort },
+          manualWorkflow: undefined,
         };
         try {
           await store.save(updated);
@@ -1491,7 +1561,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       </Box>
       {modelMenu ? <ModelMenu mode={modelMenu} models={menuModels} availableModels={availableModels.map(model => model.model)} efforts={menuEfforts} catalogStatus={modelCatalogStatus} selectedModel={menuModel} selectedIndex={menuIndex} config={config} /> : null}
       {approvalMenu ? <ApprovalModeMenu selectedIndex={menuIndex} currentMode={config?.approvalMode ?? "request-approval"} /> : null}
-      {manualMenu ? <ManualRouteMenu routes={manualRoutes} selectedIndex={menuIndex} currentRoute={session?.route ?? config?.defaultRoute ?? {}} /> : null}
+      {manualMenu ? <ManualWorkflowMenu title={manualWizard.step === "workflow" ? "Manual workflow" : `${manualWizard.shape} · ${manualStage} · ${manualWizard.step}`} options={manualOptions} selectedIndex={menuIndex} /> : null}
       {convoMenu && session ? <ConvoMenu turns={session.turns} selectedIndex={menuIndex} /> : null}
       {queueMenu && session ? <QueueMenu prompts={queued} selectedIndex={menuIndex} /> : null}
       <WorkingStatus busy={busy} status={status} runningCount={runningIds.length} shellJobs={shellJobs} tick={tick}

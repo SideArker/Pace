@@ -41,6 +41,8 @@ export function useAppInput(options: {
   setManualMenu?: Dispatch<SetStateAction<boolean>>;
   manualRoutes?: Route[];
   selectManualRoute?: (route: Route | (typeof EFFORTS)[number]) => Promise<void>;
+  manualOptions?: string[];
+  selectManualOption?: (index: number) => void;
   setModelMenu: Dispatch<SetStateAction<"models" | "efforts" | undefined>>;
   menuModels: string[];
   menuEfforts: readonly (typeof EFFORTS)[number][];
@@ -73,7 +75,7 @@ export function useAppInput(options: {
     openSessions, activateSession, approval, question, focusPicker, pendingApprovals,
     activeSessionId, jobs, sideAbort, outputsExpanded, setOutputsExpanded, redrawTranscript,
     modelMenu, setModelMenu, approvalMenu, setApprovalMenu, selectApprovalMode,
-    manualMenu, setManualMenu, manualRoutes, selectManualRoute,
+    manualMenu, setManualMenu, manualRoutes, selectManualRoute, manualOptions, selectManualOption,
     menuModels, menuEfforts, menuIndex,
     setMenuIndex, setMenuModel, toggleModel, toggleEffort, resumeMenu,
     setResumeMenu, resumeChoices, missingProjectPaths, add, convoMenu,
@@ -181,13 +183,16 @@ export function useAppInput(options: {
       return;
     }
     if (manualMenu) {
-      const routes = manualRoutes ?? [];
+      const routes = manualOptions ?? manualRoutes ?? [];
       if (key.escape) setManualMenu?.(false);
       else if (key.upArrow || key.downArrow || key.tab)
         setMenuIndex(value => (value + (key.upArrow ? -1 : 1) + routes.length) % routes.length);
       else if (key.return) {
-        const chosen = routes[menuIndex];
-        if (chosen) void selectManualRoute?.(chosen);
+        if (manualOptions) selectManualOption?.(menuIndex);
+        else {
+          const chosen = (manualRoutes ?? [])[menuIndex];
+          if (chosen) void selectManualRoute?.(chosen);
+        }
       }
       return;
     }
