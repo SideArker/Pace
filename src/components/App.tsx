@@ -83,33 +83,46 @@ type WorkflowStage = keyof ManualWorkflow["routes"];
 const workflowStages = (shape: WorkflowShape): WorkflowStage[] =>
   shape === "single" ? ["final"] : shape === "scout" ? ["scout", "final"]
     : shape === "scout_plan_execute" ? ["scout", "plan", "final"] : ["plan", "final"];
+export const commandArguments: Record<string, string> = {
+  "/plan": "<prompt>",
+  "/execute": "[prompt]",
+  "/manual": "[model] [effort]",
+  "/workflow": "[name|auto]",
+  "/approval": "[mode]",
+  "/skills": "[folder|enable|disable|off]",
+  "/btw": "<question>",
+};
+export const skillArguments = (skillName: string): string => {
+  if (skillName === "caveman") return "[mode]";
+  return "[request]";
+};
 const commandDescriptions: Record<string, string> = {
-  "/plan": "Toggle or start a planning session (purple plan)",
-  "/execute": "Dispatch plan to a fresh session via Vex (Explore → Implement)",
-  "/verify": "Verify plan with a higher quality model against repo",
-  "/models": "Choose models and reasoning levels",
-  "/version": "Check Pace and price catalog versions",
-  "/auto": "Let Pace choose a model",
-  "/manual": "Choose workflow, stage models, and effort",
-  "/workflow": "Choose workflow and let Vex route its stages",
+  "/plan": "Start or toggle planning mode",
+  "/execute": "Run approved plan via multi-stage workflow",
+  "/verify": "Verify plan against repository before running",
+  "/models": "Choose model and reasoning effort",
+  "/version": "Show Pace and price catalog versions",
+  "/auto": "Let Pace route models automatically",
+  "/manual": "Configure workflow stages, models, and effort",
+  "/workflow": "Choose workflow strategy (single, scout, plan-execute)",
   "/new": "Start a new conversation",
   "/resume": "Switch to a saved conversation",
   "/convo": "Browse and manage conversation turns",
-  "/undo": "Undo the latest change",
-  "/usage": "Refresh Codex account usage",
-  "/cancelretry": "Cancel a saved usage-limit retry and its queue",
-  "/btw": "Ask a side question about this conversation",
+  "/undo": "Revert latest turn and file changes",
+  "/usage": "Show Codex account usage and rate limits",
+  "/cancelretry": "Cancel saved usage-limit retry and queue",
+  "/btw": "Ask a side question without adding to context",
   "/artifacts": "Show generated artifacts",
   "/trust": "Manage trusted project folders",
-  "/skills": "Discover and manage skills",
-  "/stats": "Show conversation statistics",
-  "/route": "Show routing details",
+  "/skills": "Discover and manage agent skills",
+  "/stats": "Show conversation stats and token costs",
+  "/route": "Show routing decisions and stage breakdown",
   "/approval": "Set command approval mode",
-  "/tasks": "Show agent tasks",
-  "/compact": "Compact conversation context",
-  "/context": "Show context usage",
-  "/clear": "Clear the conversation and terminal",
-  "/.clear": "Clear the conversation and terminal",
+  "/tasks": "Show background agent tasks",
+  "/compact": "Compact conversation context to save tokens",
+  "/context": "Show context window usage breakdown",
+  "/clear": "Clear screen and conversation",
+  "/.clear": "Clear screen and conversation",
   "/exit": "Quit Pace",
 };
 export const normalizeNewCommand = (input: string) => input.trim().replace(/^(?:\.\/(?!clear(?=\s|$))|\/\.)(new|clear|approval)(?=\s|$)/, "/$1");
@@ -411,6 +424,15 @@ export default function App({ onClear }: { onClear: () => void }) {
       [`@${skill.name}`, skill.description],
     ] as [string, string][]) : []),
   ]);
+  const commandArgsWithSkills: Record<string, string> = {
+    ...commandArguments,
+    ...(config ? Object.fromEntries(
+      enabledSkills(skills, config).flatMap(skill => [
+        [`/${skill.name}`, skillArguments(skill.name)],
+        [`@${skill.name}`, skillArguments(skill.name)],
+      ]),
+    ) : {}),
+  };
   const token = shellMode ? undefined : commandToken(draft);
   const matches = token
     ? [...commands, ...skillCommands].filter((command) => command.startsWith(token.prefix))
@@ -1723,8 +1745,9 @@ export default function App({ onClear }: { onClear: () => void }) {
   }
   staticState.sessionId = session?.id ?? staticState.sessionId;
   const staticKey = `${staticState.key}-${transcriptRevision}`;
-  const staticItems: ({ kind: "logo" } | { kind: "lines"; group: Line[] })[] = [
+  const staticItems: ({ kind: "logo" } | { kind: "status" } | { kind: "lines"; group: Line[] })[] = [
     ...(showHeader ? [{ kind: "logo" as const }] : []),
+    ...(showHeader && vexState !== "connecting" ? [{ kind: "status" as const }] : []),
     ...settledLines.map(group => ({ kind: "lines" as const, group })),
   ];
   const terminalColumns = terminalDimensions.columns;
@@ -1740,10 +1763,11 @@ export default function App({ onClear }: { onClear: () => void }) {
       <Static key={staticKey} items={staticItems} style={{ width: contentWidth }}>
         {item => item.kind === "logo"
           ? <HeaderLogo key="logo" width={contentWidth} />
-          : <Transcript key={item.group[0]?.id} lines={item.group} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} width={contentWidth} />}
+          : item.kind === "status"
+            ? <HeaderStatus project={session?.projectPath ?? project} vexState={vexState} sessionKind={session?.kind} width={contentWidth} />
+            : <Transcript key={item.group[0]?.id} lines={item.group} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} width={contentWidth} />}
       </Static>
       <Box flexDirection="column" flexShrink={1} minHeight={0} overflowY="hidden">
-      {showHeader ? <HeaderStatus project={session?.projectPath ?? project} vexState={vexState} sessionKind={session?.kind} width={contentWidth} /> : null}
       <Box flexDirection="column" flexShrink={1} minHeight={0} overflowY="hidden">
         <Transcript lines={liveLines.slice(-Math.max(1, Math.floor(((terminalRows - 12) / 4))))} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} livePreview width={contentWidth} />
       </Box>
@@ -1785,8 +1809,12 @@ export default function App({ onClear }: { onClear: () => void }) {
             }
           }}
           disabled={!session || !config || !!approval || !!question || !!modelMenu || approvalMenu || resumeMenu || convoMenu || queueMenu || manualMenu || pickerFocused} shellMode={shellMode}
-          completion={matches[selection] ?? matches[0]} completionStart={token?.start}
-          onComplete={() => setDraft(token ? draft.slice(0, token.start) + (matches[selection] ?? matches[0] ?? token.prefix) : draft)}
+          completion={matches[selection] ? (commandArgsWithSkills[matches[selection]!] ? `${matches[selection]} ` : matches[selection]) : matches[0] ? (commandArgsWithSkills[matches[0]!] ? `${matches[0]} ` : matches[0]) : undefined} completionStart={token?.start}
+          onComplete={() => {
+            const chosen = matches[selection] ?? matches[0];
+            const completed = chosen ? (commandArgsWithSkills[chosen] ? `${chosen} ` : chosen) : token?.prefix;
+            setDraft(token ? draft.slice(0, token.start) + (completed ?? token.prefix) : draft);
+          }}
           onHistory={direction => {
             if (!matches.length) return false;
             setSelection(value => (value + (direction === "up" ? -1 : 1) + matches.length) % matches.length);
@@ -1799,7 +1827,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         />
       </ComposerFrame>
       {usageWarning ? <Text color="#FBBF24">{usageWarning}</Text> : null}
-      {!modelMenu && !approvalMenu && !resumeMenu && !convoMenu && !queueMenu && !manualMenu && matches.length > 0 ? <CommandMenu matches={matches} descriptions={commandDescriptionsWithSkills} selectedIndex={selection} /> : null}
+      {!modelMenu && !approvalMenu && !resumeMenu && !convoMenu && !queueMenu && !manualMenu && matches.length > 0 ? <CommandMenu matches={matches} descriptions={commandDescriptionsWithSkills} args={commandArgsWithSkills} selectedIndex={selection} width={contentWidth} /> : null}
       <BottomPanel
         width={contentWidth}
         height={terminalRows}

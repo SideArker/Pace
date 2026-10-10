@@ -212,34 +212,74 @@ export function ManualWorkflowMenu({ title, options, selectedIndex }: {
   </Box>;
 }
 
+export function truncateWithEllipsis(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+}
+
 export function CommandMenu({
   matches,
   descriptions = {},
+  args = {},
   selectedIndex,
+  width,
 }: {
   matches: string[];
   descriptions?: Record<string, string>;
+  args?: Record<string, string>;
   selectedIndex: number;
+  width?: number;
 }) {
   const { start, end } = menuWindow(matches.length, selectedIndex);
+  const commandDisplayLength = (command: string) =>
+    command.length + (args[command] ? args[command]!.length + 1 : 0);
+  const commandColWidth = Math.min(
+    32,
+    Math.max(18, ...matches.map(commandDisplayLength)),
+  );
+  const maxDescWidth = Math.max(20, (width ?? 80) - commandColWidth - 8);
+  const selectedMatch = matches[selectedIndex];
+  const selectedDescription = selectedMatch ? descriptions[selectedMatch] : undefined;
+  const selectedArg = selectedMatch ? args[selectedMatch] : undefined;
+
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="#475569" paddingX={1} marginTop={1}>
       <Text color="#38BDF8" bold>◈ Commands</Text>
       {matches.slice(start, end).map((match, offset) => {
         const selected = start + offset === selectedIndex;
+        const argText = args[match];
+        const rawDesc = descriptions[match] ?? "";
+        const firstLine = rawDesc.split(/\r?\n/)[0]?.trim() ?? "";
+        const displayDescription = truncateWithEllipsis(firstLine, maxDescWidth);
         return (
           <Box key={match} gap={1}>
             <Text color={selected ? "#59E6A7" : "gray"} bold={selected}>
               {selected ? "▶" : " "}
             </Text>
-            <Text color="#38BDF8" bold>
-              {match}
-            </Text>
-            <Text color="#64748B" wrap="truncate">{descriptions[match] ?? ""}</Text>
+            <Box width={commandColWidth} flexShrink={0}>
+              <Text color="#38BDF8" bold>
+                {match}
+              </Text>
+              {argText ? <Text color="#94A3B8"> {argText}</Text> : null}
+            </Box>
+            <Box flexGrow={1} flexShrink={1}>
+              <Text color={selected ? "#CBD5E1" : "#64748B"} wrap="truncate">
+                {displayDescription}
+              </Text>
+            </Box>
           </Box>
         );
       })}
       {matches.length > 5 ? <Text color="#64748B">{start + 1}–{end} of {matches.length}</Text> : null}
+      {selectedMatch && selectedDescription ? (
+        <Box flexDirection="column" marginTop={1} paddingX={1} borderStyle="single" borderColor="#334155">
+          <Box gap={1}>
+            <Text color="#38BDF8" bold>{selectedMatch}</Text>
+            {selectedArg ? <Text color="#94A3B8">{selectedArg}</Text> : null}
+          </Box>
+          <Text color="#E2E8F0">{selectedDescription}</Text>
+        </Box>
+      ) : null}
       <Box marginTop={0}>
         <Text color="#64748B">↑/↓ select · Tab complete</Text>
       </Box>

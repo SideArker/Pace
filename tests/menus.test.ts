@@ -1,10 +1,16 @@
 import React from "react";
 import { renderToString } from "ink";
 import { expect, it } from "vitest";
-import { ApprovalModeMenu, CommandMenu, ConvoMenu, menuWindow } from "../src/components/ConversationMenus.js";
+import { ApprovalModeMenu, CommandMenu, ConvoMenu, menuWindow, truncateWithEllipsis } from "../src/components/ConversationMenus.js";
 import { ResumeMenu } from "../src/components/ResumeMenu.js";
 import { ModelMenu } from "../src/components/ModelMenu.js";
 import { newSession } from "../src/core/sessions.js";
+
+it("truncates text with ellipsis only when exceeding maxLength", () => {
+  expect(truncateWithEllipsis("short", 10)).toBe("short");
+  expect(truncateWithEllipsis("exact len", 9)).toBe("exact len");
+  expect(truncateWithEllipsis("longer than limit", 10)).toBe("longer...");
+});
 
 it("keeps selected entry inside a five-row window", () => {
   expect(menuWindow(12, 0)).toEqual({ start: 0, end: 5 });
@@ -32,6 +38,30 @@ it("scrolls command matches and conversation turns with selection", () => {
   expect(conversation).toContain("/command8");
   expect(conversation).not.toContain("/command0");
   expect(conversation).not.toContain("/command11");
+});
+
+it("renders command arguments, truncates descriptions with ellipsis, and shows selected detail preview", () => {
+  const matches = ["/plan", "/models", "/exit", "/@caveman"];
+  const args = { "/plan": "<prompt>", "/@caveman": "[mode]" };
+  const descriptions = {
+    "/plan": "Start or toggle planning mode",
+    "/models": "Choose model and reasoning effort",
+    "/exit": "Quit Pace",
+    "/@caveman": "Ultra-compressed communication mode that cuts output tokens.\nSecond line explanation of caveman mode.",
+  };
+  const rendered = renderToString(React.createElement(CommandMenu, {
+    matches,
+    descriptions,
+    args,
+    selectedIndex: 3,
+    width: 60,
+  }));
+  expect(rendered).toContain("/plan");
+  expect(rendered).toContain("<prompt>");
+  expect(rendered).toContain("/@caveman");
+  expect(rendered).toContain("[mode]");
+  expect(rendered).toContain("...");
+  expect(rendered).toContain("Second line explanation of caveman mode.");
 });
 
 it("limits resume and model menus while retaining selected entry", () => {
