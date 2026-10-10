@@ -134,3 +134,32 @@ export function structuredHandoff(result: string): string {
     throw new Error("Stage handoff exceeds 20,000 characters");
   return handoff;
 }
+
+export function planningPrompt(request: string): string {
+  return `${request}\n\n[PLANNING MODE INSTRUCTION]\nYou are in read-only planning mode. Explore the codebase, inspect relevant files, analyze architecture, and produce or refine a clear, actionable implementation plan.\nDo NOT edit or write code files. Provide:
+1. Summary of proposed changes
+2. Files to create/modify
+3. Step-by-step implementation plan
+4. Verification and testing strategy
+5. Risks and edge cases`;
+}
+
+export function executePlanPrompt(plan: string): string {
+  return `Implement the following plan. Follow this two-phase execution:
+PHASE 1 (EXPLORE & GROUND): First, explore and inspect all files mentioned in the plan to verify existing signatures, imports, AST structure, and tests. Do not make code edits yet during this initial verification.
+PHASE 2 (IMPLEMENT & VERIFY): Implement the changes step-by-step according to the verified plan, run tests, and confirm that all requirements are met.
+
+Implementation Plan:
+${plan}`;
+}
+
+export function verifyPlanPrompt(plan: string, goal?: string): string {
+  return `Review and verify the following implementation plan against the repository. Work read-only; do not implement or edit code.
+${goal ? `Original User Goal: ${goal}\n\n` : ""}Plan under review:
+${plan}
+
+Your verification task:
+1. Inspect the codebase to verify that file paths, methods, types, and assumptions in the plan are accurate.
+2. Identify missing edge cases, architectural risks, performance concerns, or breaking changes.
+3. Return a comprehensive, verified and corrected final plan ready for execution.`;
+}

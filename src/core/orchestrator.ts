@@ -17,7 +17,7 @@ import {
 import { costForUsage, pricedModels, refreshVersionManifest } from "./routing/pricing.js";
 import { advanceTask, retainedTask, type TaskRelation } from "./active-task.js";
 import { PaceStore } from "./sessions.js";
-import { addUsage, awaitRouting, retainedConversationPrompt } from "./orchestrator-helpers.js";
+import { addUsage, awaitRouting, planningPrompt, retainedConversationPrompt } from "./orchestrator-helpers.js";
 import { runPlanningStage } from "./workflow-stages.js";
 import { checkpointHandoff } from "./checkpoint.js";
 import { artifactSnapshot, changedArtifacts } from "./system/artifacts.js";
@@ -507,14 +507,17 @@ export class Orchestrator {
       const safePrompt = resumedAfterLimit
         ? `${resolvedPrompt}\n\n${prompts.execution.usageRetryInstruction}`
         : resolvedPrompt;
+      const baseExecutionPrompt = skillPrompt(
+        safePrompt,
+        skills,
+        session.activeSkills,
+        session.skillOptions,
+      );
       const executionPrompt = handoff
-        ? `${skillPrompt(safePrompt, skills, session.activeSkills, session.skillOptions)}${shape === "plan_execute" || shape === "scout_plan_execute" ? `\n\n${prompts.handoff.planExecutionInstruction}` : shape === "plan_verify" ? "\n\nReview the planning report against the repository. Return a final corrected plan and your verification findings. Work read only; do not implement." : ""}\n\n${prompts.handoff.reportInstruction}\n${handoff}`
-        : skillPrompt(
-            safePrompt,
-            skills,
-            session.activeSkills,
-            session.skillOptions,
-          );
+        ? `${baseExecutionPrompt}${shape === "plan_execute" || shape === "scout_plan_execute" ? `\n\n${prompts.handoff.planExecutionInstruction}` : shape === "plan_verify" ? "\n\nReview the planning report against the repository. Return a final corrected plan and your verification findings. Work read only; do not implement." : ""}\n\n${prompts.handoff.reportInstruction}\n${handoff}`
+        : session.kind === "planning"
+          ? planningPrompt(baseExecutionPrompt)
+          : baseExecutionPrompt;
       const checkpoint = session.checkpoint?.threadId === session.threadId &&
         session.turns.some(turn => turn.at === session.checkpoint?.sourceTurnAt)
         ? session.checkpoint : undefined;
@@ -546,19 +549,20 @@ export class Orchestrator {
           } else onProgress(progress);
         },
         signal,
-        shape === "plan_verify" ? "side" : "main",
+        shape === "plan_verify" || session.kind === "planning" ? "side" : "main",
         trustedFolders,
         config.approvalMode,
       );
       signal?.throwIfAborted();
       stages.push({
-        objective: shape === "plan_verify" ? "Verify plan" : "Complete request",
+        objective: shape === "plan_verify" ? "Verify plan" : session.kind === "planning" ? "Draft plan" : "Complete request",
         route,
         durationMs: Math.round(performance.now() - stageStart),
         usage: execution.usage,
         estimatedCostUsd: costForUsage(route, execution.usage),
       });
       if (execution.threadId) session.threadId = execution.threadId;
+      if (session.kind === "planning") session.plan = execution.result;
       if (checkpoint && session.threadId === checkpoint.threadId) {
         session.threadId = undefined;
         onProgress({ kind: "error", text: "Fresh Codex thread ID was unavailable; the next turn will use retained conversation history." });
