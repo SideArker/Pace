@@ -69,6 +69,8 @@ export function useAppInput(options: {
   setQueueMenu?: Dispatch<SetStateAction<boolean>>;
   promptQueue?: MutableRefObject<PromptQueue>;
   setQueueVersion?: Dispatch<SetStateAction<number>>;
+  onTogglePlan?: () => void;
+  onExecutePlan?: () => void;
 }) {
   const {
     interrupt, pickerFocused, setPickerFocused, pickerIndex, setPickerIndex,
@@ -81,6 +83,7 @@ export function useAppInput(options: {
     setResumeMenu, resumeChoices, missingProjectPaths, add, convoMenu,
     setConvoMenu, session, store, setSession, renderSessionTurns, draft, setDraft,
     setHistory, queueMenu, setQueueMenu, promptQueue, setQueueVersion,
+    onTogglePlan, onExecutePlan,
   } = options;
   const lastEscape = useRef<{ sessionId: string; at: number } | undefined>(undefined);
   const escapeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -298,6 +301,14 @@ export function useAppInput(options: {
         setHistory(session.turns.map((t) => t.prompt));
         add("info", "Undid last turn. Prompt restored to composer.");
       }
+      return;
+    }
+    if ((key.ctrl && (input === "p" || input === "\x10")) || (key.meta && (input === "p" || input === "P"))) {
+      onTogglePlan?.();
+      return;
+    }
+    if ((key.ctrl && (input === "e" || input === "\x05")) || (key.meta && (input === "e" || input === "E"))) {
+      onExecutePlan?.();
       return;
     }
   });

@@ -41,7 +41,11 @@ import { costForUsage, currentManifestSource, currentVersionManifest, modelRates
 import { formatLatestRoute } from "./route-format.js";
 import { contextPercent, measuredContext } from "../core/context.js";
 import { loadResumeChoices } from "./resume-choices.js";
+import { executePlanPrompt, verifyPlanPrompt } from "../core/orchestrator-helpers.js";
 const commands = [
+  "/plan",
+  "/execute",
+  "/verify",
   "/models",
   "/version",
   "/auto",
@@ -80,6 +84,9 @@ const workflowStages = (shape: WorkflowShape): WorkflowStage[] =>
   shape === "single" ? ["final"] : shape === "scout" ? ["scout", "final"]
     : shape === "scout_plan_execute" ? ["scout", "plan", "final"] : ["plan", "final"];
 const commandDescriptions: Record<string, string> = {
+  "/plan": "Toggle or start a planning session (purple plan)",
+  "/execute": "Dispatch plan to a fresh session via Vex (Explore → Implement)",
+  "/verify": "Verify plan with a higher quality model against repo",
   "/models": "Choose models and reasoning levels",
   "/version": "Check Pace and price catalog versions",
   "/auto": "Let Pace choose a model",
@@ -191,6 +198,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const [approval, setApproval] = useState<Extract<Progress, { kind: "approval" }>>();
   const [question, setQuestion] = useState<PendingQuestion>();
   const [pendingRevision, setPendingRevision] = useState(0);
+  const runTurnRef = useRef<((text: string, turnSession: Session, turnConfig: Config) => Promise<void>) | undefined>(undefined);
   const [approvalMenu, setApprovalMenu] = useState(false);
   const [vexState, setVexState] = useState<
     "connecting" | "connected" | "failed"
@@ -880,6 +888,129 @@ export default function App({ onClear }: { onClear: () => void }) {
     setPickerFocused(true);
     return true;
   };
+  const startOrTogglePlanning = async (promptText?: string) => {
+    if (!session) return;
+    if (!session.turns.length && !session.title) {
+      const updated: Session = { ...session, kind: (session.kind === "planning" && !promptText ? "normal" : "planning") };
+      try {
+        await store.save(updated);
+        setSession(updated);
+        rememberSession(updated);
+        add("info", updated.kind === "planning"
+          ? "◈ Planning mode active (purple plan). Prompts are read-only; explore and draft your plan."
+          : "Normal conversation mode active.");
+        if (promptText && config) void runTurnRef.current?.(promptText, updated, config);
+      } catch (error) {
+        add("error", `Could not update session mode: ${String(error)}`);
+      }
+      return;
+    }
+    const fresh = newSession(project, session.routingMode, "planning");
+    thisPaceIds.current.add(fresh.id);
+    switchingSession.current = true;
+    const previousId = activeSessionId.current;
+    if (previousId) {
+      sessionDrafts.current.set(previousId, "");
+      session.updatedAt = new Date().toISOString();
+      void store.save(session).catch(() => {});
+    }
+    activeSessionId.current = fresh.id;
+    try {
+      await store.save(fresh);
+      stopSideQuestion();
+      onClear();
+      sessionLines.current.set(fresh.id, []);
+      setSession(fresh);
+      setOpenSessions(old => {
+        const map = new Map<string, Session>();
+        if (session) map.set(session.id, session);
+        for (const s of old) map.set(s.id, s);
+        map.set(fresh.id, fresh);
+        return [...map.values()];
+      });
+      setShowConversationsTab(true);
+      setLines([]);
+      setDraft("");
+      setHistory([]);
+      setPickerFocused(false);
+      setPickerIndex(0);
+      setShowHeader(true);
+      setStatus("Ready");
+      setApproval(undefined);
+      add("info", "◈ Started fresh planning session (purple plan). Work is read-only; explore and draft your plan.");
+      if (promptText && config) void runTurnRef.current?.(promptText, fresh, config);
+    } catch (error) {
+      activeSessionId.current = previousId;
+      if (previousId) setLines(sessionLines.current.get(previousId) ?? []);
+      add("error", `Could not create planning conversation: ${String(error)}`);
+    } finally {
+      switchingSession.current = false;
+    }
+  };
+  const handleExecutePlan = async (extraPrompt?: string) => {
+    if (!session) return;
+    const currentPlan = session.plan || session.turns.slice().reverse().find(t => !t.failed)?.result;
+    if (!currentPlan) {
+      add("error", "No plan found to execute. Create a plan first in planning mode (/plan).");
+      return;
+    }
+    add("info", "◈ Dispatching plan to fresh execution session via Vex (Explore → Implement)...");
+    const fresh = newSession(project, "auto", "normal");
+    fresh.title = session.title ? `Exec: ${session.title.replace(/^Exec:\s*/i, "")}` : "Plan Execution";
+    thisPaceIds.current.add(fresh.id);
+    switchingSession.current = true;
+    const previousId = activeSessionId.current;
+    if (previousId) {
+      sessionDrafts.current.set(previousId, "");
+      session.updatedAt = new Date().toISOString();
+      void store.save(session).catch(() => {});
+    }
+    activeSessionId.current = fresh.id;
+    try {
+      await store.save(fresh);
+      stopSideQuestion();
+      onClear();
+      sessionLines.current.set(fresh.id, []);
+      setSession(fresh);
+      setOpenSessions(old => {
+        const map = new Map<string, Session>();
+        if (session) map.set(session.id, session);
+        for (const s of old) map.set(s.id, s);
+        map.set(fresh.id, fresh);
+        return [...map.values()];
+      });
+      setShowConversationsTab(true);
+      setLines([]);
+      setDraft("");
+      setHistory([]);
+      setPickerFocused(false);
+      setPickerIndex(0);
+      setShowHeader(true);
+      setStatus("Starting…");
+      setApproval(undefined);
+      const prompt = extraPrompt
+        ? `${executePlanPrompt(currentPlan)}\n\nAdditional user instructions:\n${extraPrompt}`
+        : executePlanPrompt(currentPlan);
+      if (config) void runTurnRef.current?.(prompt, fresh, config);
+    } catch (error) {
+      activeSessionId.current = previousId;
+      if (previousId) setLines(sessionLines.current.get(previousId) ?? []);
+      add("error", `Could not dispatch plan: ${String(error)}`);
+    } finally {
+      switchingSession.current = false;
+    }
+  };
+  const handleVerifyPlan = async () => {
+    if (!session) return;
+    const currentPlan = session.plan || session.turns.slice().reverse().find(t => !t.failed)?.result;
+    if (!currentPlan) {
+      add("error", "No plan found to verify. Create a plan first with /plan.");
+      return;
+    }
+    const goal = session.turns[0]?.prompt;
+    add("info", "◈ Verifying plan against repository with high quality model...");
+    if (config) void runTurnRef.current?.(verifyPlanPrompt(currentPlan, goal), session, config);
+  };
   const cancelArmed = useAppInput({
     interrupt, pickerFocused, setPickerFocused, pickerIndex, setPickerIndex,
     openSessions: sortedSessions, activateSession, approval, question, focusPicker, pendingApprovals,
@@ -901,6 +1032,8 @@ export default function App({ onClear }: { onClear: () => void }) {
     resumeMenu, setResumeMenu, resumeChoices, missingProjectPaths, add,
     convoMenu, setConvoMenu, session, store, setSession, renderSessionTurns,
     draft, setDraft, setHistory, queueMenu, setQueueMenu, promptQueue, setQueueVersion,
+    onTogglePlan: () => { void startOrTogglePlanning(); },
+    onExecutePlan: () => { void handleExecutePlan(); },
   });
   const focusQueuedOrPicker = () => {
     if (queued.length && !modelMenu && !convoMenu && !queueMenu && !approvalMenu && !manualMenu) {
@@ -1098,6 +1231,20 @@ export default function App({ onClear }: { onClear: () => void }) {
         }
         return;
       }
+      if (command === "/plan") {
+        const promptText = parts.join(" ").trim();
+        await startOrTogglePlanning(promptText || undefined);
+        return;
+      }
+      if (command === "/execute" || command === "/run-plan") {
+        const extraPrompt = parts.join(" ").trim();
+        await handleExecutePlan(extraPrompt || undefined);
+        return;
+      }
+      if (command === "/verify") {
+        await handleVerifyPlan();
+        return;
+      }
       if (command === "/exit") {
         exit();
         return;
@@ -1105,7 +1252,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       if (command === "/help") {
         add(
           "info",
-          "/models · /auto · /manual [model] [effort] · /workflow [name|auto] · /approval [full-access|request-approval|limited] · /tasks · /new · /resume · /convo · /undo · /compact · /context · /usage · /btw <q> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /stats · /route · /clear · /exit · Esc twice/Ctrl+C cancel · Ctrl+Z undo · ! Bash · Ctrl+O toggle command, diff, and reasoning details · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
+          "/plan [prompt] · /execute · /verify · /models · /auto · /manual [model] [effort] · /workflow [name|auto] · /approval [full-access|request-approval|limited] · /tasks · /new · /resume · /convo · /undo · /compact · /context · /usage · /btw <q> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /stats · /route · /clear · /exit · Esc twice/Ctrl+C cancel · Ctrl+Z undo · Alt+P/Ctrl+P plan · Alt+E/Ctrl+E execute · ! Bash · Ctrl+O toggle command, diff, and reasoning details · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
         );
         add("info", "With multiple open conversations, press Down from the input to focus the picker. Use arrows and Enter to switch; Esc returns to input. Ctrl+C cancels the selected turn. /exit quits.");
         return;
@@ -1545,6 +1692,7 @@ export default function App({ onClear }: { onClear: () => void }) {
     setStatusFor, showApproval, showQuestion, dismissQuestion, setSession, setVexState, refreshUsage, setQueueVersion,
     setProcesses, setLiveUsage, getConfig: () => latestConfig.current ?? config!,
   });
+  runTurnRef.current = runTurn;
   useEffect(() => {
     if (!config) return;
     const check = () => {

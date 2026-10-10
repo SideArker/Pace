@@ -396,4 +396,20 @@ describe("application keyboard input", () => {
     await ui.key("", { escape: true });
     expect(events.setManualMenu).toHaveBeenCalledWith(false);
   });
+
+  it("triggers planning toggle and plan execution on Ctrl+P/Alt+P and Ctrl+E/Alt+E", async () => {
+    const onTogglePlan = vi.fn();
+    const onExecutePlan = vi.fn();
+    const { options } = fixture({ onTogglePlan, onExecutePlan });
+    const ui = await mount(options);
+    await ui.key("p", { ctrl: true });
+    expect(onTogglePlan).toHaveBeenCalledTimes(1);
+    await ui.key("p", { meta: true });
+    expect(onTogglePlan).toHaveBeenCalledTimes(2);
+
+    await ui.key("e", { ctrl: true });
+    expect(onExecutePlan).toHaveBeenCalledTimes(1);
+    await ui.key("e", { meta: true });
+    expect(onExecutePlan).toHaveBeenCalledTimes(2);
+  });
 });
