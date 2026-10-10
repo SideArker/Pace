@@ -1,4 +1,4 @@
-import type { ModelOption, Session, TurnSummary } from "../shared/types.js";
+import type { ModelOption, Route, Session, TurnSummary } from "../shared/types.js";
 import type { CodexRunner, Progress } from "../integrations/codex.js";
 import type { RoutingDecision } from "./routing/router.js";
 import { stageRequest, type RoutingState, type VexRequest } from "./vex/client.js";
@@ -10,6 +10,7 @@ import { handoffPrompt, structuredHandoff } from "./orchestrator-helpers.js";
 export async function runPlanningStage({
   shape, request, routingTurns, enabled, prompts, routingState, choose, runner, session,
   signal, onProgress, stages, priorHandoff,
+  routeOverride,
 }: {
   shape: "scout" | "plan_execute";
   request: string;
@@ -24,6 +25,7 @@ export async function runPlanningStage({
   onProgress: (progress: Progress) => void;
   stages: StageRecord[];
   priorHandoff?: string;
+  routeOverride?: Route;
 }): Promise<string> {
   let handoff = "";
   if (shape === "scout" || shape === "plan_execute") {
@@ -37,7 +39,7 @@ export async function runPlanningStage({
             : enabled;
         if (!stageModels.length)
           throw new Error("Vex chose a Luna scout, but Luna is not enabled");
-        const sideRoute = chosenRoute(
+        const sideRoute = routeOverride ?? chosenRoute(
           (
             await choose(
               stageRequest(

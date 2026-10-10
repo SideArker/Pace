@@ -8,6 +8,10 @@ export type ModelOption = {
   enabled?: boolean;
 };
 export type Route = { model?: string; effort?: Effort };
+export type ManualWorkflow = {
+  shape: "single" | "scout" | "plan_execute" | "scout_plan_execute" | "plan_verify";
+  routes: Partial<Record<"scout" | "plan" | "final", Route | "vex">>;
+};
 export type ApprovalMode = "full-access" | "request-approval" | "limited";
 export type Task = { id: string; text: string; completed: boolean; source: "user" | "agent" };
 export type TurnActivity = {
@@ -103,6 +107,7 @@ export type Session = {
   updatedAt: string;
   routingMode: "auto" | "manual";
   route: Route;
+  manualWorkflow?: ManualWorkflow;
   activeSkills?: string[];
   tasks?: Task[];
   activeTask?: { originalRequest: string; instructions: string[]; latestOutcome?: string; failed?: boolean };

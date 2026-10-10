@@ -219,12 +219,14 @@ export class Orchestrator {
     let handoff: string | undefined;
     let userClarification: string | undefined;
     let auto = session.routingMode === "auto";
+    const manualWorkflow = !auto ? session.manualWorkflow : undefined;
+    const delegated = !!manualWorkflow && Object.values(manualWorkflow.routes).some(value => value === "vex");
     if (!auto) {
       taskRelation = priorTask ? "continue" : "replace";
       relationResolved = true;
     }
     try {
-      if (auto) {
+      if (auto || delegated) {
         try {
           await awaitRouting(Promise.resolve(this.vex.verify?.()), signal);
         } catch (error) {
@@ -237,12 +239,24 @@ export class Orchestrator {
           "No models enabled. Open /models and enable one before running a turn.",
         );
       if (
-        session.routingMode === "manual" &&
+        session.routingMode === "manual" && !manualWorkflow &&
         !validRoute(session.route, enabled)
       )
         throw new Error(
           "Saved manual route is no longer enabled. Use /models or /auto.",
         );
+      if (manualWorkflow) {
+        shape = manualWorkflow.shape;
+        note = `Manual ${shape} workflow`;
+        for (const selected of Object.values(manualWorkflow.routes)) {
+          if (selected !== "vex" && !validRoute(selected, enabled))
+            throw new Error("A manual workflow route is no longer enabled. Reopen /manual.");
+        }
+        if (delegated) {
+          await awaitRouting(refreshVersionManifest(), signal);
+          pricedModels(enabled);
+        }
+      }
       if (auto) {
         await awaitRouting(refreshVersionManifest(), signal);
         pricedModels(enabled);
@@ -434,23 +448,29 @@ export class Orchestrator {
         (config.trustedFolders ?? []).map(existingFolder),
       );
       signal?.throwIfAborted();
-      if (auto && ["scout", "plan_execute", "scout_plan_execute"].includes(shape)) {
+      if ((auto || manualWorkflow) && ["scout", "plan_execute", "scout_plan_execute", "plan_verify"].includes(shape)) {
         const firstShape = shape === "scout_plan_execute" ? "scout" : shape as "scout" | "plan_execute";
+        const firstStage = firstShape === "scout" ? "scout" : "plan";
         const firstHandoff = await runPlanningStage({
           shape: firstShape, request, routingTurns, enabled, prompts, routingState, choose, runner: this.runner,
           session, signal, onProgress, stages,
+          routeOverride: manualWorkflow?.routes[firstStage] === "vex" ? undefined : manualWorkflow?.routes[firstStage],
         });
         handoff = firstHandoff;
         if (shape === "scout_plan_execute") {
           const planHandoff = await runPlanningStage({
             shape: "plan_execute", request, routingTurns, enabled, prompts, routingState, choose, runner: this.runner,
             session, signal, onProgress, stages, priorHandoff: firstHandoff,
+            routeOverride: manualWorkflow?.routes.plan === "vex" ? undefined : manualWorkflow?.routes.plan,
           });
           handoff = `Scout report:\n${firstHandoff}\n\nPlanning report:\n${planHandoff}`;
         }
       }
-      if (auto) {
-        const objective = completionObjective(shape, prompts);
+      if (auto || manualWorkflow) {
+        const objective = shape === "plan_verify" ? "Review the read-only plan and return a corrected final plan without implementing it" : completionObjective(shape, prompts);
+        const selected = manualWorkflow?.routes.final;
+        if (!auto && selected && selected !== "vex") route = selected;
+        else {
         route = chosenRoute(
           (
             await choose(
@@ -469,7 +489,8 @@ export class Orchestrator {
           ).choice,
           enabled,
         );
-        note = usedThreadForClarification ? "Vex clarification delegated to existing Codex thread" : `Vex chose ${shape} workflow`;
+        }
+        if (auto) note = usedThreadForClarification ? "Vex clarification delegated to existing Codex thread" : `Vex chose ${shape} workflow`;
       }
       signal?.throwIfAborted();
       session.route = route;
@@ -492,7 +513,7 @@ export class Orchestrator {
         ? `${resolvedPrompt}\n\n${prompts.execution.usageRetryInstruction}`
         : resolvedPrompt;
       const executionPrompt = handoff
-        ? `${skillPrompt(safePrompt, skills, session.activeSkills, session.skillOptions)}${shape === "plan_execute" || shape === "scout_plan_execute" ? `\n\n${prompts.handoff.planExecutionInstruction}` : ""}\n\n${prompts.handoff.reportInstruction}\n${handoff}`
+        ? `${skillPrompt(safePrompt, skills, session.activeSkills, session.skillOptions)}${shape === "plan_execute" || shape === "scout_plan_execute" ? `\n\n${prompts.handoff.planExecutionInstruction}` : shape === "plan_verify" ? "\n\nReview the planning report against the repository. Return a final corrected plan and your verification findings. Work read only; do not implement." : ""}\n\n${prompts.handoff.reportInstruction}\n${handoff}`
         : skillPrompt(
             safePrompt,
             skills,
@@ -536,7 +557,7 @@ export class Orchestrator {
       );
       signal?.throwIfAborted();
       stages.push({
-        objective: "Complete request",
+        objective: shape === "plan_verify" ? "Verify plan" : "Complete request",
         route,
         durationMs: Math.round(performance.now() - stageStart),
         usage: execution.usage,

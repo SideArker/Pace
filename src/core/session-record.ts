@@ -29,6 +29,13 @@ function isContextMeasurement(value: unknown): boolean {
     nonnegative(value.windowTokens) && (value.windowTokens as number) > 0 &&
     (value.model === undefined || typeof value.model === "string");
 }
+function isManualWorkflow(value: unknown): boolean {
+  if (!isRecord(value) || !["single", "scout", "plan_execute", "scout_plan_execute", "plan_verify"].includes(String(value.shape)) || !isRecord(value.routes)) return false;
+  return Object.entries(value.routes).every(([stage, route]) =>
+    ["scout", "plan", "final"].includes(stage) &&
+    (route === "vex" || (isRecord(route) && typeof route.model === "string" &&
+      (route.effort === undefined || EFFORTS.includes(route.effort as (typeof EFFORTS)[number])))));
+}
 function isCompaction(value: unknown): boolean {
   return isRecord(value) && typeof value.at === "string" &&
     typeof value.threadId === "string" && isRecord(value.route) &&
@@ -127,6 +134,7 @@ export function parseSession(value: unknown, project: string): Session | undefin
       typeof value.deferredTurn.retryAt !== "string" || !Number.isFinite(Date.parse(value.deferredTurn.retryAt)) ||
       !Number.isInteger(value.deferredTurn.attempt) || (value.deferredTurn.attempt as number) < 1)) ||
     (value.routingMode !== "auto" && value.routingMode !== "manual")
+    || (value.manualWorkflow !== undefined && !isManualWorkflow(value.manualWorkflow))
   )
     return undefined;
   return value as Session;
