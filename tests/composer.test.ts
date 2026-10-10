@@ -149,12 +149,14 @@ it("submits full pasted text while showing its marker", async () => {
 });
 
 it("keeps the full context footer visible beside hints at medium widths", () => {
-  const output = renderToString(React.createElement(ComposerFrame, {
-    width: 120, shellMode: false, approvalMode: "full-access", children: React.createElement(Text, null, "Input"),
-  }), { columns: 120 });
-  expect(output).toContain("type ! to run commands");
-  expect(output).toContain("○ Context ? · auto · Full Access");
-  expect(output.split("\n").every(line => line.length <= 120)).toBe(true);
+  for (const width of [112, 120, 140]) {
+    const output = renderToString(React.createElement(ComposerFrame, {
+      width, shellMode: false, approvalMode: "full-access", children: React.createElement(Text, null, "Input"),
+    }), { columns: width });
+    expect(output).toContain("type ! to run commands");
+    expect(output).toContain("○ Context ? · auto · Full Access");
+    expect(output.split("\n").every(line => line.length <= width)).toBe(true);
+  }
 });
 
 it("recognizes modified Enter and Ctrl+J as newline input", () => {
@@ -233,7 +235,7 @@ it("styles completed inline Markdown while preserving editable source", () => {
     { start: 2, end: 6, style: "bold" },
     { start: 10, end: 16, style: "italic" },
     { start: 19, end: 23, style: "code" },
-    { start: 28, end: 31, style: "strike" },
+    { start: 27, end: 30, style: "strike" },
   ]);
   const output = renderToString(React.createElement(Composer, {
     value, onChange: () => {}, onSubmit: () => {}, history: [], disabled: false, shellMode: false,
@@ -241,6 +243,41 @@ it("styles completed inline Markdown while preserving editable source", () => {
   }), { columns: 80 });
   expect(output).toContain(value);
   expect(markdownDraftRanges("**unfinished")).toEqual([]);
+});
+
+it("renders Markdown emphasis in the live editor without removing its syntax", async () => {
+  const chalk = (await import("chalk")).default;
+  const previousLevel = chalk.level;
+  chalk.level = 3;
+  class Output extends Writable {
+    isTTY = true;
+    columns = 80;
+    rows = 24;
+    writes: string[] = [];
+    override _write(chunk: Buffer, _encoding: BufferEncoding, done: (error?: Error | null) => void) {
+      this.writes.push(chunk.toString());
+      done();
+    }
+  }
+  const stdin = new PassThrough() as PassThrough & { isTTY: boolean; setRawMode: (enabled: boolean) => void; ref: () => void; unref: () => void };
+  stdin.isTTY = true;
+  stdin.setRawMode = () => {};
+  stdin.ref = () => {};
+  stdin.unref = () => {};
+  const stdout = new Output();
+  const instance = render(React.createElement(Composer, {
+    value: "say **bold** and *italic*", onChange: () => {}, onSubmit: () => {}, history: [], disabled: false,
+    shellMode: false, placeholder: "Ask Pace", onComplete: () => {}, width: 80,
+  }), { stdin, stdout, stderr: new PassThrough(), interactive: true, patchConsole: false, alternateScreen: false });
+  try {
+    await instance.waitUntilRenderFlush();
+    const output = stdout.writes.join("");
+    const plain = output.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
+    expect(plain).toContain("**bold**");
+    expect(plain).toContain("*italic*");
+    expect(output).toMatch(/\x1b\[1m(?:\x1b\[[0-9;]*m)*bold/);
+    expect(output).toMatch(/\x1b\[3m(?:\x1b\[[0-9;]*m)*italic/);
+  } finally { instance.unmount(); chalk.level = previousLevel; }
 });
 
 it("marks every slash command in multiline input", () => {

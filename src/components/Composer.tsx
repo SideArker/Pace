@@ -157,6 +157,19 @@ export function commandRanges(value: string): { start: number; end: number }[] {
   });
 }
 
+type DraftStyle = "bold" | "italic" | "code" | "strike";
+
+export function markdownDraftRanges(value: string): { start: number; end: number; style: DraftStyle }[] {
+  const pattern = /(`[^`\n]+`|\*\*[^*\n]+\*\*|__[^_\n]+__|\*[^*\n]+\*|_[^_\n]+_|~~[^~\n]+~~)/g;
+  return [...value.matchAll(pattern)].map(match => {
+    const token = match[0];
+    const two = token.startsWith("**") || token.startsWith("__") || token.startsWith("~~");
+    const edge = two ? 2 : 1;
+    const style: DraftStyle = token.startsWith("`") ? "code" : token.startsWith("~~") ? "strike" : two ? "bold" : "italic";
+    return { start: match.index + edge, end: match.index + token.length - edge, style };
+  });
+}
+
 export function deleteWordForward(value: string, cursor: number): { value: string; cursor: number } {
   if (cursor >= value.length) return { value, cursor };
   const after = value.slice(cursor);
@@ -341,6 +354,8 @@ export function Composer({ value, onChange, onSubmit, onImagePaste, history, dis
   }, { isActive: !disabled });
   const display = displayPastedBlocks(value, cursor, pastedBlocks);
   const ranges = shellMode ? [] : commandRanges(display.value);
+  const markdownRanges = shellMode ? [] : markdownDraftRanges(display.value);
+  const styleAt = (index: number) => markdownRanges.find(range => index >= range.start && index < range.end)?.style;
   const isMarker = (index: number) => display.markers.some(marker => index >= marker.start && index < marker.end);
   const isCommand = (index: number) => shellMode || display.value.startsWith("!") || ranges.some(range => index >= range.start && index < range.end);
   const colorAt = (index: number) => isMarker(index) ? "#A5B4FC" : isCommand(index) ? "#38BDF8" : paceGradient(columns[index]!, terminalWidth);
@@ -351,11 +366,15 @@ export function Composer({ value, onChange, onSubmit, onImagePaste, history, dis
     return text
       .split(/(\s+)/)
       .filter((part) => part.length > 0)
-      .map((part) => {
-      const index = position;
-      position += part.length;
-      return <Text key={index} color={colorAt(index)} bold={isCommand(index)}>{part}</Text>;
-    });
+      .flatMap((part) => {
+        const begin = position;
+        position += part.length;
+        const cuts = [begin, position, ...markdownRanges.flatMap(range => [range.start, range.end]).filter(index => index > begin && index < position)].sort((a, b) => a - b);
+        return cuts.slice(0, -1).map((index, offset) => {
+          const style = styleAt(index);
+          return <Text key={index} color={style === "code" ? "#FBBF24" : colorAt(index)} bold={isCommand(index) || style === "bold"} italic={style === "italic"} dimColor={style === "strike"} backgroundColor={style === "code" ? "#1E293B" : undefined}>{part.slice(index - begin, cuts[offset + 1]! - begin)}</Text>;
+        });
+      });
   };
   const prefix = completionStart === undefined ? "" : value.slice(completionStart);
   const hasGhost = !!(completion && prefix && completion.startsWith(prefix) && cursor === value.length);
@@ -385,7 +404,7 @@ export function Composer({ value, onChange, onSubmit, onImagePaste, history, dis
             return <Text key={start} wrap="truncate">
               {display.value ? renderText(before, start) : null}
               {hasCursor ? <Text inverse color={display.value ? colorAt(display.cursor) : "gray"}>
-                {display.value ? <Text bold={isCommand(display.cursor)}>{at}</Text> : placeholder[0] ?? " "}
+                {display.value ? <Text bold={isCommand(display.cursor) || styleAt(display.cursor) === "bold"} italic={styleAt(display.cursor) === "italic"} dimColor={styleAt(display.cursor) === "strike"}>{at}</Text> : placeholder[0] ?? " "}
               </Text> : null}
               {display.value ? renderText(after, hasCursor ? display.cursor + (display.cursor < end ? 1 : 0) : end) : <Text color="gray">{placeholder.slice(1)}</Text>}
               {hasCursor && hasGhost ? <Text color="#64748B" italic>{ghostText}<Text color="#475569" dimColor> (Tab)</Text></Text> : null}
