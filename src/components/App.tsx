@@ -19,6 +19,7 @@ import type { UsageLimits, UsageWarningLevels } from "../integrations/usage.js";
 import { Composer, commandToken } from "./Composer.js";
 import { saveClipboardImage } from "./pasted-images.js";
 import { ComposerFrame } from "./ComposerFrame.js";
+import { WorkingStatus } from "./WorkingStatus.js";
 import { QuestionPanel } from "./QuestionPanel.js";
 import { BottomPanel } from "./BottomPanel.js";
 import { QueuedMessages } from "./QueuedMessages.js";
@@ -90,7 +91,6 @@ const commandDescriptions: Record<string, string> = {
   "/.clear": "Clear the conversation and terminal",
   "/exit": "Quit Pace",
 };
-const spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 export const normalizeNewCommand = (input: string) => input.trim().replace(/^(?:\.\/(?!clear(?=\s|$))|\/\.)(new|clear|approval)(?=\s|$)/, "/$1");
 const workingTips = [
   "Type / to browse commands",
@@ -116,21 +116,27 @@ export default function App({ onClear }: { onClear: () => void }) {
     columns: stdout?.columns ?? 80,
     rows: stdout?.rows ?? 24,
   }));
+  const lastTerminalDimensions = useRef(terminalDimensions);
 
   useEffect(() => {
     const stream = stdout ?? process.stdout;
     if (!stream) return;
     const onResize = () => {
-      setTerminalDimensions({
+      const next = {
         columns: stream.columns ?? 80,
         rows: stream.rows ?? 24,
-      });
+      };
+      if (next.columns === lastTerminalDimensions.current.columns && next.rows === lastTerminalDimensions.current.rows) return;
+      lastTerminalDimensions.current = next;
+      // Ink has already redrawn using the old layout. Clear that frame before
+      // remounting Static at the new width so it cannot remain in scrollback.
+      onClear();
+      setTranscriptRevision(value => value + 1);
+      setTerminalDimensions(next);
     };
     stream.on?.("resize", onResize);
-    process.stdout?.on?.("resize", onResize);
     return () => {
       stream.off?.("resize", onResize);
-      process.stdout?.off?.("resize", onResize);
     };
   }, [stdout]);
 
@@ -1467,7 +1473,8 @@ export default function App({ onClear }: { onClear: () => void }) {
   const terminalRows = terminalDimensions.rows;
   const contentWidth = Math.max(20, terminalColumns - 2);
   const composerChromeRows = contentWidth < 50 || (contentWidth >= 72 && contentWidth < 112) ? 6 : 5;
-  const maxComposerRows = Math.max(1, terminalRows - composerChromeRows - 1);
+  const extraWorkingRows = (busy && session && liveUsage[session.id] ? 1 : 0) + (busy && workingTip ? 1 : 0);
+  const maxComposerRows = Math.max(1, terminalRows - composerChromeRows - extraWorkingRows - 1);
 
   return (
     // Ink clears the terminal on every update when the live frame exceeds the viewport.
@@ -1487,9 +1494,8 @@ export default function App({ onClear }: { onClear: () => void }) {
       {manualMenu ? <ManualRouteMenu routes={manualRoutes} selectedIndex={menuIndex} currentRoute={session?.route ?? config?.defaultRoute ?? {}} /> : null}
       {convoMenu && session ? <ConvoMenu turns={session.turns} selectedIndex={menuIndex} /> : null}
       {queueMenu && session ? <QueueMenu prompts={queued} selectedIndex={menuIndex} /> : null}
-      {runningIds.length || shellJobs ? (
-      <Box gap={1}><Text color="#59E6A7" bold>{spinner[tick % spinner.length]}</Text><Text color="#38BDF8">{busy ? status : runningIds.length ? `${runningIds.length} background turn${runningIds.length === 1 ? "" : "s"} running` : "Ready"}</Text>{busy && workingTip ? <Text color="#64748B" wrap="truncate">· Tip: {workingTip}</Text> : null}{busy && session && liveUsage[session.id] ? <Text color="#94A3B8">· {liveUsage[session.id]}</Text> : null}{shellJobs ? <Text color="#FBBF24">· ⚡ {shellJobs} Bash command{shellJobs === 1 ? "" : "s"} running</Text> : null}</Box>
-      ) : null}
+      <WorkingStatus busy={busy} status={status} runningCount={runningIds.length} shellJobs={shellJobs} tick={tick}
+        usage={busy && session ? liveUsage[session.id] : undefined} tip={workingTip} />
       {backgroundApprovals.length ? <Text color="#FBBF24" bold>⚠ {backgroundApprovals.length} background approval{backgroundApprovals.length === 1 ? "" : "s"} waiting · ↓ select conversation · Enter open</Text> : null}
       {backgroundQuestions.length ? <Text color="#A5B4FC" bold>◆ {backgroundQuestions.length} background question{backgroundQuestions.length === 1 ? "" : "s"} waiting · {question ? "Shift+Tab" : "↓"} select conversation · Enter open</Text> : null}
       <RunningProcesses processes={processes} now={Date.now()} />
