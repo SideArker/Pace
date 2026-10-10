@@ -11,6 +11,7 @@ import { VexRouter } from "../core/vex/client.js";
 import App from "../components/App.js";
 import { execTurn } from "../core/exec.js";
 import { getGitBranch } from "../core/system/git.js";
+import { interactiveInkOptions } from "./terminal-options.js";
 import { hasConfiguredKey, promptForKey } from "../core/system/keys.js";
 
 export function runTerminalClear(): void {
@@ -123,6 +124,6 @@ else if (args[0] === "doctor") {
     instance?.clear();
     runTerminalClear();
     process.stdout.write("\x1b[3J\x1b[2J\x1b[H");
-  }} />, { kittyKeyboard: { mode: "auto" }, exitOnCtrlC: false });
+  }} />, interactiveInkOptions);
   await instance.waitUntilExit();
 }

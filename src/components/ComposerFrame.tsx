@@ -22,7 +22,7 @@ export function ComposerFrame({ children, width, session, shellMode, approvalMod
   const details = `${contextLabel(session)} · ${mode} · ${approval}`;
   const wide = width >= 112;
   const hints = (
-    <Box flexDirection={wide ? "row" : "column"} justifyContent={wide ? "space-between" : "flex-start"} width="100%">
+    <Box flexDirection={wide ? "row" : "column"} justifyContent={wide ? "space-between" : "flex-start"} width={wide ? undefined : "100%"} flexGrow={wide ? 1 : 0} flexShrink={1}>
       <Text color="#64748B" wrap="truncate">type / for commands · Shift+Enter newline · Alt+V image</Text>
       {width >= 72 ? <Text color="#64748B" wrap="truncate">type ! to run commands</Text> : null}
     </Box>
@@ -32,10 +32,10 @@ export function ComposerFrame({ children, width, session, shellMode, approvalMod
       <Text color="#334155" wrap="truncate">{rule}</Text>
       {children}
       <Text color="#334155" wrap="truncate">{rule}</Text>
-      <Box flexDirection={wide ? "row" : "column"} justifyContent="space-between" width="100%">
+      <Box flexDirection={wide ? "row" : "column"} justifyContent="space-between" gap={wide ? 2 : 0} width="100%">
         {hints}
         {width < 50 ? <Box flexDirection="column"><Text color="#A5B4FC" wrap="truncate">{`${contextLabel(session)} · ${mode}`}</Text><Text color="#A5B4FC" wrap="truncate">{`Approval: ${approval}`}</Text></Box>
-          : <Text color="#A5B4FC" wrap="truncate">{details}</Text>}
+          : <Box flexShrink={0}><Text color="#A5B4FC" wrap="truncate">{details}</Text></Box>}
       </Box>
     </Box>
   );

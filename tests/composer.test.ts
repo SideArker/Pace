@@ -203,11 +203,16 @@ it("accepts three consecutive newline keys before submitting one draft", async (
       await instance.waitUntilRenderFlush();
       expect(currentDraft).toBe(`first${"\n".repeat(index + 1)}`);
     }
+    for (let index = 0; index < 2; index++) {
+      stdin.write("\x1b[13;2u");
+      await instance.waitUntilRenderFlush();
+      expect(currentDraft).toBe(`first${"\n".repeat(index + 4)}`);
+    }
     stdin.write("last");
     await instance.waitUntilRenderFlush();
     stdin.write("\r");
     await instance.waitUntilRenderFlush();
-    expect(submitted).toBe("first\n\n\nlast");
+    expect(submitted).toBe("first\n\n\n\n\nlast");
   } finally { instance.unmount(); }
 });
 

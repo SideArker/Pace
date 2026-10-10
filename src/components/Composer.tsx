@@ -72,7 +72,9 @@ export function insertDraftText(value: string, cursor: number, text: string, blo
 
 export function insertPastedBlock(value: string, cursor: number, text: string, blocks: PastedBlock[]) {
   const next = insertDraftText(value, cursor, text, blocks);
-  return { ...next, blocks: [...next.blocks, { start: cursor, end: cursor + text.length, lines: text.split("\n").length }]
+  const lines = text.split("\n").length;
+  if (lines < 10) return next;
+  return { ...next, blocks: [...next.blocks, { start: cursor, end: cursor + text.length, lines }]
     .sort((a, b) => a.start - b.start) };
 }
 
