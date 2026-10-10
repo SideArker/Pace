@@ -401,7 +401,9 @@ export function Composer({ value, onChange, onSubmit, onImagePaste, history, dis
             const before = display.value.slice(start, hasCursor ? display.cursor : end);
             const at = display.value[display.cursor] && display.cursor < end ? display.value[display.cursor]! : " ";
             const after = hasCursor ? display.value.slice(display.cursor + (display.cursor < end ? 1 : 0), end) : "";
+            const isEmptyLine = !hasCursor && before.length === 0 && after.length === 0;
             return <Text key={start} wrap="truncate">
+              {isEmptyLine ? " " : null}
               {display.value ? renderText(before, start) : null}
               {hasCursor ? <Text inverse color={display.value ? colorAt(display.cursor) : "gray"}>
                 {display.value ? <Text bold={isCommand(display.cursor) || styleAt(display.cursor) === "bold"} italic={styleAt(display.cursor) === "italic"} dimColor={styleAt(display.cursor) === "strike"}>{at}</Text> : placeholder[0] ?? " "}

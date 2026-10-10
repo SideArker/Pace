@@ -220,6 +220,24 @@ it("accepts three consecutive newline keys before submitting one draft", async (
   } finally { instance.unmount(); }
 });
 
+it("preserves visible height for empty lines in multiline input", () => {
+  const rendered = renderToString(React.createElement(Composer, {
+    value: "first\n\nlast",
+    onChange: () => {},
+    onSubmit: () => {},
+    history: [],
+    disabled: false,
+    shellMode: false,
+    placeholder: "Ask Pace",
+    onComplete: () => {},
+    width: 80,
+  }));
+  const lines = rendered.split("\n");
+  expect(lines.length).toBeGreaterThanOrEqual(3);
+  expect(rendered).toContain("first");
+  expect(rendered).toContain("last");
+});
+
 it("finds command tokens after text and newlines", () => {
   expect(commandToken("/mo")).toEqual({ start: 0, prefix: "/mo" });
   expect(commandToken("@rig")).toEqual({ start: 0, prefix: "@rig" });
