@@ -95,3 +95,46 @@ it("shows discovered model status and its supported reasoning choices", () => {
   expect(efforts).not.toContain("xhigh");
   expect(efforts).toContain("M use manually");
 });
+
+it("shows separate categories for commands and skills in CommandMenu", () => {
+  const matches = ["/help", "/plan", "/caveman", "/stats"];
+  const skillNames = new Set(["caveman", "stats"]);
+
+  // Scrolled at top: commands first, transition into skills
+  const rendered = renderToString(React.createElement(CommandMenu, {
+    matches,
+    skillNames,
+    selectedIndex: 0,
+    width: 60,
+  }));
+  expect(rendered).toContain("◈ Commands");
+  expect(rendered).toContain("◈ Skills");
+  expect(rendered.indexOf("◈ Commands")).toBeLessThan(rendered.indexOf("◈ Skills"));
+  expect(rendered.indexOf("◈ Skills")).toBeLessThan(rendered.indexOf("/caveman"));
+
+  // Scrolled so only skills are in the visible slice
+  const onlySkills = renderToString(React.createElement(CommandMenu, {
+    matches: ["/caveman", "/stats"],
+    skillNames,
+    selectedIndex: 0,
+    width: 60,
+  }));
+  expect(onlySkills).toContain("◈ Skills");
+  expect(onlySkills).not.toContain("◈ Commands");
+});
+
+it("clamps column widths safely without overflowing narrow terminals", () => {
+  const matches = ["/a-very-long-command-name-with-arguments"];
+  const args = { "/a-very-long-command-name-with-arguments": "<huge-parameter-list-that-should-not-wrap>" };
+  const descriptions = { "/a-very-long-command-name-with-arguments": "Description here" };
+
+  const narrow = renderToString(React.createElement(CommandMenu, {
+    matches,
+    args,
+    descriptions,
+    selectedIndex: 0,
+    width: 40,
+  }));
+  expect(narrow).toContain("/a-very-long-co");
+  expect(narrow).toContain("Description here");
+});

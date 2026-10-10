@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import React from "react";
 import { renderToString } from "ink";
-import { ConvoMenu, ConversationPicker, ResumeMenu, sortConversations, sectionConversations } from "../src/components/Menus.js";
+import { ConvoMenu, ConversationPicker, ResumeMenu, sortConversations, sectionConversations, resolveRepoTitle } from "../src/components/Menus.js";
 import { newSession, PaceStore, rewindConversation, deleteConversationTurn, undoConversationTurn } from "../src/core/sessions.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -249,5 +249,63 @@ describe("Conversation editing and undo logic", () => {
     expect(controller.signal.aborted).toBe(false);
     controller.abort();
     expect(controller.signal.aborted).toBe(true);
+  });
+
+  it("disambiguates duplicate repo basenames and displays full path for non-git dirs", () => {
+    // Current working directory is a git repo
+    const currentRepo = process.cwd();
+    expect(resolveRepoTitle(currentRepo, [currentRepo]).isRepo).toBe(true);
+
+    // Duplicate basename
+    const allPaths = ["/work/my-app", "/personal/my-app"];
+    const resolvedWork = resolveRepoTitle("/work/my-app", allPaths);
+    expect(resolvedWork.title).toBe("/work/my-app");
+
+    // Non-git folder
+    const nonGit = resolveRepoTitle("/tmp/scratch", ["/tmp/scratch"]);
+    expect(nonGit.title).toBe("/tmp/scratch");
+    expect(nonGit.isRepo).toBe(false);
+  });
+
+  it("prioritizes current repository in saved sections", () => {
+    const choices = sectionConversations([
+      { id: "other", projectPath: "/repo/other", state: "done" as const, updatedAt: "2026-10-10T12:00:00Z" },
+      { id: "current", projectPath: "/repo/current", state: "done" as const, updatedAt: "2026-10-10T10:00:00Z" },
+      { id: "pace-active", projectPath: "/repo/current", state: "running" as const, updatedAt: "2026-10-10T09:00:00Z" },
+    ], new Set(["pace-active"]), "/repo/current");
+
+    expect(choices[0]!.id).toBe("pace-active");
+    expect(choices[0]!.sectionTitle).toBe("This pace");
+    expect(choices[1]!.id).toBe("current");
+    expect(choices[2]!.id).toBe("other");
+  });
+
+  it("filters choices by search query and displays search bar when focused", () => {
+    const choices = [
+      { id: "alpha-id", sectionTitle: "AlphaRepo", prompt: "Build new frontend", state: "done" as const, section: "saved" as const },
+      { id: "beta-id", sectionTitle: "BetaRepo", prompt: "Fix database query", state: "done" as const, section: "saved" as const },
+    ];
+
+    // Focused search bar
+    const focusedOutput = renderToString(React.createElement(ConversationPicker, {
+      choices,
+      selectedIndex: 0,
+      focused: true,
+      searchQuery: "BetaRepo",
+    }));
+    expect(focusedOutput).toContain("Search repo/convo:");
+    expect(focusedOutput).toContain("BetaRepo");
+    expect(focusedOutput).toContain("Fix database query");
+    expect(focusedOutput).not.toContain("Build new frontend");
+
+    // Search by prompt
+    const promptSearch = renderToString(React.createElement(ConversationPicker, {
+      choices,
+      selectedIndex: 0,
+      focused: true,
+      searchQuery: "database",
+    }));
+    expect(promptSearch).toContain("Fix database query");
+    expect(promptSearch).not.toContain("Build new frontend");
   });
 });
