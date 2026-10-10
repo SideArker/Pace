@@ -32,7 +32,7 @@ const args = process.argv.slice(2);
 if (args.includes("--version")) console.log(`pace ${version}`);
 else if (args.includes("--help"))
   console.log(
-    `Pace ${version} · independent Codex SDK terminal client\n\nUsage: pace [doctor|setup|sessions|reconnect "old path" "new path"|exec "prompt"|--help|--version]\n\nInteractive commands: type / to browse; /help /models /version /auto /manual /approval /tasks /task /new /resume /convo /compact /context /usage /cancelretry /btw <question> /artifacts /trust /skills /<skill> /stats /route /clear /exit\nSkills: /skills refreshes the default ~/.agents/skills folder; /skills enable|disable <name>; /skills <folder>|default|off\nBash: ! <command> or ! to toggle Bash mode\nInput: Shift/Ctrl/Alt+Enter or Ctrl+J for newline, arrows for history, Ctrl+O toggles command, diff, and reasoning details`,
+    `Pace ${version} · independent Codex SDK terminal client\n\nUsage: pace [doctor|setup|sessions|reconnect "old path" "new path"|exec "prompt"|--help|--version]\n\nInteractive commands: type / to browse; /help /models /version /auto /manual /workflow /approval /tasks /task /new /resume /convo /compact /context /usage /cancelretry /btw <question> /artifacts /trust /skills /<skill> /stats /route /clear /exit\nSkills: /skills refreshes the default ~/.agents/skills folder; /skills enable|disable <name>; /skills <folder>|default|off\nBash: ! <command> or ! to toggle Bash mode\nInput: Shift/Ctrl/Alt+Enter or Ctrl+J for newline, arrows for history, Ctrl+O toggles command, diff, and reasoning details`,
   );
 else if (args[0] === "setup" || args[0] === "set-key") {
   await promptForKey();

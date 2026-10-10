@@ -46,6 +46,7 @@ const commands = [
   "/version",
   "/auto",
   "/manual",
+  "/workflow",
   "/new",
   "/resume",
   "/convo",
@@ -83,6 +84,7 @@ const commandDescriptions: Record<string, string> = {
   "/version": "Check Pace and price catalog versions",
   "/auto": "Let Pace choose a model",
   "/manual": "Choose workflow, stage models, and effort",
+  "/workflow": "Choose workflow and let Vex route its stages",
   "/new": "Start a new conversation",
   "/resume": "Switch to a saved conversation",
   "/convo": "Browse and manage conversation turns",
@@ -200,6 +202,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const [convoMenu, setConvoMenu] = useState(false);
   const [queueMenu, setQueueMenu] = useState(false);
   const [manualMenu, setManualMenu] = useState(false);
+  const [workflowOnly, setWorkflowOnly] = useState(false);
   const [manualWizard, setManualWizard] = useState<{
     step: "workflow" | "model" | "effort";
     shape?: WorkflowShape;
@@ -816,6 +819,17 @@ export default function App({ onClear }: { onClear: () => void }) {
     : manualWizard.step === "model"
       ? ["Delegate choice to Vex", ...(manualStage === "scout" ? enabledModels.filter(m => m.model === "gpt-6-luna") : enabledModels).map(m => m.model)]
       : ["Delegate choice to Vex", ...(enabledModels.find(m => m.model === manualWizard.model)?.efforts ?? [])];
+  const saveWorkflow = async (shape: WorkflowShape, routes: ManualWorkflow["routes"]) => {
+    if (!session) return;
+    const updated = { ...session, routingMode: "manual" as const, manualWorkflow: { shape, routes } };
+    try {
+      await store.save(updated);
+      setSession(updated);
+      rememberSession(updated);
+      setManualMenu(false);
+      add("info", `Manual ${shape} workflow saved. Send the task as your next message.`);
+    } catch (error) { add("error", `Could not save workflow: ${String(error)}`); }
+  };
   const finishManualStage = async (selection: Route | "vex") => {
     if (!session || !manualWizard.shape || !manualStage) return;
     const routes = { ...manualWizard.routes, [manualStage]: selection };
@@ -825,14 +839,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       setMenuIndex(0);
       return;
     }
-    const updated = { ...session, routingMode: "manual" as const, manualWorkflow: { shape: manualWizard.shape, routes } };
-    try {
-      await store.save(updated);
-      setSession(updated);
-      rememberSession(updated);
-      setManualMenu(false);
-      add("info", `Manual ${manualWizard.shape} workflow saved. Send the task as your next message.`);
-    } catch (error) { add("error", `Could not save workflow: ${String(error)}`); }
+    await saveWorkflow(manualWizard.shape, routes);
   };
   const selectManualOption = (index: number) => {
     if (manualWizard.step === "workflow") {
@@ -847,6 +854,10 @@ export default function App({ onClear }: { onClear: () => void }) {
       }
       const shape = availableWorkflows[index - 1]?.shape;
       if (!shape) return;
+      if (workflowOnly) {
+        void saveWorkflow(shape, Object.fromEntries(workflowStages(shape).map(stage => [stage, "vex"])));
+        return;
+      }
       setManualWizard({ step: "model", shape, stageIndex: 0, routes: {} });
     } else if (manualWizard.step === "model") {
       if (index === 0) { void finishManualStage("vex"); return; }
@@ -1093,7 +1104,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       if (command === "/help") {
         add(
           "info",
-          "/models · /auto · /manual [model] [effort] · /approval [full-access|request-approval|limited] · /tasks · /new · /resume · /convo · /undo · /compact · /context · /usage · /btw <q> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /stats · /route · /clear · /exit · Esc twice/Ctrl+C cancel · Ctrl+Z undo · ! Bash · Ctrl+O toggle command, diff, and reasoning details · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
+          "/models · /auto · /manual [model] [effort] · /workflow [name|auto] · /approval [full-access|request-approval|limited] · /tasks · /new · /resume · /convo · /undo · /compact · /context · /usage · /btw <q> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /stats · /route · /clear · /exit · Esc twice/Ctrl+C cancel · Ctrl+Z undo · ! Bash · Ctrl+O toggle command, diff, and reasoning details · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
         );
         add("info", "With multiple open conversations, press Down from the input to focus the picker. Use arrows and Enter to switch; Esc returns to input. Ctrl+C cancels the selected turn. /exit quits.");
         return;
@@ -1111,6 +1122,33 @@ export default function App({ onClear }: { onClear: () => void }) {
         }
         return;
       }
+      if (command === "/workflow") {
+        if (parts.length > 1) { add("error", "Type /workflow [name|auto]."); return; }
+        if (!enabledModels.length) { add("error", "No models enabled. Open /models and enable one first."); return; }
+        if (!parts.length) {
+          setWorkflowOnly(true);
+          setManualWizard({ step: "workflow", stageIndex: 0, routes: {} });
+          setManualMenu(true);
+          setMenuIndex(0);
+          return;
+        }
+        const requested = parts[0]!.toLowerCase().replaceAll("-", "_");
+        if (requested === "auto" || requested === "vex") {
+          const updated = { ...session, routingMode: "auto" as const, manualWorkflow: undefined };
+          try {
+            await store.save(updated); setSession(updated); rememberSession(updated);
+            add("info", "Workflow choice delegated to Vex.");
+          } catch (error) { add("error", `Could not save routing mode: ${String(error)}`); }
+          return;
+        }
+        const choice = availableWorkflows.find(item => item.shape === requested);
+        if (!choice) {
+          add("error", `Unknown or unavailable workflow '${parts[0]}'. Available: ${availableWorkflows.map(item => item.shape).join(", ")}.`);
+          return;
+        }
+        await saveWorkflow(choice.shape, Object.fromEntries(workflowStages(choice.shape).map(stage => [stage, "vex"])));
+        return;
+      }
       if (command === "/manual") {
         const enabled = (config?.models ?? []).filter((m) => m.enabled !== false);
         if (!enabled.length) {
@@ -1118,6 +1156,7 @@ export default function App({ onClear }: { onClear: () => void }) {
           return;
         }
         if (!parts.length) {
+          setWorkflowOnly(false);
           setManualWizard({ step: "workflow", stageIndex: 0, routes: {} });
           setManualMenu(true);
           setMenuIndex(0);
