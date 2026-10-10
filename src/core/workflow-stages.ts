@@ -25,7 +25,7 @@ export async function runPlanningStage({
   onProgress: (progress: Progress) => void;
   stages: StageRecord[];
   priorHandoff?: string;
-  routeOverride?: Route;
+  routeOverride?: Route | "vex";
 }): Promise<string> {
   let handoff = "";
   if (shape === "scout" || shape === "plan_execute") {
@@ -37,15 +37,17 @@ export async function runPlanningStage({
           shape === "scout"
             ? enabled.filter((model) => model.model === "gpt-6-luna")
             : enabled;
-        if (!stageModels.length)
+        const available = routeOverride && routeOverride !== "vex" && routeOverride.model && !routeOverride.effort
+          ? stageModels.filter(model => model.model === routeOverride.model) : stageModels;
+        if (!available.length)
           throw new Error("Vex chose a Luna scout, but Luna is not enabled");
-        const sideRoute = routeOverride ?? chosenRoute(
+        const sideRoute = routeOverride && routeOverride !== "vex" && routeOverride.effort ? routeOverride : chosenRoute(
           (
             await choose(
               stageRequest(
                 request,
                 routingTurns,
-                stageModels,
+                available,
                 objective,
                 priorHandoff,
                 enabled,
@@ -55,7 +57,7 @@ export async function runPlanningStage({
               objective,
             )
           ).choice,
-          stageModels,
+          available,
         );
         signal?.throwIfAborted();
         onProgress({ kind: "route", route: sideRoute });

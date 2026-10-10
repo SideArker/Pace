@@ -220,7 +220,7 @@ export class Orchestrator {
     let userClarification: string | undefined;
     let auto = session.routingMode === "auto";
     const manualWorkflow = !auto ? session.manualWorkflow : undefined;
-    const delegated = !!manualWorkflow && Object.values(manualWorkflow.routes).some(value => value === "vex");
+    const delegated = !!manualWorkflow && Object.values(manualWorkflow.routes).some(value => value === "vex" || (value !== undefined && !value.effort));
     if (!auto) {
       taskRelation = priorTask ? "continue" : "replace";
       relationResolved = true;
@@ -255,6 +255,8 @@ export class Orchestrator {
         if (delegated) {
           await awaitRouting(refreshVersionManifest(), signal);
           pricedModels(enabled);
+          if (Object.values(manualWorkflow.routes).includes("vex") && enabled.reduce((count, model) => count + model.efforts.length, 0) > 12)
+            throw new Error("Vex routing supports at most 12 model and effort pairs. Narrow /models.");
         }
       }
       if (auto) {
@@ -449,46 +451,39 @@ export class Orchestrator {
       );
       signal?.throwIfAborted();
       if ((auto || manualWorkflow) && ["scout", "plan_execute", "scout_plan_execute", "plan_verify"].includes(shape)) {
-        const firstShape = shape === "scout_plan_execute" ? "scout" : shape as "scout" | "plan_execute";
+        const firstShape = shape === "scout_plan_execute" ? "scout" : shape === "plan_verify" ? "plan_execute" : shape as "scout" | "plan_execute";
         const firstStage = firstShape === "scout" ? "scout" : "plan";
         const firstHandoff = await runPlanningStage({
           shape: firstShape, request, routingTurns, enabled, prompts, routingState, choose, runner: this.runner,
           session, signal, onProgress, stages,
-          routeOverride: manualWorkflow?.routes[firstStage] === "vex" ? undefined : manualWorkflow?.routes[firstStage],
+          routeOverride: manualWorkflow?.routes[firstStage],
         });
         handoff = firstHandoff;
         if (shape === "scout_plan_execute") {
           const planHandoff = await runPlanningStage({
             shape: "plan_execute", request, routingTurns, enabled, prompts, routingState, choose, runner: this.runner,
             session, signal, onProgress, stages, priorHandoff: firstHandoff,
-            routeOverride: manualWorkflow?.routes.plan === "vex" ? undefined : manualWorkflow?.routes.plan,
+            routeOverride: manualWorkflow?.routes.plan,
           });
           handoff = `Scout report:\n${firstHandoff}\n\nPlanning report:\n${planHandoff}`;
         }
       }
       if (auto || manualWorkflow) {
-        const objective = shape === "plan_verify" ? "Review the read-only plan and return a corrected final plan without implementing it" : completionObjective(shape, prompts);
+        const objective = completionObjective(shape, prompts);
         const selected = manualWorkflow?.routes.final;
-        if (!auto && selected && selected !== "vex") route = selected;
+        if (!auto && selected && selected !== "vex" && selected.effort) route = selected;
         else {
-        route = chosenRoute(
-          (
-            await choose(
-              stageRequest(
-                request,
-                routingTurns,
-                enabled,
+          const available = selected && selected !== "vex" && selected.model
+            ? enabled.filter(model => model.model === selected.model) : enabled;
+          route = chosenRoute(
+            (
+              await choose(
+                stageRequest(request, routingTurns, available, objective, handoff, available, prompts, routingState),
                 objective,
-                handoff,
-                enabled,
-                prompts,
-                routingState,
-              ),
-              objective,
-            )
-          ).choice,
-          enabled,
-        );
+              )
+            ).choice,
+            available,
+          );
         }
         if (auto) note = usedThreadForClarification ? "Vex clarification delegated to existing Codex thread" : `Vex chose ${shape} workflow`;
       }
@@ -506,7 +501,7 @@ export class Orchestrator {
       const resumedAfterLimit = session.deferredTurn?.prompt === prompt;
       const resolvedPrompt = taskRelation === "continue" && priorTask && !session.threadId
         ? `${basePrompt}\n\nPace's saved task brief (verify against conversation): ${priorTask.originalRequest}\nLater instructions: ${JSON.stringify(priorTask.instructions)}\nLast outcome: ${priorTask.latestOutcome ?? "Unknown"}\n${prompts.execution.savedTaskInstruction}`
-        : (taskRelation === "continue" || usedThreadForClarification) && session.threadId
+        : (taskRelation === "continue" || usedThreadForClarification) && session.threadId && shape !== "plan_verify"
           ? `${basePrompt}\n\n${prompts.execution.existingThreadInstruction}`
           : basePrompt;
       const safePrompt = resumedAfterLimit
@@ -523,11 +518,11 @@ export class Orchestrator {
       const checkpoint = session.checkpoint?.threadId === session.threadId &&
         session.turns.some(turn => turn.at === session.checkpoint?.sourceTurnAt)
         ? session.checkpoint : undefined;
-      const runThreadId = checkpoint ? undefined : session.threadId;
+      const runThreadId = checkpoint || shape === "plan_verify" ? undefined : session.threadId;
       const checkpointTurn = checkpoint ? session.turns.findIndex(turn => turn.at === checkpoint.sourceTurnAt) : -1;
       const promptWithHistory = checkpoint
         ? checkpointHandoff(checkpoint.note, session.turns.slice(checkpointTurn + 1).slice(-3).map(turn => ({ user: turn.prompt.slice(0, 1000), assistant: turn.result.slice(0, 1000) })), executionPrompt)
-        : retainedConversationPrompt(executionPrompt, session);
+        : retainedConversationPrompt(executionPrompt, shape === "plan_verify" ? { ...session, threadId: undefined } : session);
       if (checkpoint) onProgress({ kind: "status", text: "Starting fresh thread from checkpoint…" });
       const stageStart = performance.now();
       const execution = await this.runner.run(
@@ -551,7 +546,7 @@ export class Orchestrator {
           } else onProgress(progress);
         },
         signal,
-        "main",
+        shape === "plan_verify" ? "side" : "main",
         trustedFolders,
         config.approvalMode,
       );

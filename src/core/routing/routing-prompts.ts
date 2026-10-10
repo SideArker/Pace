@@ -9,7 +9,7 @@ const defaultPath = fileURLToPath(
   new URL("../../../routing-prompts.default.json", import.meta.url),
 );
 export const routingPromptFile = "routing-prompts.json";
-const choiceIds = ["single", "scout", "plan_execute", "scout_plan_execute", "clarify"] as const;
+const choiceIds = ["single", "scout", "plan_execute", "scout_plan_execute", "plan_verify", "clarify"] as const;
 const legacyChoiceIds = ["single", "scout", "plan_execute", "clarify"] as const;
 
 export type RoutingPrompts = {
@@ -94,6 +94,7 @@ export function parseRoutingPrompts(value: unknown): RoutingPrompts {
     throw new Error("routing-prompts.json: taskRelation.choices contains an unknown choice");
   for (const id of legacyChoiceIds) nonempty(choices[id], `workflow.choices.${id}`);
   if (choices.scout_plan_execute !== undefined) nonempty(choices.scout_plan_execute, "workflow.choices.scout_plan_execute");
+  if (choices.plan_verify !== undefined) nonempty(choices.plan_verify, "workflow.choices.plan_verify");
   if (Object.keys(choices).some(id => !choiceIds.includes(id as (typeof choiceIds)[number])))
     throw new Error(
       "routing-prompts.json: workflow.choices contains an unknown choice",
@@ -191,6 +192,7 @@ export const DEFAULT_ROUTING_PROMPTS = parseRoutingPrompts(
 
 export function completionObjective(shape: string, prompts: RoutingPrompts): string {
   if (shape === "single") return prompts.objectives.single;
+  if (shape === "plan_verify") return "Review the read-only plan and return a corrected final plan without implementing it";
   if (shape === "plan_execute" || shape === "scout_plan_execute")
     return prompts.objectives.afterPlanHandoff;
   return prompts.objectives.afterHandoff;

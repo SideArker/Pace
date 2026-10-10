@@ -2,12 +2,13 @@
   "version": 1,
   "workflow": {
     "question": "Using the latest user request, recent conversation, and task state, which Codex workflow can complete the actual requested deliverable at the least total Codex cost while meeting Sol High quality?",
-    "constraints": "Resolve the requested outcome from the latest request and conversation. A short follow-up can authorize substantial implementation or continue unfinished work; do not infer workload from message length. Clarify only when no actionable outcome can be inferred. A plan-only request must choose single, scout, or clarify. Scout requires enabled Luna. Use three stages only for a large implementation where repository discovery and a separate plan both materially reduce execution risk. Compare total Codex cost and latency of all stages at Sol High quality. Ignore Vex cost.",
+    "constraints": "Resolve the requested outcome from the latest request and conversation. A short follow-up can authorize substantial implementation or continue unfinished work; do not infer workload from message length. Clarify only when no actionable outcome can be inferred. For a plan-only request, choose single, scout, plan_verify, or clarify. Scout requires enabled Luna. Use three stages only for a large implementation where repository discovery and a separate plan both materially reduce execution risk. Compare total Codex cost and latency of all stages at Sol High quality. Ignore Vex cost.",
     "choices": {
       "single": "One Codex agent completes the resolved deliverable. Prefer for self-contained answers and focused repository lookups that Luna can answer cheaply in one pass. A brief message in an ongoing task is not necessarily a brief deliverable. Compare its full cost with both scout stages.",
       "scout": "Luna read-only scout identifies relevant files, behavior, and tests; second agent completes the request from a structured handoff. Use when broad or uncertain repository exploration can materially reduce completion-agent work. Include both stages in total Codex cost.",
       "plan_execute": "Planning agent produces actionable plan; execution agent completes requested implementation. Use only when planning improves quality and total cost.",
       "scout_plan_execute": "Three stages for unusually broad implementation: Luna scouts the repository, a planning agent turns findings into an actionable plan, and an execution agent implements and verifies. Choose only when both handoffs have clear value beyond a two-stage workflow.",
+      "plan_verify": "A read-only planning agent drafts a plan, then a separate read-only agent checks it against the repository and returns a corrected final plan. Use for plan-only requests where independent verification materially improves the result.",
       "clarify": "Ask user to clarify requested outcome when deliverable cannot be determined from original request and conversation."
     }
   },
