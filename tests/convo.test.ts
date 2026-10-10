@@ -45,6 +45,19 @@ describe("Conversation editing and undo logic", () => {
     expect(output).toContain('(unavailable)');
   });
 
+  it("labels saved conversations with their directories in the active picker", () => {
+    const output = renderToString(React.createElement(ConversationPicker, {
+      choices: [
+        { id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", projectPath: "/workspace/alpha", prompt: "Alpha task", state: "done", section: "saved" },
+        { id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", projectPath: "/workspace/beta", prompt: "Beta task", state: "done", section: "saved" },
+      ], selectedIndex: 1, focused: true, maxItems: 4, width: 100,
+    }), { columns: 100 });
+    expect(output).toContain("/workspace/alpha");
+    expect(output).toContain("/workspace/beta");
+    expect(output.indexOf("/workspace/alpha")).toBeLessThan(output.indexOf("Alpha task"));
+    expect(output.indexOf("/workspace/beta")).toBeLessThan(output.indexOf("Beta task"));
+  });
+
   it("shows completed background conversations as done until opened", () => {
     const output = renderToString(React.createElement(ConversationPicker, {
       choices: [

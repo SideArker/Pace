@@ -2,21 +2,33 @@ import React from "react";
 import { PassThrough, Writable } from "node:stream";
 import { render, renderToString, Text } from "ink";
 import { expect, it } from "vitest";
-import { Composer, commandRanges, commandToken, deleteDraftRange, deleteWordBackward, deleteWordForward, displayPastedBlocks, inputColumns, insertDraftText, insertPastedBlock, isAltBackspaceKey, isAltDeleteKey, isNewlineKey, paceGradient, skipPastedBlock, verticalCursor, visibleInputRows } from "../src/components/Composer.js";
+import { Composer, commandRanges, commandToken, deleteDraftRange, deleteWordBackward, deleteWordForward, displayPastedBlocks, inputColumns, insertDraftText, insertPastedBlock, isAltBackspaceKey, isAltDeleteKey, isNewlineKey, markdownDraftRanges, paceGradient, skipPastedBlock, verticalCursor, visibleInputRows } from "../src/components/Composer.js";
 import { ComposerFrame } from "../src/components/ComposerFrame.js";
 import { newSession } from "../src/core/sessions.js";
 import { normalizeNewCommand } from "../src/components/App.js";
 
-it("treats ./new, /.new, ./clear, and /.clear as conversation commands", () => {
+it("keeps ./clear as ordinary input while recognizing the supported command aliases", () => {
   expect(normalizeNewCommand("./new")).toBe("/new");
   expect(normalizeNewCommand(" ./new ")).toBe("/new");
   expect(normalizeNewCommand("./new extra")).toBe("/new extra");
   expect(normalizeNewCommand("./newfile")).toBe("./newfile");
   expect(normalizeNewCommand("/.clear")).toBe("/clear");
   expect(normalizeNewCommand(" /.clear ")).toBe("/clear");
-  expect(normalizeNewCommand("./clear")).toBe("/clear");
+  expect(normalizeNewCommand("./clear")).toBe("./clear");
+  expect(normalizeNewCommand("./clear now")).toBe("./clear now");
   expect(normalizeNewCommand("/.new")).toBe("/new");
   expect(normalizeNewCommand("./approval")).toBe("/approval");
+});
+
+it("shows pasted text directly below ten lines and a marker from ten lines", () => {
+  for (const count of [1, 2, 9, 10, 11]) {
+    const text = Array.from({ length: count }, (_, index) => `line ${index + 1}`).join("\n");
+    const pasted = insertPastedBlock("", 0, text, []);
+    const shown = displayPastedBlocks(pasted.value, pasted.cursor, pasted.blocks);
+    expect(shown.value).toBe(count < 10 ? text : `[Pasted ${count} lines]`);
+    expect(shown.cursor).toBe(shown.value.length);
+    expect(shown.markers).toHaveLength(count < 10 ? 0 : 1);
+  }
 });
 
 it("deletes words forward and backward with word boundary awareness", () => {
@@ -70,17 +82,18 @@ it("keeps long input bounded around the cursor", () => {
   expect(fullScreenRows.at(-1)).toEqual({ start: 190, end: 200 });
 });
 
-it("shows pasted text as one block and removes it with one backspace", () => {
-  const pasted = insertPastedBlock("before ", 7, "alpha\nbeta", []);
+it("shows a large paste as one block and removes it with one backspace", () => {
+  const text = Array.from({ length: 10 }, (_, index) => `line${index}`).join("\n");
+  const pasted = insertPastedBlock("before ", 7, text, []);
   expect(displayPastedBlocks(pasted.value, pasted.cursor, pasted.blocks)).toMatchObject({
-    value: "before [Pasted 2 lines]", cursor: "before [Pasted 2 lines]".length,
+    value: "before [Pasted 10 lines]", cursor: "before [Pasted 10 lines]".length,
   });
   expect(deleteDraftRange(pasted.value, pasted.cursor - 1, pasted.cursor, pasted.blocks)).toEqual({
     value: "before ", cursor: 7, blocks: [],
   });
   expect(skipPastedBlock(pasted.cursor - 1, "left", pasted.blocks)).toBe(7);
   const extended = insertDraftText(pasted.value, pasted.cursor, "!", pasted.blocks);
-  expect(displayPastedBlocks(extended.value, extended.cursor, extended.blocks).value).toBe("before [Pasted 2 lines]!");
+  expect(displayPastedBlocks(extended.value, extended.cursor, extended.blocks).value).toBe("before [Pasted 10 lines]!");
 });
 
 it("submits full pasted text while showing its marker", async () => {
@@ -115,16 +128,17 @@ it("submits full pasted text while showing its marker", async () => {
   });
   try {
     await instance.waitUntilRenderFlush();
-    stdin.write("\x1b[200~alpha\nbeta\x1b[201~");
+    const largePaste = Array.from({ length: 10 }, (_, index) => `line${index}`).join("\n");
+    stdin.write(`\x1b[200~${largePaste}\x1b[201~`);
     await new Promise(resolve => setTimeout(resolve, 10));
     await instance.waitUntilRenderFlush();
-    expect(stdout.writes.join("")).toContain("[Pasted 2 lines]");
-    expect(stdout.writes.join("")).not.toContain("alpha");
+    expect(stdout.writes.join("")).toContain("[Pasted 10 lines]");
+    expect(stdout.writes.join("")).not.toContain("line0");
     stdin.write("\r");
     await new Promise(resolve => setTimeout(resolve, 10));
     await instance.waitUntilRenderFlush();
-    expect(submitted).toBe("alpha\nbeta");
-    stdin.write("\x1b[200~alpha\nbeta\x1b[201~");
+    expect(submitted).toBe(largePaste);
+    stdin.write(`\x1b[200~${largePaste}\x1b[201~`);
     await new Promise(resolve => setTimeout(resolve, 10));
     await instance.waitUntilRenderFlush();
     stdin.write("\x7f");
@@ -132,6 +146,15 @@ it("submits full pasted text while showing its marker", async () => {
     await instance.waitUntilRenderFlush();
     expect(currentDraft).toBe("");
   } finally { instance.unmount(); }
+});
+
+it("keeps the full context footer visible beside hints at medium widths", () => {
+  const output = renderToString(React.createElement(ComposerFrame, {
+    width: 120, shellMode: false, approvalMode: "full-access", children: React.createElement(Text, null, "Input"),
+  }), { columns: 120 });
+  expect(output).toContain("type ! to run commands");
+  expect(output).toContain("○ Context ? · auto · Full Access");
+  expect(output.split("\n").every(line => line.length <= 120)).toBe(true);
 });
 
 it("recognizes modified Enter and Ctrl+J as newline input", () => {
@@ -146,6 +169,48 @@ it("recognizes modified Enter and Ctrl+J as newline input", () => {
   expect(isNewlineKey("[27;2;13~", { ...key, return: false })).toBe(true);
 });
 
+it("accepts three consecutive newline keys before submitting one draft", async () => {
+  class Output extends Writable {
+    isTTY = true;
+    columns = 80;
+    rows = 24;
+    override _write(_chunk: Buffer, _encoding: BufferEncoding, done: (error?: Error | null) => void) { done(); }
+  }
+  const stdin = new PassThrough() as PassThrough & { isTTY: boolean; setRawMode: (enabled: boolean) => void; ref: () => void; unref: () => void };
+  stdin.isTTY = true;
+  stdin.setRawMode = () => {};
+  stdin.ref = () => {};
+  stdin.unref = () => {};
+  let currentDraft = "";
+  let submitted = "";
+  const Harness = () => {
+    const [draft, setDraft] = React.useState("");
+    currentDraft = draft;
+    return React.createElement(Composer, {
+      value: draft, onChange: setDraft, onSubmit: text => { submitted = text; setDraft(""); },
+      history: [], disabled: false, shellMode: false, placeholder: "Ask Pace", onComplete: () => {}, width: 80,
+    });
+  };
+  const instance = render(React.createElement(Harness), {
+    stdin, stdout: new Output(), stderr: new PassThrough(), interactive: true, patchConsole: false, alternateScreen: false,
+  });
+  try {
+    await instance.waitUntilRenderFlush();
+    stdin.write("first");
+    await instance.waitUntilRenderFlush();
+    for (let index = 0; index < 3; index++) {
+      stdin.write("\x0a");
+      await instance.waitUntilRenderFlush();
+      expect(currentDraft).toBe(`first${"\n".repeat(index + 1)}`);
+    }
+    stdin.write("last");
+    await instance.waitUntilRenderFlush();
+    stdin.write("\r");
+    await instance.waitUntilRenderFlush();
+    expect(submitted).toBe("first\n\n\nlast");
+  } finally { instance.unmount(); }
+});
+
 it("finds command tokens after text and newlines", () => {
   expect(commandToken("/mo")).toEqual({ start: 0, prefix: "/mo" });
   expect(commandToken("@rig")).toEqual({ start: 0, prefix: "@rig" });
@@ -155,6 +220,22 @@ it("finds command tokens after text and newlines", () => {
   expect(commandToken("review @rig")).toEqual({ start: 7, prefix: "@rig" });
   expect(commandToken("plain text")).toBeUndefined();
   expect(commandToken("/models option")).toBeUndefined();
+});
+
+it("styles completed inline Markdown while preserving editable source", () => {
+  const value = "**bold** *italic* `code` ~~old~~";
+  expect(markdownDraftRanges(value)).toEqual([
+    { start: 2, end: 6, style: "bold" },
+    { start: 10, end: 16, style: "italic" },
+    { start: 19, end: 23, style: "code" },
+    { start: 28, end: 31, style: "strike" },
+  ]);
+  const output = renderToString(React.createElement(Composer, {
+    value, onChange: () => {}, onSubmit: () => {}, history: [], disabled: false, shellMode: false,
+    placeholder: "Ask Pace", onComplete: () => {}, width: 80,
+  }), { columns: 80 });
+  expect(output).toContain(value);
+  expect(markdownDraftRanges("**unfinished")).toEqual([]);
 });
 
 it("marks every slash command in multiline input", () => {

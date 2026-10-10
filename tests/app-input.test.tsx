@@ -243,6 +243,16 @@ describe("application keyboard input", () => {
     expect(events.activateSession).toHaveBeenCalledWith(second);
   });
 
+  it("keeps a missing-directory conversation unavailable in the active picker", async () => {
+    const { options, events, second } = fixture({ pickerFocused: true, pickerIndex: 1 });
+    second.projectPath = "/missing/elsewhere";
+    options.missingProjectPaths = [second.projectPath];
+    const ui = await mount(options);
+    await ui.key("", { return: true });
+    expect(events.activateSession).not.toHaveBeenCalled();
+    expect(events.add).toHaveBeenCalledWith("error", expect.stringContaining(second.projectPath));
+  });
+
   it("queue menu edits only the active conversation's selected prompt", async () => {
     const { options, events, queue, session, second } = fixture({ queueMenu: true, menuIndex: 1 });
     queue.add(session.id, "first"); queue.add(session.id, "edit me"); queue.add(second.id, "keep me");
