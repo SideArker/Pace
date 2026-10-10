@@ -12,6 +12,7 @@ it("keeps ./clear as ordinary input while recognizing the supported command alia
   expect(normalizeNewCommand(" ./new ")).toBe("/new");
   expect(normalizeNewCommand("./new extra")).toBe("/new extra");
   expect(normalizeNewCommand("./newfile")).toBe("./newfile");
+  expect(normalizeNewCommand("./resume")).toBe("/resume");
   expect(normalizeNewCommand("/.clear")).toBe("/clear");
   expect(normalizeNewCommand(" /.clear ")).toBe("/clear");
   expect(normalizeNewCommand("./clear")).toBe("./clear");

@@ -99,22 +99,22 @@ export function ConversationPicker({
         return <React.Fragment key={section}>
           <Text color="#64748B" bold>{section === "pace" ? "This pace" : "Saved conversations"} ({count})</Text>
           {visible.map(({ choice, index }, position) => {
-        const selected = focused && index === selectedIndex;
-        const current = choice.id === activeId;
-        const prompt = (choice.title || choice.prompt).replace(/\s+/g, " ").trim();
-        const stateColor = choice.state === "approval" ? "#FBBF24" : choice.state === "question" ? "#A5B4FC" : choice.state === "running" ? "#38BDF8" : choice.state === "done" ? "#59E6A7" : "#64748B";
-        const stateLabel = choice.state === "approval" ? "approve" : choice.state === "question" ? "answer" : choice.state === "running" ? "running" : choice.state === "done" ? "done" : current ? "current" : "ready";
-        return <React.Fragment key={choice.id}>
-          {choice.projectPath && (position === 0 || visible[position - 1]?.choice.projectPath !== choice.projectPath)
-            ? <Text color={missingProjectPaths.includes(choice.projectPath) ? "#F87171" : "#94A3B8"} wrap="truncate">{choice.projectPath}{missingProjectPaths.includes(choice.projectPath) ? " (missing; use pace reconnect)" : ""}</Text>
-            : null}
-          <Box gap={1}>
-            <Box flexShrink={0}><Text color={selected ? "#38BDF8" : "#64748B"}>{selected ? "▶" : " "}</Text></Box>
-            <Box flexShrink={0}><Text color={current ? "#59E6A7" : "#94A3B8"}>{choice.id.slice(0, 8)}</Text></Box>
-            <Box flexShrink={0}><Text color={stateColor}>{stateLabel}</Text></Box>
-            <Text color={selected ? "white" : "#CBD5E1"} wrap="truncate">{prompt.slice(0, 60) || "New conversation"}</Text>
-          </Box>
-        </React.Fragment>;
+            const selected = focused && index === selectedIndex;
+            const current = choice.id === activeId;
+            const prompt = (choice.title || choice.prompt).replace(/\s+/g, " ").trim();
+            const stateColor = choice.state === "approval" ? "#FBBF24" : choice.state === "question" ? "#A5B4FC" : choice.state === "running" ? "#38BDF8" : choice.state === "done" ? "#59E6A7" : "#64748B";
+            const stateLabel = choice.state === "approval" ? "approve" : choice.state === "question" ? "answer" : choice.state === "running" ? "running" : choice.state === "done" ? "done" : current ? "current" : "ready";
+            return <React.Fragment key={choice.id}>
+              {choice.projectPath && (position === 0 || visible[position - 1]?.choice.projectPath !== choice.projectPath)
+                ? <Text color={missingProjectPaths.includes(choice.projectPath) ? "#F87171" : "#94A3B8"} wrap="truncate">{choice.projectPath}{missingProjectPaths.includes(choice.projectPath) ? " (missing; use pace reconnect)" : ""}</Text>
+                : null}
+              <Box gap={1}>
+                <Box flexShrink={0}><Text color={selected ? "#38BDF8" : "#64748B"}>{selected ? "▶" : " "}</Text></Box>
+                <Box flexShrink={0}><Text color={current ? "#59E6A7" : "#94A3B8"}>{choice.id.slice(0, 8)}</Text></Box>
+                <Box flexShrink={0}><Text color={stateColor}>{stateLabel}</Text></Box>
+                <Text color={selected ? "white" : "#CBD5E1"} wrap="truncate">{prompt.slice(0, 60) || "New conversation"}</Text>
+              </Box>
+            </React.Fragment>;
           })}
         </React.Fragment>;
       })}

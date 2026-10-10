@@ -91,7 +91,7 @@ const commandDescriptions: Record<string, string> = {
   "/exit": "Quit Pace",
 };
 const spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-export const normalizeNewCommand = (input: string) => input.trim().replace(/^(?:\.\/(?!clear(?=\s|$))|\/\.)(new|clear|approval)(?=\s|$)/, "/$1");
+export const normalizeNewCommand = (input: string) => input.trim().replace(/^(?:\.\/(?!clear(?=\s|$))|\/\.)(new|clear|approval|resume)(?=\s|$)/, "/$1");
 const workingTips = [
   "Type / to browse commands",
   "Use /context to check thread size",
