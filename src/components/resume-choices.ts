@@ -2,11 +2,11 @@ import type { PaceStore } from "../core/sessions.js";
 import type { Session } from "../shared/types.js";
 
 export async function loadResumeChoices(
-  store: Pick<PaceStore, "listProjects">,
+  store: { listProjects: (options?: { summariesOnly?: boolean }) => Promise<{ projectPath: string; exists: boolean; sessions: Session[] }[]> },
   openSessions: Session[],
   runningSessions: Session[],
 ): Promise<{ sessions: Session[]; missingProjectPaths: string[] }> {
-  const projects = await store.listProjects();
+  const projects = await store.listProjects({ summariesOnly: true });
   const sessions = new Map<string, Session>();
   for (const session of openSessions) sessions.set(session.id, session);
   for (const project of projects) {

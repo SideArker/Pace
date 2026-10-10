@@ -145,3 +145,54 @@ export function parseSession(value: unknown, project: string): Session | undefin
     return undefined;
   return value as Session;
 }
+
+export function parseSessionSummary(value: unknown, project: string): Session | undefined {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== "string" ||
+    !/^[0-9a-f-]{36}$/.test(value.id) ||
+    (value.title !== undefined && (typeof value.title !== "string" || value.title.length > 120)) ||
+    value.projectPath !== project ||
+    typeof value.createdAt !== "string" ||
+    typeof value.updatedAt !== "string"
+  ) {
+    return undefined;
+  }
+
+  const firstTurnPrompt = Array.isArray(value.turns) && isRecord(value.turns[0]) && typeof value.turns[0].prompt === "string"
+    ? value.turns[0].prompt
+    : undefined;
+
+  const route = isRecord(value.route)
+    ? {
+        model: typeof value.route.model === "string" ? value.route.model : undefined,
+        effort: EFFORTS.includes(value.route.effort as (typeof EFFORTS)[number])
+          ? (value.route.effort as (typeof EFFORTS)[number])
+          : undefined,
+      }
+    : {};
+
+  const deferredTurn = isRecord(value.deferredTurn) &&
+    typeof value.deferredTurn.prompt === "string" &&
+    typeof value.deferredTurn.retryAt === "string" &&
+    typeof value.deferredTurn.attempt === "number"
+      ? {
+          prompt: value.deferredTurn.prompt,
+          retryAt: value.deferredTurn.retryAt,
+          attempt: value.deferredTurn.attempt,
+        }
+      : undefined;
+
+  return {
+    id: value.id,
+    kind: value.kind === "planning" ? "planning" : "normal",
+    title: typeof value.title === "string" ? value.title : undefined,
+    projectPath: project,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+    routingMode: value.routingMode === "manual" ? "manual" : "auto",
+    route,
+    deferredTurn,
+    turns: firstTurnPrompt ? [{ prompt: firstTurnPrompt, result: "", at: value.createdAt }] : [],
+  };
+}

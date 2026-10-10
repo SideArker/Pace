@@ -14,8 +14,9 @@ import {
 import { DEFAULT_CONFIG, isRecord, parseConfig } from "../shared/config.js";
 import type { Config, Notice, Session } from "../shared/types.js";
 import { normalizeProject, projectKey } from "./session-model.js";
-import { parseSession } from "./session-record.js";
+import { parseSession, parseSessionSummary } from "./session-record.js";
 export { normalizeProject, projectKey, newSession, rewindConversation, deleteConversationTurn, undoConversationTurn } from "./session-model.js";
+export { parseSessionSummary } from "./session-record.js";
 
 export async function atomicJson(path: string, value: unknown): Promise<void> {
   const temp = `${path}.${randomUUID()}.tmp`;
@@ -62,6 +63,17 @@ export class PaceStore {
   async saveConfig(config: Config): Promise<void> {
     await atomicJson(join(this.baseDir, "config.json"), parseConfig(config));
   }
+  async load(project: string, sessionId: string): Promise<Session | undefined> {
+    const path = join(this.sessionDir(project), `${sessionId}.json`);
+    try {
+      const raw: unknown = JSON.parse(await readFile(path, "utf8"));
+      return parseSession(raw, normalizeProject(project));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+        this.notice(`Session ${sessionId} unavailable: ${String(error)}`);
+      return undefined;
+    }
+  }
   async list(project: string): Promise<Session[]> {
     const path = this.sessionDir(project);
     let files: string[];
@@ -89,7 +101,34 @@ export class PaceStore {
     }
     return sessions.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
-  async listProjects(): Promise<{ projectPath: string; exists: boolean; sessions: Session[] }[]> {
+  async listSummaries(project: string): Promise<Session[]> {
+    const path = this.sessionDir(project);
+    let files: string[];
+    try {
+      files = await readdir(path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+        this.notice(`Sessions unavailable: ${String(error)}`);
+      return [];
+    }
+    const sessions: Session[] = [];
+    for (const file of files.filter((name) =>
+      /^[0-9a-f-]{36}\.json$/.test(name),
+    )) {
+      try {
+        const session = parseSessionSummary(
+          JSON.parse(await readFile(join(path, file), "utf8")),
+          normalizeProject(project),
+        );
+        if (session) sessions.push(session);
+        else this.notice(`Ignoring invalid session ${file}`);
+      } catch {
+        this.notice(`Ignoring unreadable session ${file}`);
+      }
+    }
+    return sessions.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+  async listProjects(options?: { summariesOnly?: boolean }): Promise<{ projectPath: string; exists: boolean; sessions: Session[] }[]> {
     const root = join(this.baseDir, "sessions");
     let entries;
     try {
@@ -113,9 +152,11 @@ export class PaceStore {
           const value: unknown = JSON.parse(await readFile(join(root, entry.name, file), "utf8"));
           if (!isRecord(value) || typeof value.projectPath !== "string" ||
               projectKey(value.projectPath) !== entry.name ||
-              !parseSession(value, normalizeProject(value.projectPath))) continue;
+              !parseSessionSummary(value, normalizeProject(value.projectPath))) continue;
           const projectPath = normalizeProject(value.projectPath);
-          const sessions = await this.list(projectPath);
+          const sessions = options?.summariesOnly
+            ? await this.listSummaries(projectPath)
+            : await this.list(projectPath);
           const exists = await stat(projectPath).then(info => info.isDirectory()).catch(() => false);
           projects.push({ projectPath, exists, sessions });
           break;
