@@ -4,6 +4,7 @@ import type { ApprovalMode, Route, TurnSummary } from "../shared/types.js";
 
 export type ConversationChoice = {
   id: string;
+  projectPath?: string;
   section?: "pace" | "saved";
   title?: string;
   prompt: string;
@@ -31,12 +32,18 @@ export function sortConversations<T extends { state: "ready" | "running" | "appr
   });
 }
 
-export function sectionConversations<T extends { id: string; state: "ready" | "running" | "approval" | "question" | "done"; updatedAt?: string }>(
+export function sectionConversations<T extends { id: string; projectPath?: string; state: "ready" | "running" | "approval" | "question" | "done"; updatedAt?: string }>(
   items: T[], thisPaceIds: ReadonlySet<string>,
 ): (T & { section: "pace" | "saved" })[] {
   const current = sortConversations(items.filter(item => thisPaceIds.has(item.id)));
-  const saved = items.filter(item => !thisPaceIds.has(item.id)).sort((a, b) =>
+  const savedByTime = items.filter(item => !thisPaceIds.has(item.id)).sort((a, b) =>
     (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
+  const savedGroups = new Map<string, T[]>();
+  for (const item of savedByTime) {
+    const key = item.projectPath ?? item.id;
+    savedGroups.set(key, [...(savedGroups.get(key) ?? []), item]);
+  }
+  const saved = [...savedGroups.values()].flat();
   return [
     ...current.map(item => ({ ...item, section: "pace" as const })),
     ...saved.map(item => ({ ...item, section: "saved" as const })),
@@ -56,6 +63,7 @@ export function ConversationPicker({
   width,
   maxItems = 5,
   marginTop = 0,
+  missingProjectPaths = [],
 }: {
   choices: ConversationChoice[];
   activeId?: string;
@@ -64,6 +72,7 @@ export function ConversationPicker({
   width?: number;
   maxItems?: number;
   marginTop?: number;
+  missingProjectPaths?: string[];
 }) {
   const anchor = focused ? selectedIndex : Math.max(0, choices.findIndex(choice => choice.id === activeId));
   const pace = choices.map((choice, index) => ({ choice, index })).filter(({ choice }) => (choice.section ?? "pace") === "pace");
@@ -89,20 +98,23 @@ export function ConversationPicker({
         const count = section === "pace" ? pace.length : saved.length;
         return <React.Fragment key={section}>
           <Text color="#64748B" bold>{section === "pace" ? "This pace" : "Saved conversations"} ({count})</Text>
-          {visible.map(({ choice, index }) => {
+          {visible.map(({ choice, index }, position) => {
         const selected = focused && index === selectedIndex;
         const current = choice.id === activeId;
         const prompt = (choice.title || choice.prompt).replace(/\s+/g, " ").trim();
         const stateColor = choice.state === "approval" ? "#FBBF24" : choice.state === "question" ? "#A5B4FC" : choice.state === "running" ? "#38BDF8" : choice.state === "done" ? "#59E6A7" : "#64748B";
         const stateLabel = choice.state === "approval" ? "approve" : choice.state === "question" ? "answer" : choice.state === "running" ? "running" : choice.state === "done" ? "done" : current ? "current" : "ready";
-        return (
-          <Box key={choice.id} gap={1}>
+        return <React.Fragment key={choice.id}>
+          {choice.projectPath && (position === 0 || visible[position - 1]?.choice.projectPath !== choice.projectPath)
+            ? <Text color={missingProjectPaths.includes(choice.projectPath) ? "#F87171" : "#94A3B8"} wrap="truncate">{choice.projectPath}{missingProjectPaths.includes(choice.projectPath) ? " (missing; use pace reconnect)" : ""}</Text>
+            : null}
+          <Box gap={1}>
             <Box flexShrink={0}><Text color={selected ? "#38BDF8" : "#64748B"}>{selected ? "▶" : " "}</Text></Box>
             <Box flexShrink={0}><Text color={current ? "#59E6A7" : "#94A3B8"}>{choice.id.slice(0, 8)}</Text></Box>
             <Box flexShrink={0}><Text color={stateColor}>{stateLabel}</Text></Box>
             <Text color={selected ? "white" : "#CBD5E1"} wrap="truncate">{prompt.slice(0, 60) || "New conversation"}</Text>
           </Box>
-        );
+        </React.Fragment>;
           })}
         </React.Fragment>;
       })}

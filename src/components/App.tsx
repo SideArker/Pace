@@ -39,6 +39,7 @@ import { createTurnRunner, type PendingApproval, type PendingQuestion, type Turn
 import { costForUsage, currentManifestSource, currentVersionManifest, modelRates, newerPaceVersion, refreshVersionManifest } from "../core/routing/pricing.js";
 import { formatLatestRoute } from "./route-format.js";
 import { contextPercent, measuredContext } from "../core/context.js";
+import { loadResumeChoices } from "./resume-choices.js";
 const commands = [
   "/models",
   "/version",
@@ -242,6 +243,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const backgroundQuestions = [...pendingQuestions.current.keys()].filter(id => id !== activeSessionId.current);
   const pickerChoices: ConversationChoice[] = sortedSessions.map(item => ({
     id: item.id,
+    projectPath: item.projectPath,
     title: item.title,
     prompt: item.turns[0]?.prompt ?? jobs.current.get(item.id)?.prompt ?? "",
     state: getSessionState(item.id),
@@ -837,7 +839,7 @@ export default function App({ onClear }: { onClear: () => void }) {
     return true;
   };
   const shell = createShellRunner({
-    project,
+    project: session?.projectPath ?? project,
     nextId,
     shells,
     setShellJobs,
@@ -849,7 +851,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         kind: "approval",
         id: `shell-approval-${nextId.current++}`,
         command,
-        cwd: project,
+        cwd: session?.projectPath ?? project,
         reason: config?.approvalMode === "limited" ? "Limited mode asks before each Bash command." : reason,
         respond: decision => resolveDecision(decision === "accept"),
       });
@@ -1208,7 +1210,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       }
       if (command === "/artifacts") {
         try {
-          const files = await artifactSnapshot(project);
+          const files = await artifactSnapshot(session.projectPath);
           add(
             "info",
             files.size
@@ -1325,18 +1327,13 @@ export default function App({ onClear }: { onClear: () => void }) {
           add("error", "Type /resume to open the conversation picker.");
           return;
         }
-        const saved = await store.list(project);
-        if (!saved.length && openSessions.length <= 1) {
+        const loaded = await loadResumeChoices(store, openSessions, [...jobs.current.values()].map(job => job.session));
+        if (loaded.sessions.length <= 1) {
           add("info", "No saved conversations.");
           return;
         }
-        setOpenSessions(old => {
-          const map = new Map<string, Session>();
-          for (const s of old) map.set(s.id, s);
-          for (const s of saved) if (!map.has(s.id)) map.set(s.id, s);
-          for (const job of jobs.current.values()) map.set(job.session.id, job.session);
-          return [...map.values()];
-        });
+        setOpenSessions(loaded.sessions);
+        setMissingProjectPaths(loaded.missingProjectPaths);
         setShowConversationsTab(true);
         setPickerFocused(true);
         setPickerIndex(0);
@@ -1481,7 +1478,7 @@ export default function App({ onClear }: { onClear: () => void }) {
           : <Transcript key={item.group[0]?.id} lines={item.group} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} width={contentWidth} />}
       </Static>
       <Box flexDirection="column" flexShrink={1} minHeight={0} overflowY="hidden">
-      {showHeader ? <HeaderStatus project={project} vexState={vexState} width={contentWidth} /> : null}
+      {showHeader ? <HeaderStatus project={session?.projectPath ?? project} vexState={vexState} width={contentWidth} /> : null}
       <Box flexDirection="column" flexShrink={1} minHeight={0} overflowY="hidden">
         <Transcript lines={liveLines.slice(-Math.max(1, Math.floor(((terminalRows - 12) / 4))))} outputsExpanded={outputsExpanded} detailsExpanded={outputsExpanded} livePreview width={contentWidth} />
       </Box>
@@ -1514,7 +1511,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         <Composer key={session?.id} value={draft} width={contentWidth} maxRows={maxComposerRows} onChange={value => { setDraft(value); setSelection(0); }} onSubmit={value => { void submit(value); }} history={history}
           onImagePaste={async () => {
             try {
-              const targetDir = session ? store.conversationDir(project, session.id) : join(store.sessionDir(project), "pasted-images");
+              const targetDir = session ? store.conversationDir(session.projectPath, session.id) : join(store.sessionDir(project), "pasted-images");
               const path = await saveClipboardImage(targetDir);
               if (!path) add("info", "No image found in clipboard. On WSL, use Alt+V when terminal handles Ctrl+V.");
               return path ? `[Pace image: ${path}]` : undefined;
@@ -1544,6 +1541,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         height={terminalRows}
         conversations={{
           choices: pickerChoices,
+          missingProjectPaths,
           activeId: activeSessionId.current,
           selectedIndex: pickerIndex,
           focused: pickerFocused,

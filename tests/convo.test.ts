@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TurnSummary } from "../src/shared/types.js";
 import { conversationState } from "../src/components/approval-state.js";
+import { loadResumeChoices } from "../src/components/resume-choices.js";
 
 describe("Conversation editing and undo logic", () => {
   it("shows approval before running for a background turn", () => {
@@ -56,6 +57,29 @@ describe("Conversation editing and undo logic", () => {
     expect(output).toContain("/workspace/beta");
     expect(output.indexOf("/workspace/alpha")).toBeLessThan(output.indexOf("Alpha task"));
     expect(output.indexOf("/workspace/beta")).toBeLessThan(output.indexOf("Beta task"));
+  });
+
+  it("loads resume choices from every saved project and tracks missing directories", async () => {
+    const local = newSession("/workspace/local", "auto");
+    const other = newSession("/workspace/other", "auto");
+    const missing = newSession("/workspace/gone", "auto");
+    const store = { listProjects: async () => [
+      { projectPath: local.projectPath, exists: true, sessions: [local] },
+      { projectPath: other.projectPath, exists: true, sessions: [other] },
+      { projectPath: missing.projectPath, exists: false, sessions: [missing] },
+    ] };
+    const result = await loadResumeChoices(store, [local], []);
+    expect(result.sessions.map(session => session.id)).toEqual([local.id, other.id, missing.id]);
+    expect(result.missingProjectPaths).toEqual([missing.projectPath]);
+  });
+
+  it("keeps saved conversations from the same directory together", () => {
+    const choices = sectionConversations([
+      { id: "alpha-new", projectPath: "/workspace/alpha", state: "done" as const, updatedAt: "2026-10-10T12:00:00Z" },
+      { id: "beta", projectPath: "/workspace/beta", state: "done" as const, updatedAt: "2026-10-10T11:00:00Z" },
+      { id: "alpha-old", projectPath: "/workspace/alpha", state: "done" as const, updatedAt: "2026-10-10T10:00:00Z" },
+    ], new Set());
+    expect(choices.map(choice => choice.id)).toEqual(["alpha-new", "alpha-old", "beta"]);
   });
 
   it("shows completed background conversations as done until opened", () => {

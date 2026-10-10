@@ -13,6 +13,7 @@ export type BottomPanelProps = {
     activeId?: string;
     selectedIndex: number;
     focused: boolean;
+    missingProjectPaths?: string[];
   };
   showConversations?: boolean;
   queuedPrompts?: readonly string[];
@@ -51,6 +52,7 @@ export function BottomPanel({
             activeId={conversations.activeId}
             selectedIndex={conversations.selectedIndex}
             focused={conversations.focused}
+            missingProjectPaths={conversations.missingProjectPaths}
             width={panelWidth}
             maxItems={maxItems}
           />

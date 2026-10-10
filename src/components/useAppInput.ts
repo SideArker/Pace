@@ -126,7 +126,9 @@ export function useAppInput(options: {
       else if (key.return) {
         const chosen = openSessions[pickerIndex];
         setPickerFocused(false);
-        if (chosen && chosen.id !== activeSessionId.current) void activateSession(chosen);
+        if (chosen && missingProjectPaths.includes(chosen.projectPath))
+          add("error", `Project folder is missing: ${chosen.projectPath}. Restore it here or run pace reconnect "${chosen.projectPath}" "<new path>" in a terminal, then reopen /resume.`);
+        else if (chosen && chosen.id !== activeSessionId.current) void activateSession(chosen);
       }
       return;
     }
