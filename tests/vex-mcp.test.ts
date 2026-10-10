@@ -38,7 +38,7 @@ it('uses one persistent MCP connection and selects a validated route before Code
     await orchestrator.turn('first task', newSession('/project', 'auto'), config, () => {});
     await orchestrator.turn('second task', newSession('/project', 'auto'), config, () => {});
     expect(calls).toHaveLength(4);
-    expect(calls[0]).toMatchObject({ name: 'vex_choose', arguments: { options: [{ id: 'single' }, { id: 'scout' }, { id: 'plan_execute' }, { id: 'scout_plan_execute' }, { id: 'clarify' }] } });
+    expect(calls[0]).toMatchObject({ name: 'vex_choose', arguments: { options: [{ id: 'single' }, { id: 'scout' }, { id: 'plan_execute' }, { id: 'scout_plan_execute' }, { id: 'plan_verify' }, { id: 'clarify' }] } });
     expect(calls[1]).toMatchObject({ name: 'vex_choose', arguments: { options: [{ id: '0:medium' }, { id: '1:high' }] } });
     expect(seen).toEqual([{ model: 'gpt-6-sol', effort: 'high' }, { model: 'gpt-6-sol', effort: 'high' }]);
   } finally { await vex.close(); await server.close(); }

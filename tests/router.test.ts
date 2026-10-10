@@ -18,7 +18,7 @@ it('sends original request, recent conversation, all valid pairs, capabilities, 
   expect(stage.options).toEqual(routeChoices(DEFAULT_CONFIG.models));
   expect(stage.options).toHaveLength(10);
   expect(shape.decisionType).toBe('routing');
-  expect(shape.constraints).toContain('plan-only request must choose single, scout, or clarify');
+  expect(shape.constraints).toContain('plan-only request, choose single, scout, plan_verify, or clarify');
   expect(shapeRequest(prompt, turns, DEFAULT_CONFIG.models.filter(model => model.model !== 'gpt-6-luna')).options.map(option => option.id)).not.toContain('scout');
   expect(shapeRequest(prompt, turns, DEFAULT_CONFIG.models.filter(model => model.model !== 'gpt-6-luna')).options.map(option => option.id)).not.toContain('scout_plan_execute');
 });
