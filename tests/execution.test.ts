@@ -168,8 +168,12 @@ it('runs a read-only scout, reroutes after handoff, and sums stage costs', async
   const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('Implement feature', session, config, progress => {
     if (progress.kind === 'system') notices.push(progress.text);
   });
-  expect(notices).toEqual([]);
-  expect(session.turns.at(-1)?.systemMessages).toBeUndefined();
+  expect(notices).toEqual([
+    "Vex chose scout: Luna read-only scout identifies relevant files, behavior, and tests; second agent completes the request from a structured handoff. Use when broad or uncertain repository exploration can materially reduce completion-agent work. Include both stages in total Codex cost.",
+    "Vex routed to gpt-6-luna at low reasoning",
+    "Vex routed to gpt-6-sol at high reasoning",
+  ]);
+  expect(session.turns.at(-1)?.systemMessages).toEqual(notices);
   expect(calls.map(call => call.mode)).toEqual(['side', 'main']);
   expect(calls.map(call => call.id)).toEqual([undefined, 'existing-main-thread']);
   expect(calls[0]?.prompt).toContain('We discussed the parser in src/a.ts');

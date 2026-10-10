@@ -395,7 +395,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       request.respond(answers);
       for (const item of request.questions) {
         const answer = answers[item.id]?.answers[0];
-        if (answer) addFor(sessionId, "info", `${item.question}\nYou: ${item.isSecret ? "[hidden]" : answer}`);
+        if (answer) addFor(sessionId, "question", `${item.question}\nYou: ${item.isSecret ? "[hidden]" : answer}`);
       }
       setStatusFor(sessionId, Object.keys(answers).length ? "Resuming" : "Question skipped");
     } };
@@ -732,7 +732,7 @@ export default function App({ onClear }: { onClear: () => void }) {
           outcome: action.outcome, durationMs: action.durationMs, tokens: action.tokens },
       });
       for (const item of turn.questions ?? []) newLines.push({
-        id: id++, role: "info", text: `${item.question}\nYou: ${item.answer}`, spaceBefore: false,
+        id: id++, role: "question", text: `${item.question}\nYou: ${item.answer}`, spaceBefore: false,
       });
       newLines.push({
         id: id++,

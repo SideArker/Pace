@@ -61,6 +61,12 @@ export async function runPlanningStage({
         );
         signal?.throwIfAborted();
         onProgress({ kind: "route", route: sideRoute });
+        if (!routeOverride || routeOverride === "vex" || !routeOverride.effort) {
+          onProgress({
+            kind: "system",
+            text: `Vex routed to ${sideRoute.model ?? "Codex default"} at ${sideRoute.effort ?? "default"} reasoning`,
+          });
+        }
         onProgress({
           kind: "status",
           text: `${objective}: ${sideRoute.model} · ${sideRoute.effort}`,

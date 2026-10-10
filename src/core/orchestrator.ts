@@ -291,6 +291,10 @@ export class Orchestrator {
           shape = "single";
           usedThreadForClarification = true;
         }
+        if (shape !== "clarify") {
+          const desc = prompts.workflow.choices[shape as keyof typeof prompts.workflow.choices] ?? shape;
+          systemMessage(`Vex chose ${shape}: ${desc}`);
+        }
         if (shape === "clarify") {
 
           const isInteractive = (onProgress as { interactive?: boolean }).interactive === true;
@@ -411,6 +415,8 @@ export class Orchestrator {
             } catch {
               shape = "single";
             }
+            const desc = prompts.workflow.choices[shape as keyof typeof prompts.workflow.choices] ?? shape;
+            systemMessage(`Vex chose ${shape}: ${desc}`);
           } else {
             const result =
               taskRelation === "continue"
@@ -451,18 +457,22 @@ export class Orchestrator {
       );
       signal?.throwIfAborted();
       if ((auto || manualWorkflow) && ["scout", "plan_execute", "scout_plan_execute", "plan_verify"].includes(shape)) {
+        const stageProgress = (progress: Progress) => {
+          if (progress.kind === "system") systemMessages.push(progress.text);
+          onProgress(progress);
+        };
         const firstShape = shape === "scout_plan_execute" ? "scout" : shape === "plan_verify" ? "plan_execute" : shape as "scout" | "plan_execute";
         const firstStage = firstShape === "scout" ? "scout" : "plan";
         const firstHandoff = await runPlanningStage({
           shape: firstShape, request, routingTurns, enabled, prompts, routingState, choose, runner: this.runner,
-          session, signal, onProgress, stages,
+          session, signal, onProgress: stageProgress, stages,
           routeOverride: manualWorkflow?.routes[firstStage],
         });
         handoff = firstHandoff;
         if (shape === "scout_plan_execute") {
           const planHandoff = await runPlanningStage({
             shape: "plan_execute", request, routingTurns, enabled, prompts, routingState, choose, runner: this.runner,
-            session, signal, onProgress, stages, priorHandoff: firstHandoff,
+            session, signal, onProgress: stageProgress, stages, priorHandoff: firstHandoff,
             routeOverride: manualWorkflow?.routes.plan,
           });
           handoff = `Scout report:\n${firstHandoff}\n\nPlanning report:\n${planHandoff}`;
@@ -484,6 +494,9 @@ export class Orchestrator {
             ).choice,
             available,
           );
+          if (auto || (selected && (selected === "vex" || !selected.effort))) {
+            systemMessage(`Vex routed to ${route.model ?? "Codex default"} at ${route.effort ?? "default"} reasoning`);
+          }
         }
         if (auto) note = usedThreadForClarification ? "Vex clarification delegated to existing Codex thread" : `Vex chose ${shape} workflow`;
       }
