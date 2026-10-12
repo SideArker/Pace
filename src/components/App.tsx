@@ -211,7 +211,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const [approval, setApproval] = useState<Extract<Progress, { kind: "approval" }>>();
   const [question, setQuestion] = useState<PendingQuestion>();
   const [pendingRevision, setPendingRevision] = useState(0);
-  const runTurnRef = useRef<((text: string, turnSession: Session, turnConfig: Config, intent?: "verify_plan") => Promise<void>) | undefined>(undefined);
+  const runTurnRef = useRef<((text: string, turnSession: Session, turnConfig: Config, intent?: "verify_plan" | "execute_plan") => Promise<void>) | undefined>(undefined);
   const [approvalMenu, setApprovalMenu] = useState(false);
   const [vexState, setVexState] = useState<
     "connecting" | "connected" | "failed"
@@ -1073,7 +1073,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       const prompt = extraPrompt
         ? `${executePlanPrompt(targetPlan)}\n\nAdditional user instructions:\n${extraPrompt}`
         : executePlanPrompt(targetPlan);
-      if (config) void runTurnRef.current?.(prompt, fresh, config);
+      if (config) void runTurnRef.current?.(prompt, fresh, config, "execute_plan");
     } catch (error) {
       activeSessionId.current = previousId;
       if (previousId) setLines(sessionLines.current.get(previousId) ?? []);

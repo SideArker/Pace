@@ -417,6 +417,29 @@ it('stops after a Vex-selected read-only plan', async () => {
   expect((await new PaceStore(dir).latest(session.projectPath))?.kind).toBe('planning');
 });
 
+it('keeps explicit plan execution on writable completion routes', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  const session = newSession('/example/project', 'auto', 'normal');
+  const requests: VexRequest[] = [];
+  const calls: { mode?: string; prompt: string }[] = [];
+  const runner: CodexRunner = { async run(prompt, _project, _route, _id, _progress, _signal, mode) {
+    calls.push({ prompt, mode });
+    return { result: 'Implemented', completed: true };
+  } };
+  const vex = { choose: async (request: VexRequest) => {
+    requests.push(request);
+    return decision(request, request.options[0]?.id === 'single' ? 'single' : '1:high');
+  } };
+  const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn(
+    'Implement this saved plan', session, config, () => {}, undefined, true, 'execute_plan',
+  );
+  expect(requests[0]?.options.map(option => option.id)).toEqual(['single', 'scout']);
+  expect(requests[0]?.constraints).toContain('The user invoked /execute');
+  expect(calls.map(call => call.mode)).toEqual(['main']);
+  expect(outcome.result).toBe('Implemented');
+  expect(session.kind).toBe('normal');
+});
+
 it('loads an older manual plan-verify workflow as plan only', async () => {
   dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
   const calls: { prompt: string; route: Route; mode?: string }[] = [];

@@ -60,7 +60,7 @@ export function createTurnRunner({
   getConfig: () => Config;
   readLimits?: () => Promise<UsageLimits | undefined>;
 }) {
-  const runTurn = async (text: string, turnSession: Session, turnConfig: Config, intent?: "verify_plan") => {
+  const runTurn = async (text: string, turnSession: Session, turnConfig: Config, intent?: "verify_plan" | "execute_plan") => {
     let tasksChanged = false;
     let deferredForUsage = false;
     let activeRoute: Route = turnSession.route;

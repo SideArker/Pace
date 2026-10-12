@@ -89,7 +89,7 @@ export class Orchestrator {
     onProgress: (progress: Progress) => void,
     signal?: AbortSignal,
     activateOnSave: boolean | (() => boolean) = true,
-    intent?: "verify_plan",
+    intent?: "verify_plan" | "execute_plan",
   ): Promise<TurnOutcome> {
     const startedAt = performance.now();
     const prompts =
@@ -282,7 +282,10 @@ export class Orchestrator {
         if (intent !== "verify_plan") {
           onProgress({ kind: "status", text: "Choosing workflow..." });
           const workflowRequest = shapeRequest(request, routingTurns, enabled, prompts, routingState);
-          if (session.kind === "planning")
+          if (intent === "execute_plan") {
+            workflowRequest.options = workflowRequest.options.filter(option => ["single", "scout"].includes(option.id));
+            workflowRequest.constraints += "\n\nThe user invoked /execute on a saved plan. Implementation is authorized; select a completion route.";
+          } else if (session.kind === "planning")
             workflowRequest.options = workflowRequest.options.filter(option => ["plan", "scout_plan", "clarify"].includes(option.id));
           else if (taskRelation === "continue" && !priorTask && session.threadId)
             workflowRequest.options = workflowRequest.options.filter(option => ["single", "plan", "scout_plan"].includes(option.id));
