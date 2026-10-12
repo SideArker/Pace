@@ -116,6 +116,8 @@ The VS Code extension now contributes two readers: the default reader for `.pace
 
 This project note itself remains in the repository's `.pace/artifacts/` folder because it documents implementation work in this repository. Pace-generated conversation artifacts use the new application-data location.
 
+An example reader fixture is available at `.pace/artifacts/sample-plans-view-auto-refresh.pace-plan.md`. It demonstrates the plan outline, four callout types, navigation, task lists, and source-file links. It is a project note for testing, not a plan saved by a Pace conversation.
+
 ## Caveman settings diagnosis
 
 The active local config at `~/.pace/config.json` sets `skillFolder` to `/home/user/.agents/skills` and does not list `caveman` in `disabledSkills`. `/home/user/.agents/skills/caveman/SKILL.md` exists. Therefore Pace can discover `/caveman`.

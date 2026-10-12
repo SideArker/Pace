@@ -4,6 +4,8 @@ Read Pace implementation plans saved in the current conversation's `artifacts/` 
 
 The Pace activity bar view lists plans from saved conversations for the current workspace. It also lists older project-local plans. Use its refresh button after Pace saves a new plan. Reader headings form a table of contents. `User Review`, `Info`, `Warning`, and `Decision` callouts remain readable as ordinary Markdown blockquotes outside VS Code.
 
+For a reader test, open `.pace/artifacts/sample-plans-view-auto-refresh.pace-plan.md` from the repository. It contains navigation, callouts, task lists, and source-file links. This project-local sample is separate from plans generated for a Pace conversation.
+
 ## Local install
 
 From `extensions/vscode`, run `npm ci --include=dev && npm run package`, then run `code --install-extension pace-plan-reader-0.1.1.vsix`. The Pace plans view shows plan icons with any VS Code file icon theme.
