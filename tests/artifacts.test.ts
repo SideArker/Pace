@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from "vitest";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { artifactDirectory, artifactPrompt, artifactSnapshot, changedArtifacts } from "../src/core/system/artifacts.js";
@@ -33,4 +33,27 @@ it("records a Markdown artifact created during a coding turn and finds it later"
   expect((await store.latest(project))?.turns[0]?.artifacts).toEqual(outcome.artifacts);
   expect([...await artifactSnapshot(project)].map(([name]) => name)).toEqual(["plan.md"]);
   expect(changedArtifacts(await artifactSnapshot(project), await artifactSnapshot(project))).toEqual([]);
+});
+
+it("persists a read-only planning result while keeping full text for execution", async () => {
+  root = await mkdtemp(join(tmpdir(), "pace-plan-artifact-"));
+  const project = join(root, "project");
+  await mkdir(project);
+  const store = new PaceStore(join(root, "store"));
+  const config: Config = { routingMode: "auto", models: [{ model: "gpt-6-sol", efforts: ["medium"] }], defaultRoute: { model: "gpt-6-sol", effort: "medium" } };
+  const fullPlan = "# Improve plans\n\n## User Review\n\n> [!USER REVIEW]\n> Make plans easier to read.\n\n## Steps\n\n1. Save plan.\n";
+  let mode: string | undefined;
+  const runner = { async run(_prompt: string, _project: string, _route: unknown, _thread: unknown, _progress: unknown, _signal: unknown, receivedMode?: string) {
+    mode = receivedMode;
+    return { result: fullPlan, completed: true };
+  } };
+  const session = newSession(project, "auto", "planning");
+  const outcome = await new Orchestrator(store, runner, singleVex("0:medium")).turn("Improve plans", session, config, () => {});
+  expect(mode).toBe("side");
+  expect(outcome.session.plan).toBe(fullPlan);
+  expect(outcome.result).toContain(".pace-plan.md");
+  expect(outcome.result).not.toContain("## Steps");
+  expect(outcome.artifacts).toEqual([outcome.session.planArtifact]);
+  expect(await readFile(join(project, outcome.session.planArtifact!), "utf8")).toBe(fullPlan);
+  expect((await store.latest(project))?.planArtifact).toBe(outcome.session.planArtifact);
 });

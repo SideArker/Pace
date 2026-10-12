@@ -139,6 +139,7 @@ export function parseSession(value: unknown, project: string): Session | undefin
       !Number.isInteger(value.deferredTurn.attempt) || (value.deferredTurn.attempt as number) < 1)) ||
     (value.kind !== undefined && value.kind !== "normal" && value.kind !== "planning") ||
     (value.plan !== undefined && (typeof value.plan !== "string" || value.plan.length > 50000)) ||
+    (value.planArtifact !== undefined && (typeof value.planArtifact !== "string" || !/^\.pace\/artifacts\/[^/\\]+\.pace-plan\.md$/.test(value.planArtifact))) ||
     (value.routingMode !== "auto" && value.routingMode !== "manual")
     || (value.manualWorkflow !== undefined && !isManualWorkflow(value.manualWorkflow))
   )

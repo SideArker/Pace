@@ -940,7 +940,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         rememberSession(updated);
         if (loadedPlan && planPath) {
           add("info", `◈ Loaded plan from ${basename(planPath)} (${loadedPlan.split("\n").length} lines). Prompts are read-only; use /verify or /execute.`);
-          add("codex", `### Plan loaded from ${basename(planPath)}\n\n${loadedPlan}`);
+          add("codex", `Plan: ${planPath}. Full content is available to /verify and /execute.`);
         } else {
           add("info", "◈ Planning mode active (purple plan). Prompts are read-only; explore and draft your plan.");
           if (promptText && config) void runTurnRef.current?.(promptText, updated, config);
@@ -988,7 +988,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       setApproval(undefined);
       if (loadedPlan && planPath) {
         add("info", `◈ Started planning session with ${basename(planPath)} (${loadedPlan.split("\n").length} lines). Work is read-only; use /verify or /execute.`);
-        add("codex", `### Plan loaded from ${basename(planPath)}\n\n${loadedPlan}`);
+        add("codex", `Plan: ${planPath}. Full content is available to /verify and /execute.`);
       } else {
         add("info", "◈ Started fresh planning session (purple plan). Work is read-only; explore and draft your plan.");
         if (promptText && config) void runTurnRef.current?.(promptText, fresh, config);

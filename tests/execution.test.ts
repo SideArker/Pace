@@ -420,14 +420,15 @@ it('runs a manual planning and verification workflow read only with separate rou
       ? { result: JSON.stringify({ summary: 'Plan parser', findings: [{ path: 'src/parser.ts', line: 4, finding: 'Parser entry', relevance: 'Plan target' }], nextSteps: ['Update parser'], checks: ['npm test'], risks: [] }), completed: true }
       : { result: 'Verified plan', completed: true };
   } };
-  const session = newSession('/example/project', 'manual');
+  const session = newSession(dir, 'manual');
   session.manualWorkflow = { shape: 'plan_verify', routes: {
     plan: { model: 'gpt-6-luna', effort: 'low' }, final: { model: 'gpt-6-sol', effort: 'high' },
   } };
   const outcome = await new Orchestrator(new PaceStore(dir), runner, { choose: async () => { throw new Error('Vex should not choose explicit routes'); } }).turn('Plan parser', session, config, () => {});
   expect(calls.map(call => call.mode)).toEqual(['side', 'side']);
   expect(calls[1]?.prompt).toContain('Review the planning report');
-  expect(outcome.result).toBe('Verified plan');
+  expect(outcome.result).toContain('.pace-plan.md');
+  expect(outcome.session.plan).toBe('Verified plan');
   expect(outcome.stages.map(stage => stage.route)).toEqual([
     { model: 'gpt-6-luna', effort: 'low' }, { model: 'gpt-6-sol', effort: 'high' },
   ]);
