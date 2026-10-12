@@ -1,17 +1,23 @@
 :root { color-scheme: light dark; }
 body { color: var(--vscode-editor-foreground); background: var(--vscode-editor-background); font: var(--vscode-font-size) var(--vscode-font-family); margin: 0; }
-.layout { display: grid; grid-template-columns: minmax(160px, 220px) minmax(0, 780px); gap: 32px; max-width: 1120px; padding: 36px 28px; margin: auto; }
+.layout { display: grid; grid-template-columns: minmax(180px, 20vw) minmax(0, 1fr); gap: 40px; width: 100%; box-sizing: border-box; padding: 28px 20px; margin: 0; }
 .toc { position: sticky; top: 24px; align-self: start; border-right: 1px solid var(--vscode-panel-border); padding-right: 18px; max-height: calc(100vh - 48px); overflow: auto; }
 .toc strong { display: block; margin-bottom: 12px; }
 .toc a { display: block; color: var(--vscode-descriptionForeground); text-decoration: none; padding: 5px 0; }
 .toc a:hover, a:hover { color: var(--vscode-textLink-activeForeground); text-decoration: underline; }
 .toc .minor { padding-left: 12px; }
-main { min-width: 0; line-height: 1.65; padding-top: 48px; }
+.toc-review, .section-review { --section-color: var(--vscode-charts-purple, #a855f7); }
+.toc-info, .section-info { --section-color: var(--vscode-notificationsInfoIcon-foreground, #3b82f6); }
+.toc-warning, .section-warning { --section-color: var(--vscode-errorForeground, #ef4444); }
+.toc-decision, .section-decision { --section-color: var(--vscode-editorWarning-foreground, #eab308); }
+.toc a[class*="toc-"] { color: var(--section-color); border-left: 2px solid var(--section-color); padding-left: 8px; }
+main { min-width: 0; width: 100%; line-height: 1.65; padding-top: 48px; }
 h1, h2, h3 { line-height: 1.25; margin: 1.55em 0 .65em; }
 h1:first-child { margin-top: 0; }
 h2 { border-bottom: 1px solid var(--vscode-panel-border); padding-bottom: .35em; }
-p, li { max-width: 75ch; }
+p, li { max-width: 100ch; }
 li { margin: .35em 0; }
+ol li::marker, ul li::marker { color: var(--vscode-textLink-foreground); font-weight: 700; }
 a { color: var(--vscode-textLink-foreground); }
 code { background: var(--vscode-textCodeBlock-background); padding: .1em .3em; border-radius: 3px; }
 pre { overflow-x: auto; background: var(--vscode-textCodeBlock-background); padding: 16px; border-radius: 6px; }
@@ -20,10 +26,10 @@ blockquote { margin: 1.2em 0; padding: 12px 18px; border-left: 3px solid var(--v
 blockquote > :first-child { margin-top: 0; } blockquote > :last-child { margin-bottom: 0; }
 .callout { border-radius: 5px; }
 .callout-label { font-weight: 700; display: block; margin-bottom: 6px; }
-.callout-review, .section-review { --section-color: var(--vscode-charts-purple, #a855f7); }
-.callout-info, .section-info { --section-color: var(--vscode-notificationsInfoIcon-foreground, #3b82f6); }
-.callout-warning, .section-warning { --section-color: var(--vscode-errorForeground, #ef4444); }
-.callout-decision, .section-decision { --section-color: var(--vscode-editorWarning-foreground, #eab308); }
+.callout-review { --section-color: var(--vscode-charts-purple, #a855f7); }
+.callout-info { --section-color: var(--vscode-notificationsInfoIcon-foreground, #3b82f6); }
+.callout-warning { --section-color: var(--vscode-errorForeground, #ef4444); }
+.callout-decision { --section-color: var(--vscode-editorWarning-foreground, #eab308); }
 .callout { border-color: var(--section-color, var(--vscode-panel-border)); background: color-mix(in srgb, var(--section-color, var(--vscode-panel-border)) 10%, var(--vscode-editor-background)); }
 .plan-section { margin: 1.5em 0; }
 .plan-section[class*="section-"] > h2 { color: var(--section-color); border-bottom-color: var(--section-color); }
@@ -43,6 +49,10 @@ blockquote > :first-child { margin-top: 0; } blockquote > :last-child { margin-b
 .comment-actions .comment-cancel { color: var(--vscode-foreground); background: var(--vscode-button-secondaryBackground); }
 .comment-card { margin: 8px 0 16px; padding: 10px 12px; border-left: 2px solid var(--vscode-textLink-foreground); background: var(--vscode-editorWidget-background); white-space: pre-wrap; }
 .comment-card strong { display: block; margin-bottom: 4px; font-size: .88em; }
+.file-reference { display: inline-flex; align-items: baseline; gap: 4px; color: var(--vscode-symbolIcon-fileForeground, #dcb67a); font-family: var(--vscode-editor-font-family, monospace); font-size: .94em; text-decoration: none; white-space: nowrap; }
+.file-reference:hover { text-decoration: underline; }
+.file-icon { width: 15px; height: 15px; flex: none; align-self: center; color: var(--vscode-symbolIcon-fileForeground, #dcb67a); }
+.file-icon-docker { color: #2496ed; }
 table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
 th, td { border: 1px solid var(--vscode-panel-border); padding: 6px 10px; }
 @media (max-width: 700px) { .layout { display: block; padding: 20px; } .toc { position: static; border-right: 0; border-bottom: 1px solid var(--vscode-panel-border); margin-bottom: 24px; max-height: 180px; } .reader-toolbar { right: 12px; } }
