@@ -89,6 +89,7 @@ export class Orchestrator {
     onProgress: (progress: Progress) => void,
     signal?: AbortSignal,
     activateOnSave: boolean | (() => boolean) = true,
+    intent?: "verify_plan",
   ): Promise<TurnOutcome> {
     const startedAt = performance.now();
     const prompts =
@@ -219,8 +220,8 @@ export class Orchestrator {
     let usedThreadForClarification = false;
     let handoff: string | undefined;
     let userClarification: string | undefined;
-    let auto = session.routingMode === "auto";
-    const manualWorkflow = !auto ? session.manualWorkflow : undefined;
+    let auto = session.routingMode === "auto" || intent === "verify_plan";
+    const manualWorkflow = !auto && intent !== "verify_plan" ? session.manualWorkflow : undefined;
     const delegated = !!manualWorkflow && Object.values(manualWorkflow.routes).some(value => value === "vex" || (value !== undefined && !value.effort));
     if (!auto) {
       taskRelation = priorTask ? "continue" : "replace";
@@ -240,14 +241,16 @@ export class Orchestrator {
           "No models enabled. Open /models and enable one before running a turn.",
         );
       if (
-        session.routingMode === "manual" && !manualWorkflow &&
+        !auto && !manualWorkflow &&
         !validRoute(session.route, enabled)
       )
         throw new Error(
           "Saved manual route is no longer enabled. Use /models or /auto.",
         );
       if (manualWorkflow) {
-        shape = manualWorkflow.shape;
+        shape = manualWorkflow.shape === "scout_plan_execute" ? "scout_plan"
+          : manualWorkflow.shape === "plan_execute" || manualWorkflow.shape === "plan_verify" ? "plan"
+          : manualWorkflow.shape;
         note = `Manual ${shape} workflow`;
         for (const selected of Object.values(manualWorkflow.routes)) {
           if (selected !== "vex" && !validRoute(selected, enabled))
@@ -271,28 +274,27 @@ export class Orchestrator {
           throw new Error(
             "Auto routing supports at most 12 model and effort pairs. Narrow /models.",
           );
-        if (priorTask || session.turns.length) {
+        if (intent !== "verify_plan" && (priorTask || session.turns.length)) {
           onProgress({ kind: "status", text: "Resolving conversation..." });
           taskRelation = (await choose(taskRelationRequest(request, routingTurns, routingState, prompts), "task relation")).choice as TaskRelation;
           relationResolved = true;
         }
-        onProgress({ kind: "status", text: "Choosing workflow..." });
-        const workflowRequest = shapeRequest(request, routingTurns, enabled, prompts, routingState);
-        if (taskRelation === "continue" && !priorTask && session.threadId)
-          workflowRequest.options = workflowRequest.options.filter(option => option.id === "single");
-        else if (taskRelation === "continue" && priorTask)
-          workflowRequest.options = workflowRequest.options.filter(option => option.id !== "clarify");
-        shape = (
-          await choose(
-            workflowRequest,
-            "workflow",
-          )
-        ).choice;
+        if (intent !== "verify_plan") {
+          onProgress({ kind: "status", text: "Choosing workflow..." });
+          const workflowRequest = shapeRequest(request, routingTurns, enabled, prompts, routingState);
+          if (session.kind === "planning")
+            workflowRequest.options = workflowRequest.options.filter(option => ["plan", "scout_plan", "clarify"].includes(option.id));
+          else if (taskRelation === "continue" && !priorTask && session.threadId)
+            workflowRequest.options = workflowRequest.options.filter(option => ["single", "plan", "scout_plan"].includes(option.id));
+          else if (taskRelation === "continue" && priorTask)
+            workflowRequest.options = workflowRequest.options.filter(option => option.id !== "clarify");
+          shape = (await choose(workflowRequest, "workflow")).choice;
+        }
         if (shape === "clarify" && session.threadId) {
           shape = "single";
           usedThreadForClarification = true;
         }
-        if (shape !== "clarify") {
+        if (shape !== "clarify" && intent !== "verify_plan") {
           const desc = prompts.workflow.choices[shape as keyof typeof prompts.workflow.choices] ?? shape;
           systemMessage(`Vex chose ${shape}: ${desc}`);
         }
@@ -326,10 +328,7 @@ export class Orchestrator {
                     },
                   ]
                 : []),
-              {
-                label: "Plan & execute",
-                description: "Create an implementation plan first, then execute",
-              },
+              { label: "Plan only", description: "Save a read-only plan; use /execute later" },
             ];
             if (session.route?.model) {
               options.push({
@@ -367,8 +366,8 @@ export class Orchestrator {
                     resolve({ choice: "single" });
                   } else if (val === "Scout codebase first") {
                     resolve({ choice: "scout" });
-                  } else if (val === "Plan & execute") {
-                    resolve({ choice: "plan_execute" });
+                  } else if (val === "Plan only") {
+                    resolve({ choice: "plan" });
                   } else if (val.startsWith("Use manual route")) {
                     resolve({ choice: "manual" });
                   } else {
@@ -450,6 +449,12 @@ export class Orchestrator {
         }
       }
       signal?.throwIfAborted();
+      if (shape === "plan" || shape === "scout_plan" || intent === "verify_plan") {
+        session.kind = "planning";
+        await save();
+        if (intent !== "verify_plan")
+          systemMessage("Pace switched to read-only planning mode. Use /verify or /execute after the plan is saved.");
+      }
       const conversationArtifacts = artifactDirectory(this.store, session);
       const artifactsBefore = await artifactSnapshot(conversationArtifacts).catch(
         () => new Map<string, number>(),
@@ -460,35 +465,33 @@ export class Orchestrator {
       );
       trustedFolders.push(conversationArtifacts);
       signal?.throwIfAborted();
-      if ((auto || manualWorkflow) && ["scout", "plan_execute", "scout_plan_execute", "plan_verify"].includes(shape)) {
+      if ((auto || manualWorkflow) && ["scout", "scout_plan"].includes(shape)) {
         const stageProgress = (progress: Progress) => {
           if (progress.kind === "system") systemMessages.push(progress.text);
           onProgress(progress);
         };
-        const firstShape = shape === "scout_plan_execute" ? "scout" : shape === "plan_verify" ? "plan_execute" : shape as "scout" | "plan_execute";
-        const firstStage = firstShape === "scout" ? "scout" : "plan";
         const firstHandoff = await runPlanningStage({
-          shape: firstShape, request, routingTurns, enabled, prompts, routingState, choose, runner: this.runner,
+          request, routingTurns, enabled, prompts, routingState, choose, runner: this.runner,
           session, signal, onProgress: stageProgress, stages,
-          routeOverride: manualWorkflow?.routes[firstStage],
+          routeOverride: manualWorkflow?.routes.scout,
         });
         handoff = firstHandoff;
-        if (shape === "scout_plan_execute") {
-          const planHandoff = await runPlanningStage({
-            shape: "plan_execute", request, routingTurns, enabled, prompts, routingState, choose, runner: this.runner,
-            session, signal, onProgress: stageProgress, stages, priorHandoff: firstHandoff,
-            routeOverride: manualWorkflow?.routes.plan,
-          });
-          handoff = `Scout report:\n${firstHandoff}\n\nPlanning report:\n${planHandoff}`;
-        }
       }
       if (auto || manualWorkflow) {
-        const objective = completionObjective(shape, prompts);
-        const selected = manualWorkflow?.routes.final;
+        const objective = intent === "verify_plan"
+          ? "Independently verify the saved implementation plan against the repository and return a corrected final plan"
+          : session.kind === "planning" ? prompts.objectives.plan : completionObjective(shape, prompts);
+        const selected = manualWorkflow?.routes.final ?? (shape === "plan" ? manualWorkflow?.routes.plan : undefined);
         if (!auto && selected && selected !== "vex" && selected.effort) route = selected;
         else {
+          const strong = intent === "verify_plan" ? enabled.filter(model => model.model !== "gpt-6-luna") : [];
+          const candidates = (strong.length ? strong : enabled).map(model => {
+            if (intent !== "verify_plan") return model;
+            const higherEfforts = model.efforts.filter(effort => ["high", "xhigh", "ultra"].includes(effort));
+            return higherEfforts.length ? { ...model, efforts: higherEfforts } : model;
+          });
           const available = selected && selected !== "vex" && selected.model
-            ? enabled.filter(model => model.model === selected.model) : enabled;
+            ? candidates.filter(model => model.model === selected.model) : candidates;
           route = chosenRoute(
             (
               await choose(
@@ -518,7 +521,7 @@ export class Orchestrator {
       const resumedAfterLimit = session.deferredTurn?.prompt === prompt;
       const resolvedPrompt = taskRelation === "continue" && priorTask && !session.threadId
         ? `${basePrompt}\n\nPace's saved task brief (verify against conversation): ${priorTask.originalRequest}\nLater instructions: ${JSON.stringify(priorTask.instructions)}\nLast outcome: ${priorTask.latestOutcome ?? "Unknown"}\n${prompts.execution.savedTaskInstruction}`
-        : (taskRelation === "continue" || usedThreadForClarification) && session.threadId && shape !== "plan_verify"
+        : (taskRelation === "continue" || usedThreadForClarification) && session.threadId && intent !== "verify_plan"
           ? `${basePrompt}\n\n${prompts.execution.existingThreadInstruction}`
           : basePrompt;
       const safePrompt = resumedAfterLimit
@@ -530,19 +533,20 @@ export class Orchestrator {
         session.activeSkills,
         session.skillOptions,
       );
-      const executionPrompt = handoff
-        ? `${baseExecutionPrompt}${shape === "plan_execute" || shape === "scout_plan_execute" ? `\n\n${prompts.handoff.planExecutionInstruction}` : shape === "plan_verify" ? `\n\nReview the planning report against the repository. Work read only; do not implement.\n${readablePlanInstruction}` : ""}\n\n${prompts.handoff.reportInstruction}\n${handoff}`
-        : session.kind === "planning"
-          ? planningPrompt(baseExecutionPrompt)
-          : baseExecutionPrompt;
-      const checkpoint = session.checkpoint?.threadId === session.threadId &&
+      const promptWithHandoff = handoff
+        ? `${baseExecutionPrompt}\n\n${prompts.handoff.reportInstruction}\n${handoff}`
+        : baseExecutionPrompt;
+      const executionPrompt = intent === "verify_plan"
+        ? `${promptWithHandoff}\n\nWork read only. Independently verify the plan and return corrected Markdown.\n\n${readablePlanInstruction}`
+        : session.kind === "planning" ? planningPrompt(promptWithHandoff) : promptWithHandoff;
+      const checkpoint = intent !== "verify_plan" && session.checkpoint?.threadId === session.threadId &&
         session.turns.some(turn => turn.at === session.checkpoint?.sourceTurnAt)
         ? session.checkpoint : undefined;
-      const runThreadId = checkpoint || shape === "plan_verify" ? undefined : session.threadId;
+      const runThreadId = checkpoint || intent === "verify_plan" ? undefined : session.threadId;
       const checkpointTurn = checkpoint ? session.turns.findIndex(turn => turn.at === checkpoint.sourceTurnAt) : -1;
       const promptWithHistory = checkpoint
         ? checkpointHandoff(checkpoint.note, session.turns.slice(checkpointTurn + 1).slice(-3).map(turn => ({ user: turn.prompt.slice(0, 1000), assistant: turn.result.slice(0, 1000) })), executionPrompt)
-        : retainedConversationPrompt(executionPrompt, shape === "plan_verify" ? { ...session, threadId: undefined } : session);
+        : retainedConversationPrompt(executionPrompt, intent === "verify_plan" ? { ...session, threadId: undefined, turns: [] } : session);
       if (checkpoint) onProgress({ kind: "status", text: "Starting fresh thread from checkpoint…" });
       const stageStart = performance.now();
       const execution = await this.runner.run(
@@ -566,21 +570,21 @@ export class Orchestrator {
           } else onProgress(progress);
         },
         signal,
-        shape === "plan_verify" || session.kind === "planning" ? "side" : "main",
+        intent === "verify_plan" || session.kind === "planning" ? "side" : "main",
         trustedFolders,
         config.approvalMode,
         conversationArtifacts,
       );
       signal?.throwIfAborted();
       stages.push({
-        objective: shape === "plan_verify" ? "Verify plan" : session.kind === "planning" ? "Draft plan" : "Complete request",
+        objective: intent === "verify_plan" ? "Verify plan" : session.kind === "planning" ? "Draft plan" : "Complete request",
         route,
         durationMs: Math.round(performance.now() - stageStart),
         usage: execution.usage,
         estimatedCostUsd: costForUsage(route, execution.usage),
       });
       if (execution.threadId) session.threadId = execution.threadId;
-      const planTurn = shape === "plan_verify" || session.kind === "planning";
+      const planTurn = intent === "verify_plan" || session.kind === "planning";
       let displayedResult = execution.result;
       if (planTurn) {
         session.plan = execution.result;

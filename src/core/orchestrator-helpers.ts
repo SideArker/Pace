@@ -49,21 +49,16 @@ export function addUsage(stages: StageRecord[]): Usage | undefined {
   );
 }
 export function handoffPrompt(
-  kind: "scout" | "plan_execute",
   request: string,
   turns: TurnSummary[],
   prompts: RoutingPrompts,
   priorHandoff?: string,
 ): string {
-  const objective =
-    kind === "scout"
-      ? prompts.handoff.scoutObjective
-      : prompts.handoff.planObjective;
+  const objective = prompts.handoff.scoutObjective;
   const conversation = turns
     .slice(-10)
     .map((turn) => ({ user: turn.prompt.slice(0, 1000), assistant: turn.result.slice(0, 1000) }));
-  const planningStyle = kind === "plan_execute" ? `\n\n${pacePlanningStyleInstruction}` : "";
-  return `${objective} ${prompts.handoff.instructions}\n\n${prompts.handoff.recentConversationLabel}\n${JSON.stringify(conversation)}\n\n${prompts.handoff.originalRequestLabel}\n${request}${priorHandoff ? `\n\nVerified scout report to use when planning:\n${priorHandoff}` : ""}${planningStyle}`;
+  return `${objective} ${prompts.handoff.instructions}\n\n${prompts.handoff.recentConversationLabel}\n${JSON.stringify(conversation)}\n\n${prompts.handoff.originalRequestLabel}\n${request}${priorHandoff ? `\n\nVerified scout report to use when planning:\n${priorHandoff}` : ""}`;
 }
 export function retainedConversationPrompt(prompt: string, session: Session): string {
   if (session.threadId) return prompt;

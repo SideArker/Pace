@@ -111,7 +111,7 @@ it('routes a continuation into the Codex thread when Pace lacks the original tas
   } };
   const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('BRO CONTINUE', session, config, () => {});
   expect(requests[0]?.options.map(option => option.id)).toEqual(['continue', 'replace', 'aside']);
-  expect(requests[1]?.options.map(option => option.id)).toEqual(['single']);
+  expect(requests[1]?.options.map(option => option.id)).toEqual(['single', 'plan', 'scout_plan']);
   expect(sentThread).toBe('thread-with-history');
   expect(sentPrompt).toContain("Use this Codex thread's earlier conversation and tool history");
   expect(outcome.result).toBe('Continued original work');
@@ -192,33 +192,36 @@ it('runs a read-only scout, reroutes after handoff, and sums stage costs', async
   expect(outcome.routing).toHaveLength(4);
 });
 
-it('passes scout findings to planning, then both reports to execution', async () => {
+it('passes scout findings to a terminal read-only plan', async () => {
   dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
   const calls: { prompt: string; mode?: string; threadId?: string }[] = [];
   const usage = { input_tokens: 100, cached_input_tokens: 20, cache_write_input_tokens: 0, output_tokens: 10, reasoning_output_tokens: 2 };
   const runner: CodexRunner = { async run(prompt, _project, _route, threadId, _progress, _signal, mode) {
     calls.push({ prompt, mode, threadId });
-    const summary = calls.length === 1 ? 'Scout found parser' : 'Plan parser migration';
-    return { result: mode === 'side' ? JSON.stringify({ summary, findings: [], nextSteps: [], checks: [], risks: [] }) : 'Implemented', threadId: mode === 'main' ? 'main-thread' : undefined, completed: true, usage };
+    return { result: calls.length === 1
+      ? JSON.stringify({ summary: 'Scout found parser', findings: [], nextSteps: [], checks: [], risks: [] })
+      : '# Plan parser migration\n\nScout found parser.\n', threadId: calls.length === 2 ? 'plan-thread' : undefined, completed: true, usage };
   } };
   const requests: VexRequest[] = [];
   const vex = { choose: async (request: VexRequest) => {
     requests.push(request);
-    return decision(request, request.options[0]?.id === 'single' ? 'scout_plan_execute' : '0:low');
+    return decision(request, request.options[0]?.id === 'single' ? 'scout_plan' : '0:low');
   } };
   const session = newSession('/example/project', 'auto');
   const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('Implement broad migration', session, config, () => {});
-  expect(calls.map(call => call.mode)).toEqual(['side', 'side', 'main']);
+  expect(calls.map(call => call.mode)).toEqual(['side', 'side']);
   expect(calls[1]?.prompt).toContain('Scout found parser');
-  expect(calls[2]?.prompt).toContain('Scout found parser');
-  expect(calls[2]?.prompt).toContain('Plan parser migration');
-  expect(calls.map(call => call.threadId)).toEqual([undefined, undefined, undefined]);
+  expect(calls[1]?.prompt).toContain('pace-planning');
+  expect(calls.map(call => call.threadId)).toEqual([undefined, undefined]);
   expect(requests[2]?.context.priorStageHandoff).toContain('Scout found parser');
-  expect(outcome.stages).toHaveLength(3);
-  expect(outcome.routing).toHaveLength(4);
-  expect(outcome.usage?.input_tokens).toBe(300);
+  expect(outcome.stages).toHaveLength(2);
+  expect(outcome.routing).toHaveLength(3);
+  expect(outcome.usage?.input_tokens).toBe(200);
   expect(outcome.estimatedCostUsd).toBeCloseTo(outcome.stages.reduce((sum, stage) => sum + stage.estimatedCostUsd!, 0), 12);
-  expect(session.threadId).toBe('main-thread');
+  expect(session.kind).toBe('planning');
+  expect(session.threadId).toBe('plan-thread');
+  expect(session.plan).toContain('Scout found parser');
+  expect(outcome.result).toContain('.pace-plan.md');
 });
 
 it('starts a fresh main thread from a valid checkpoint and counts turns per thread', async () => {
@@ -395,43 +398,67 @@ it('uses a corrected scout report for the completion stage', async () => {
   expect(outcome.stages[1]?.handoff).toContain('Parser lives here');
 });
 
-it('passes an actionable read-only plan into the execution stage', async () => {
+it('stops after a Vex-selected read-only plan', async () => {
   dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
   const calls: { mode?: string; prompt: string; route: Route }[] = [];
   const runner: CodexRunner = { async run(prompt, _project, route, _id, _progress, _signal, mode) {
     calls.push({ prompt, route, mode });
-    return mode === 'side'
-      ? { result: JSON.stringify({ summary: 'Implement parser', findings: [{ path: 'src/parser.ts', line: 4, finding: 'Parser entry point', relevance: 'Change target' }], nextSteps: ['Update parser'], checks: ['npm test'], risks: [] }), completed: true }
-      : { result: 'implemented', completed: true };
+    return { result: '# Parser plan\n\n1. Update src/parser.ts.\n', completed: true };
   } };
-  const vex = { choose: async (request: VexRequest) => decision(request, request.options[0]?.id === 'single' ? 'plan_execute' : request.context.stageObjective === 'Read-only implementation plan' ? '0:low' : '1:high') };
-  const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('Plan and implement parser', newSession('/example/project', 'auto'), config, () => {});
-  expect(calls.map(call => call.mode)).toEqual(['side', 'main']);
-  expect(calls[1]?.prompt).toContain('Implement parser');
-  expect(outcome.stages.map(stage => stage.route)).toEqual([{ model: 'gpt-6-luna', effort: 'low' }, { model: 'gpt-6-sol', effort: 'high' }]);
+  const vex = { choose: async (request: VexRequest) => decision(request, request.options[0]?.id === 'single' ? 'plan' : '1:high') };
+  const session = newSession('/example/project', 'auto');
+  const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('Plan parser changes', session, config, () => {});
+  expect(calls.map(call => call.mode)).toEqual(['side']);
+  expect(calls[0]?.prompt).toContain('[PLANNING MODE INSTRUCTION]');
+  expect(outcome.stages.map(stage => stage.route)).toEqual([{ model: 'gpt-6-sol', effort: 'high' }]);
+  expect(session.kind).toBe('planning');
+  expect(session.plan).toContain('Update src/parser.ts');
+  expect(outcome.result).toContain('.pace-plan.md');
+  expect((await new PaceStore(dir).latest(session.projectPath))?.kind).toBe('planning');
 });
 
-it('runs a manual planning and verification workflow read only with separate routes', async () => {
+it('loads an older manual plan-verify workflow as plan only', async () => {
   dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
   const calls: { prompt: string; route: Route; mode?: string }[] = [];
   const runner: CodexRunner = { async run(prompt, _project, route, _id, _progress, _signal, mode) {
     calls.push({ prompt, route, mode });
-    return mode === 'side' && calls.length === 1
-      ? { result: JSON.stringify({ summary: 'Plan parser', findings: [{ path: 'src/parser.ts', line: 4, finding: 'Parser entry', relevance: 'Plan target' }], nextSteps: ['Update parser'], checks: ['npm test'], risks: [] }), completed: true }
-      : { result: 'Verified plan', completed: true };
+    return { result: '# Legacy plan\n\nUpdate parser.\n', completed: true };
   } };
   const session = newSession(dir, 'manual');
   session.manualWorkflow = { shape: 'plan_verify', routes: {
     plan: { model: 'gpt-6-luna', effort: 'low' }, final: { model: 'gpt-6-sol', effort: 'high' },
   } };
   const outcome = await new Orchestrator(new PaceStore(dir), runner, { choose: async () => { throw new Error('Vex should not choose explicit routes'); } }).turn('Plan parser', session, config, () => {});
-  expect(calls.map(call => call.mode)).toEqual(['side', 'side']);
-  expect(calls[1]?.prompt).toContain('Review the planning report');
+  expect(calls.map(call => call.mode)).toEqual(['side']);
   expect(outcome.result).toContain('.pace-plan.md');
-  expect(outcome.session.plan).toBe('Verified plan');
-  expect(outcome.stages.map(stage => stage.route)).toEqual([
-    { model: 'gpt-6-luna', effort: 'low' }, { model: 'gpt-6-sol', effort: 'high' },
-  ]);
+  expect(outcome.session.plan).toContain('Legacy plan');
+  expect(outcome.stages.map(stage => stage.route)).toEqual([{ model: 'gpt-6-sol', effort: 'high' }]);
+});
+
+it('verifies an existing plan in a fresh read-only thread with a stronger route', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  const session = newSession('/example/project', 'auto', 'planning');
+  session.threadId = 'draft-thread';
+  session.plan = '# Draft plan\n\nUpdate parser.\n';
+  const calls: { prompt: string; route: Route; threadId?: string; mode?: string }[] = [];
+  const runner: CodexRunner = { async run(prompt, _project, route, threadId, _progress, _signal, mode) {
+    calls.push({ prompt, route, threadId, mode });
+    return { result: '# Verified plan\n\nUpdate parser and test it.\n', threadId: 'review-thread', completed: true };
+  } };
+  const requests: VexRequest[] = [];
+  const vex = { choose: async (request: VexRequest) => {
+    requests.push(request);
+    return decision(request, request.options.at(-1)!.id);
+  } };
+  const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('Review this plan', session, config, () => {}, undefined, true, 'verify_plan');
+  expect(requests).toHaveLength(1);
+  expect(requests[0]?.options.map(option => option.id)).toEqual(['0:high']);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]).toMatchObject({ route: { model: 'gpt-6-sol', effort: 'high' }, mode: 'side', threadId: undefined });
+  expect(calls[0]?.prompt).toContain('Independently verify the plan');
+  expect(session.threadId).toBe('review-thread');
+  expect(session.plan).toContain('Verified plan');
+  expect(outcome.result).toContain('.pace-plan.md');
 });
 
 it('lets Vex choose effort within a manually selected model', async () => {
