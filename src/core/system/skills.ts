@@ -1,19 +1,23 @@
 import { readFile, readdir, realpath } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, sep } from "node:path";
 import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
 import type { Config } from "../../shared/types.js";
 import { existingFolder } from "./folders.js";
 
 export type Skill = { name: string; description: string; path: string };
 
 export const defaultSkillFolder = () => join(homedir(), ".agents", "skills");
+const bundledSkillFolder = () => fileURLToPath(new URL("../../../skills/", import.meta.url));
 
 export async function configuredSkills(config: Config): Promise<Skill[]> {
   if (config.skillFolder === null) return [];
+  const bundled = await discoverSkills(bundledSkillFolder());
   try {
-    return await discoverSkills(config.skillFolder ?? defaultSkillFolder());
+    const local = await discoverSkills(config.skillFolder ?? defaultSkillFolder());
+    return [...local, ...bundled.filter(skill => !local.some(item => item.name.toLowerCase() === skill.name.toLowerCase()))];
   } catch (error) {
-    if (config.skillFolder === undefined && (error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    if (config.skillFolder === undefined && (error as NodeJS.ErrnoException).code === "ENOENT") return bundled;
     throw error;
   }
 }

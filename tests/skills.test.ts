@@ -62,6 +62,19 @@ it('uses the home skills folder by default and allows disabling it', async () =>
   expect(parseConfig({ ...DEFAULT_CONFIG, skillFolder: null }).skillFolder).toBeNull();
 });
 
+it('bundles grill-me, allows disabling it, and prefers a user copy', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-bundled-skill-'));
+  const bundled = await configuredSkills({ ...DEFAULT_CONFIG, skillFolder: dir });
+  expect(bundled.some(skill => skill.name === 'grill-me')).toBe(true);
+  expect(skillCommand('/grill-me review this idea', bundled)?.name).toBe('grill-me');
+  expect(skillCommand('/grill-me', enabledSkills(bundled, { ...DEFAULT_CONFIG, disabledSkills: ['grill-me'] }))).toBeUndefined();
+  await mkdir(join(dir, 'grill-me'));
+  await writeFile(join(dir, 'grill-me', 'SKILL.md'), '---\nname: grill-me\ndescription: User interview.\n---\nAsk questions.');
+  const overridden = await configuredSkills({ ...DEFAULT_CONFIG, skillFolder: dir });
+  expect(overridden.filter(skill => skill.name === 'grill-me')).toHaveLength(1);
+  expect(overridden.find(skill => skill.name === 'grill-me')?.path).toBe(join(dir, 'grill-me', 'SKILL.md'));
+});
+
 it('invokes enabled skill commands with their file path and user arguments', async () => {
   dir = await mkdtemp(join(tmpdir(), 'pace-skills-'));
   await mkdir(join(dir, 'caveman'));
@@ -71,7 +84,7 @@ it('invokes enabled skill commands with their file path and user arguments', asy
   expect(skillCommand('/caveman explain this', skills)?.name).toBe('caveman');
   expect(skillPrompt('/caveman explain this', skills)).toContain(`/${skills[0]!.name} (${skills[0]!.path})`);
   expect(skillPrompt('/caveman explain this', skills)).toMatch(/^explain this\n/);
-  expect(enabledSkills(skills, { ...config, disabledSkills: ['caveman'] })).toEqual([]);
+  expect(enabledSkills(skills, { ...config, disabledSkills: ['caveman'] }).some(skill => skill.name === 'caveman')).toBe(false);
   expect(skillCommand('/caveman', enabledSkills(skills, { ...config, disabledSkills: ['caveman'] }))).toBeUndefined();
 });
 
