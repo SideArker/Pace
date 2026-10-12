@@ -30,9 +30,10 @@ function isContextMeasurement(value: unknown): boolean {
     (value.model === undefined || typeof value.model === "string");
 }
 function isManualWorkflow(value: unknown): boolean {
-  if (!isRecord(value) || !["single", "scout", "plan_execute", "scout_plan_execute", "plan_verify"].includes(String(value.shape)) || !isRecord(value.routes)) return false;
+  if (!isRecord(value) || !["single", "scout", "plan", "scout_plan", "plan_execute", "scout_plan_execute", "plan_verify"].includes(String(value.shape)) || !isRecord(value.routes)) return false;
   const routes = value.routes;
-  const required = value.shape === "single" ? ["final"] : value.shape === "scout" ? ["scout", "final"]
+  const required = value.shape === "single" || value.shape === "plan" ? ["final"]
+    : value.shape === "scout" || value.shape === "scout_plan" ? ["scout", "final"]
     : value.shape === "scout_plan_execute" ? ["scout", "plan", "final"] : ["plan", "final"];
   if (Object.keys(routes).length !== required.length || required.some(stage => routes[stage] === undefined)) return false;
   return Object.entries(routes).every(([stage, route]) =>

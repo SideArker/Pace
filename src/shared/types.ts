@@ -9,7 +9,7 @@ export type ModelOption = {
 };
 export type Route = { model?: string; effort?: Effort };
 export type ManualWorkflow = {
-  shape: "single" | "scout" | "plan_execute" | "scout_plan_execute" | "plan_verify";
+  shape: "single" | "scout" | "plan" | "scout_plan" | "plan_execute" | "scout_plan_execute" | "plan_verify";
   routes: Partial<Record<"scout" | "plan" | "final", Route | "vex">>;
 };
 export type ApprovalMode = "full-access" | "request-approval" | "limited";

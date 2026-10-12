@@ -5,8 +5,9 @@ import { join } from "node:path";
 import { artifactDirectory, artifactPath, artifactPrompt, artifactSnapshot, changedArtifacts } from "../src/core/system/artifacts.js";
 import { PaceStore, newSession } from "../src/core/sessions.js";
 import { Orchestrator } from "../src/core/orchestrator.js";
+import type { VexRequest } from "../src/core/vex/client.js";
 import type { Config } from "../src/shared/types.js";
-import { singleVex } from './routing-fixture.js';
+import { decision, singleVex } from './routing-fixture.js';
 
 let root: string | undefined;
 afterEach(async () => { if (root) await rm(root, { recursive: true, force: true }); root = undefined; });
@@ -52,7 +53,8 @@ it("persists a read-only planning result while keeping full text for execution",
     return { result: fullPlan, completed: true };
   } };
   const session = newSession(project, "auto", "planning");
-  const outcome = await new Orchestrator(store, runner, singleVex("0:medium")).turn("Improve plans", session, config, () => {});
+  const vex = { choose: async (request: VexRequest) => decision(request, request.options.some(option => option.id === "plan") ? "plan" : "0:medium") };
+  const outcome = await new Orchestrator(store, runner, vex).turn("Improve plans", session, config, () => {});
   expect(mode).toBe("side");
   expect(outcome.session.plan).toBe(fullPlan);
   expect(outcome.result).toContain(".pace-plan.md");
