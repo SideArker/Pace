@@ -1,4 +1,5 @@
 import type { Usage } from "@openai/codex-sdk";
+import { mkdir } from "node:fs/promises";
 import type { Config, Route, Session } from "../shared/types.js";
 import type { CodexRunner, Progress } from "../integrations/codex.js";
 import type { UserAnswers } from "../integrations/codex-types.js";
@@ -20,7 +21,7 @@ import { PaceStore } from "./sessions.js";
 import { addUsage, awaitRouting, planningPrompt, readablePlanInstruction, retainedConversationPrompt } from "./orchestrator-helpers.js";
 import { runPlanningStage } from "./workflow-stages.js";
 import { checkpointHandoff } from "./checkpoint.js";
-import { artifactSnapshot, changedArtifacts, savePlanArtifact } from "./system/artifacts.js";
+import { artifactDirectory, artifactPath, artifactSnapshot, changedArtifacts, savePlanArtifact } from "./system/artifacts.js";
 import { validRoute } from "../shared/config.js";
 import { existingFolder } from "./system/folders.js";
 import {
@@ -449,12 +450,15 @@ export class Orchestrator {
         }
       }
       signal?.throwIfAborted();
-      const artifactsBefore = await artifactSnapshot(session.projectPath).catch(
+      const conversationArtifacts = artifactDirectory(this.store, session);
+      const artifactsBefore = await artifactSnapshot(conversationArtifacts).catch(
         () => new Map<string, number>(),
       );
+      await mkdir(conversationArtifacts, { recursive: true });
       const trustedFolders = await Promise.all(
         (config.trustedFolders ?? []).map(existingFolder),
       );
+      trustedFolders.push(conversationArtifacts);
       signal?.throwIfAborted();
       if ((auto || manualWorkflow) && ["scout", "plan_execute", "scout_plan_execute", "plan_verify"].includes(shape)) {
         const stageProgress = (progress: Progress) => {
@@ -565,6 +569,7 @@ export class Orchestrator {
         shape === "plan_verify" || session.kind === "planning" ? "side" : "main",
         trustedFolders,
         config.approvalMode,
+        conversationArtifacts,
       );
       signal?.throwIfAborted();
       stages.push({
@@ -579,8 +584,8 @@ export class Orchestrator {
       let displayedResult = execution.result;
       if (planTurn) {
         session.plan = execution.result;
-        session.planArtifact = await savePlanArtifact(session.projectPath, session.id, prompt, execution.result, session.planArtifact);
-        displayedResult = `Plan saved: ${session.planArtifact}\n\nOpen it with the Pace VS Code extension. The full plan remains available to /verify and /execute.`;
+        session.planArtifact = await savePlanArtifact(conversationArtifacts, session.id, prompt, execution.result, session.planArtifact);
+        displayedResult = `Plan saved: ${artifactPath(this.store, session, session.planArtifact)}\n\nOpen it with the Pace VS Code extension. The full plan remains available to /verify and /execute.`;
       }
       if (checkpoint && session.threadId === checkpoint.threadId) {
         session.threadId = undefined;
@@ -595,7 +600,7 @@ export class Orchestrator {
       }
       const artifacts = changedArtifacts(
         artifactsBefore,
-        await artifactSnapshot(session.projectPath).catch(
+        await artifactSnapshot(conversationArtifacts).catch(
           () => new Map<string, number>(),
         ),
       );

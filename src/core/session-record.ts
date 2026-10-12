@@ -109,7 +109,7 @@ export function parseSession(value: unknown, project: string): Session | undefin
         (turn.estimatedCostUsd === undefined || nonnegative(turn.estimatedCostUsd)) &&
         (turn.stages === undefined || (Array.isArray(turn.stages) && turn.stages.every(isStage))) &&
         (turn.routing === undefined || (Array.isArray(turn.routing) && turn.routing.every(isRouting))) &&
-        (turn.artifacts === undefined || (Array.isArray(turn.artifacts) && turn.artifacts.every((artifact: unknown) => typeof artifact === "string" && /^\.pace\/artifacts\/[^/\\]+\.md$/.test(artifact)))) &&
+        (turn.artifacts === undefined || (Array.isArray(turn.artifacts) && turn.artifacts.every((artifact: unknown) => typeof artifact === "string" && /^(?:\.pace\/)?artifacts\/[^/\\]+\.md$/.test(artifact)))) &&
         (turn.failed === undefined || typeof turn.failed === "boolean") &&
         (turn.cancelled === undefined || typeof turn.cancelled === "boolean"),
     ) ||
@@ -139,7 +139,7 @@ export function parseSession(value: unknown, project: string): Session | undefin
       !Number.isInteger(value.deferredTurn.attempt) || (value.deferredTurn.attempt as number) < 1)) ||
     (value.kind !== undefined && value.kind !== "normal" && value.kind !== "planning") ||
     (value.plan !== undefined && (typeof value.plan !== "string" || value.plan.length > 50000)) ||
-    (value.planArtifact !== undefined && (typeof value.planArtifact !== "string" || !/^\.pace\/artifacts\/[^/\\]+\.pace-plan\.md$/.test(value.planArtifact))) ||
+    (value.planArtifact !== undefined && (typeof value.planArtifact !== "string" || !/^(?:\.pace\/)?artifacts\/[^/\\]+\.pace-plan\.md$/.test(value.planArtifact))) ||
     (value.routingMode !== "auto" && value.routingMode !== "manual")
     || (value.manualWorkflow !== undefined && !isManualWorkflow(value.manualWorkflow))
   )

@@ -2,7 +2,7 @@ import { afterEach, expect, it } from "vitest";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { artifactDirectory, artifactPrompt, artifactSnapshot, changedArtifacts } from "../src/core/system/artifacts.js";
+import { artifactDirectory, artifactPath, artifactPrompt, artifactSnapshot, changedArtifacts } from "../src/core/system/artifacts.js";
 import { PaceStore, newSession } from "../src/core/sessions.js";
 import { Orchestrator } from "../src/core/orchestrator.js";
 import type { Config } from "../src/shared/types.js";
@@ -13,26 +13,30 @@ afterEach(async () => { if (root) await rm(root, { recursive: true, force: true 
 
 it("instructs Codex on persistent Markdown artifacts only for artifact requests", () => {
   expect(artifactPrompt("Hello")).toBe("Hello");
-  expect(artifactPrompt("Create an artifact for planning")).toContain(".pace/artifacts/");
-  expect(artifactPrompt("Create an artifact for planning")).toContain("User request:\nCreate an artifact for planning");
+  expect(artifactPrompt("Create an artifact for planning", "/conversation/artifacts")).toContain("/conversation/artifacts");
+  expect(artifactPrompt("Create an artifact for planning", "/conversation/artifacts")).toContain("User request:\nCreate an artifact for planning");
 });
 
 it("records a Markdown artifact created during a coding turn and finds it later", async () => {
   root = await mkdtemp(join(tmpdir(), "pace-artifact-"));
   const project = join(root, "project");
   const store = new PaceStore(join(root, "store"));
+  const session = newSession(project, "auto");
+  const directory = artifactDirectory(store, session);
   const config: Config = { routingMode: "auto", models: [{ model: "gpt-6-sol", efforts: ["medium"] }], defaultRoute: { model: "gpt-6-sol", effort: "medium" } };
-  const runner = { async run() {
-    await mkdir(artifactDirectory(project), { recursive: true });
-    await writeFile(join(artifactDirectory(project), "plan.md"), "# Plan\n");
+  const runner = { async run(_prompt: string, _project: string, _route: unknown, _thread: unknown, _progress: unknown, _signal: unknown, _mode: unknown, trustedFolders: string[], _approval: unknown, artifactRoot: string) {
+    expect(artifactRoot).toBe(directory);
+    expect(trustedFolders).toContain(directory);
+    await writeFile(join(directory, "plan.md"), "# Plan\n");
     return { result: "Saved the plan", completed: true };
   } };
   const orchestrator = new Orchestrator(store, runner, singleVex('0:medium'));
-  const outcome = await orchestrator.turn("Create an artifact", newSession(project, "auto"), config, () => {});
-  expect(outcome.artifacts).toEqual([".pace/artifacts/plan.md"]);
+  const outcome = await orchestrator.turn("Create an artifact", session, config, () => {});
+  expect(outcome.artifacts).toEqual(["artifacts/plan.md"]);
   expect((await store.latest(project))?.turns[0]?.artifacts).toEqual(outcome.artifacts);
-  expect([...await artifactSnapshot(project)].map(([name]) => name)).toEqual(["plan.md"]);
-  expect(changedArtifacts(await artifactSnapshot(project), await artifactSnapshot(project))).toEqual([]);
+  expect([...await artifactSnapshot(directory)].map(([name]) => name)).toEqual(["plan.md"]);
+  expect(changedArtifacts(await artifactSnapshot(directory), await artifactSnapshot(directory))).toEqual([]);
+  expect(artifactPath(store, session, outcome.artifacts[0]!)).toBe(join(directory, "plan.md"));
 });
 
 it("persists a read-only planning result while keeping full text for execution", async () => {
@@ -54,6 +58,17 @@ it("persists a read-only planning result while keeping full text for execution",
   expect(outcome.result).toContain(".pace-plan.md");
   expect(outcome.result).not.toContain("## Steps");
   expect(outcome.artifacts).toEqual([outcome.session.planArtifact]);
-  expect(await readFile(join(project, outcome.session.planArtifact!), "utf8")).toBe(fullPlan);
+  expect(await readFile(artifactPath(store, session, outcome.session.planArtifact!), "utf8")).toBe(fullPlan);
   expect((await store.latest(project))?.planArtifact).toBe(outcome.session.planArtifact);
+});
+
+it("continues to resolve old project artifact references without moving files", async () => {
+  root = await mkdtemp(join(tmpdir(), "pace-old-artifact-"));
+  const store = new PaceStore(join(root, "store"));
+  const session = newSession(join(root, "project"), "auto");
+  session.planArtifact = ".pace/artifacts/old.pace-plan.md";
+  session.turns.push({ prompt: "Old plan", result: "Saved", at: "2026-01-01", artifacts: [session.planArtifact] });
+  await store.save(session);
+  expect((await store.latest(session.projectPath))?.planArtifact).toBe(session.planArtifact);
+  expect(artifactPath(store, session, session.planArtifact)).toBe(join(session.projectPath, session.planArtifact));
 });
