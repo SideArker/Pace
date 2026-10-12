@@ -14,7 +14,10 @@ build/
 .*_key
 
 # Local application data
-.pace/
+.pace/*
+!.pace/artifacts/
+.pace/artifacts/*
+!.pace/artifacts/*.md
 
 # Logs
 logs/
