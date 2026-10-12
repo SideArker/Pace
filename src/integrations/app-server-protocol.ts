@@ -48,11 +48,12 @@ export function appServerTurnParams(
   mode: "main" | "side",
   trustedFolders: string[],
   approvalMode: ApprovalMode = "request-approval",
+  artifactDirectory?: string,
 ) {
   const policy = approvalMode === "full-access" ? "never" : approvalMode === "limited" ? "untrusted" : "on-request";
   return {
     threadId,
-    input: turnImageInput(prompt, mode),
+    input: turnImageInput(prompt, mode, artifactDirectory),
     cwd,
     approvalPolicy: mode === "side" ? "never" : policy,
     sandboxPolicy: mode === "side"

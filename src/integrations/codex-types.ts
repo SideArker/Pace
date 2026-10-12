@@ -38,5 +38,6 @@ export interface CodexRunner {
     mode?: "main" | "side",
     trustedFolders?: string[],
     approvalMode?: ApprovalMode,
+    artifactDirectory?: string,
   ): Promise<Execution>;
 }
