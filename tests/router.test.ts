@@ -18,9 +18,9 @@ it('sends original request, recent conversation, all valid pairs, capabilities, 
   expect(stage.options).toEqual(routeChoices(DEFAULT_CONFIG.models));
   expect(stage.options).toHaveLength(10);
   expect(shape.decisionType).toBe('routing');
-  expect(shape.constraints).toContain('plan-only request, choose single, scout, plan_verify, or clarify');
+  expect(shape.constraints).toContain('Plan and scout_plan stop after a read-only saved plan');
   expect(shapeRequest(prompt, turns, DEFAULT_CONFIG.models.filter(model => model.model !== 'gpt-6-luna')).options.map(option => option.id)).not.toContain('scout');
-  expect(shapeRequest(prompt, turns, DEFAULT_CONFIG.models.filter(model => model.model !== 'gpt-6-luna')).options.map(option => option.id)).not.toContain('scout_plan_execute');
+  expect(shapeRequest(prompt, turns, DEFAULT_CONFIG.models.filter(model => model.model !== 'gpt-6-luna')).options.map(option => option.id)).not.toContain('scout_plan');
 });
 
 it('gives Vex full route choice and task context for paraphrased follow-ups', () => {
@@ -37,7 +37,7 @@ it('gives Vex full route choice and task context for paraphrased follow-ups', ()
   expect(shapeRequest('Start fresh', [], DEFAULT_CONFIG.models).context).not.toHaveProperty('followUp');
   const tenTurns = Array.from({ length: 10 }, (_, index) => ({ prompt: `Task detail ${index}`, result: `Progress ${index}`, at: '2026-09-30' }));
   expect(shapeRequest('Proceed', tenTurns, DEFAULT_CONFIG.models).context.recentConversation).toHaveLength(10);
-  expect(handoffPrompt('scout', 'Proceed', tenTurns, DEFAULT_ROUTING_PROMPTS)).toContain('Task detail 0');
+  expect(handoffPrompt('Proceed', tenTurns, DEFAULT_ROUTING_PROMPTS)).toContain('Task detail 0');
 });
 
 it('bounds Vex conversation excerpts while keeping the full request for Codex', () => {
