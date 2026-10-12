@@ -25,9 +25,8 @@ blockquote > :first-child { margin-top: 0; } blockquote > :last-child { margin-b
 .callout-warning, .section-warning { --section-color: var(--vscode-errorForeground, #ef4444); }
 .callout-decision, .section-decision { --section-color: var(--vscode-editorWarning-foreground, #eab308); }
 .callout { border-color: var(--section-color, var(--vscode-panel-border)); background: color-mix(in srgb, var(--section-color, var(--vscode-panel-border)) 10%, var(--vscode-editor-background)); }
-.plan-section { border-left: 3px solid transparent; padding: 1px 18px 12px; margin: 1.5em 0; }
-.plan-section[class*="section-"] { border-color: var(--section-color); background: color-mix(in srgb, var(--section-color) 5%, transparent); }
-.plan-section[class*="section-"] > h2 { color: var(--section-color); }
+.plan-section { margin: 1.5em 0; }
+.plan-section[class*="section-"] > h2 { color: var(--section-color); border-bottom-color: var(--section-color); }
 .plan-section > h2:first-child { margin-top: .6em; }
 .reader-toolbar { position: fixed; top: 12px; right: 18px; z-index: 5; }
 .copy-comments { border: 1px solid var(--vscode-button-border, transparent); border-radius: 5px; padding: 8px 12px; color: var(--vscode-button-foreground); background: var(--vscode-button-background); font: inherit; cursor: pointer; box-shadow: 0 2px 8px #0003; }
