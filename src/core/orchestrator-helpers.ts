@@ -62,7 +62,8 @@ export function handoffPrompt(
   const conversation = turns
     .slice(-10)
     .map((turn) => ({ user: turn.prompt.slice(0, 1000), assistant: turn.result.slice(0, 1000) }));
-  return `${objective} ${prompts.handoff.instructions}\n\n${prompts.handoff.recentConversationLabel}\n${JSON.stringify(conversation)}\n\n${prompts.handoff.originalRequestLabel}\n${request}${priorHandoff ? `\n\nVerified scout report to use when planning:\n${priorHandoff}` : ""}`;
+  const planningStyle = kind === "plan_execute" ? `\n\n${pacePlanningStyleInstruction}` : "";
+  return `${objective} ${prompts.handoff.instructions}\n\n${prompts.handoff.recentConversationLabel}\n${JSON.stringify(conversation)}\n\n${prompts.handoff.originalRequestLabel}\n${request}${priorHandoff ? `\n\nVerified scout report to use when planning:\n${priorHandoff}` : ""}${planningStyle}`;
 }
 export function retainedConversationPrompt(prompt: string, session: Session): string {
   if (session.threadId) return prompt;
@@ -137,12 +138,16 @@ export function structuredHandoff(result: string): string {
   return handoff;
 }
 
+export const pacePlanningStyleInstruction = `PACE PLAN STYLE
+Write in the user's language. Use plain, direct technical language. Keep only facts and steps needed to act. Remove filler, repeated points, generic advice, and research dumps. Explain uncommon terms once.
+Put every user approval request, assumption, and unresolved choice in User Review. Do not create a separate Decision section or Decision callout. If no approval is needed, say so in User Review. Use Info and Warning callouts only when they add useful context or describe a real risk.
+Keep implementation steps short and actionable. Start each step with a verb. Name relevant workspace files and explain why each change is needed. Give concrete verification actions. Link files with workspace-relative Markdown links and line numbers only when known; use inline code for file mentions. Preserve unknowns as unknowns. Do not invent scope or claim work has started.`;
+
 export function planningPrompt(request: string): string {
-  return `${request}\n\n[PLANNING MODE INSTRUCTION]\nYou are in read-only planning mode. Explore the codebase, inspect relevant files, analyze architecture, and produce or refine a clear, actionable implementation plan.\nDo NOT edit or write code files. Provide:
-Start with a short title and a plain-language task description. Put a User Review section first, before technical findings. State what you understood, the expected outcome, assumptions, and decisions that need user approval. Use Markdown callouts for review, information, warnings, and decisions: > [!USER REVIEW], > [!INFO], > [!WARNING], > [!DECISION]. Keep each callout readable in ordinary Markdown. Then provide a short plan at a glance, relevant current state with file references, proposed design, ordered implementation steps, verification, and risks. Explain unfamiliar terms, avoid research dumps, and keep steps concise. Do not claim implementation has begun.`;
+  return `${request}\n\n[PLANNING MODE INSTRUCTION]\nYou are in read-only planning mode. Inspect relevant code and produce a concise, actionable implementation plan. Do NOT edit or write code files.\n\n${pacePlanningStyleInstruction}\n\nUse this outline: short title and task summary; User Review; plan at a glance; relevant current state; proposed design; ordered implementation steps; verification; risks. In Markdown, make User Review a section before technical detail and put its content in a > [!USER REVIEW] blockquote. Include the request, expected result, assumptions, and approval needs. Use > [!INFO] or > [!WARNING] only when useful. Keep each section focused. Do not claim implementation has begun.`;
 }
 
-export const readablePlanInstruction = `Return the final plan as Markdown in the user's language. Start with a short title and plain-language task description. Put a User Review section before technical details. State the intended outcome, key assumptions, and decisions that need approval. Use > [!USER REVIEW] for its callout. Then give a concise overview, relevant repository facts with clickable Markdown links to workspace-relative files (add #Lline when known), ordered implementation steps, verification, and risks. Use > [!INFO], > [!WARNING], or > [!DECISION] only when helpful. Keep callouts readable in ordinary Markdown. Do not paste raw research notes or JSON handoffs.`;
+export const readablePlanInstruction = `Return final plan as Markdown in the user's language. Follow these Pace planning standards:\n\n${pacePlanningStyleInstruction}\n\nUse a short title and task summary, then a User Review section containing a > [!USER REVIEW] blockquote before technical detail. Include the request, expected result, assumptions, and approval needs. Follow with plan at a glance, current state, proposed design, implementation steps, verification, and risks. Do not paste raw research notes or JSON handoffs.`;
 
 export function executePlanPrompt(plan: string): string {
   return `Implement the following plan. Follow this two-phase execution:

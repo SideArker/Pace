@@ -28,8 +28,7 @@ The [Plans view provider](extensions/vscode/src/extension.ts#L46) reads conversa
 
 Use one watcher for each saved conversation root associated with an open workspace. A directory event schedules a short, shared refresh, so a single plan save does not redraw the view for every file operation. Rescan the root when a conversation directory appears. Keep file discovery in `savedPlans()` as the source of truth.
 
-> [!DECISION]
-> Use filesystem events for this first version. If the target platform cannot watch an application-data directory reliably, document the limitation and keep manual Refresh.
+The User Review assumption sets watcher scope. If filesystem events prove unreliable, keep manual Refresh.
 
 ## Implementation steps
 
@@ -41,7 +40,7 @@ Use one watcher for each saved conversation root associated with an open workspa
 
 ## Verification
 
-- [ ] Open this file as a `.pace-plan.md` plan. Confirm the User Review, Info, Decision, and Warning callouts render.
+- [ ] Open this file as a `.pace-plan.md` plan. Confirm the User Review, Info, and Warning callouts render.
 - [ ] Confirm section headings and dividers carry category colors without adding a second panel around callouts.
 - [ ] Use the contents links to jump between sections.
 - [ ] Click a source-file link above. Confirm VS Code opens the file beside the plan at the cited line.
@@ -49,7 +48,7 @@ Use one watcher for each saved conversation root associated with an open workspa
 - [ ] Reopen VS Code after a plan was saved. Confirm the plan appears on first view load.
 - [ ] Run `npm run build` in `extensions/vscode` and `npm test` at the repository root.
 
-## Risks and open decisions
+## Risks
 
 > [!WARNING]
 > Filesystem events can be missed on some mounted or network filesystems. The view must still scan current files whenever it loads, and manual Refresh must continue to work.

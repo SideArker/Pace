@@ -8,11 +8,11 @@ The supplied screenshot shows the current failure mode: long findings and implem
 
 ## Product shape
 
-Every plan starts with a short, plain-language task description and a **User Review** section at the very top. That section states what Pace understood, the intended outcome, key assumptions, and decisions the user must approve. Implementation details follow only after this review gate. A reader should understand the task without first decoding repository findings or technical steps.
+Every plan starts with a short, plain-language task description and a **User Review** section at the very top. That section states what Pace understood, the intended outcome, key assumptions, and decisions the user must approve. It is the only approval section; do not add a separate Decision heading or callout. Implementation details follow only after this review gate. A reader should understand the task without first decoding repository findings or technical steps.
 
 The named VS Code extension is a Markdown preview/read experience for Pace plan artifacts, not a VS Code coding agent or a full Pace integration. Users open a plan Markdown file and get a clean, navigable view. Plan files use a recognizable name/extension convention so VS Code can show a dedicated icon. Clicking a file opens the Pace reader; users can still choose the normal Markdown editor when they want source text.
 
-The reader adds styled callouts such as **User Review**, **Info**, **Warning**, and **Decision**, plus readable headings, task lists, file references, and navigation. Callouts must have a readable plain-Markdown fallback outside VS Code.
+The reader adds styled callouts such as **User Review**, **Info**, and **Warning**, plus readable headings, task lists, file references, and navigation. Older Decision callouts remain readable for compatibility. Callouts must have a readable plain-Markdown fallback outside VS Code.
 
 ## Current behavior
 
@@ -29,15 +29,15 @@ Build a first-class plan artifact and the Pace VS Code extension together. Keep 
 
 Use normal Markdown as the durable format so plans remain readable outside Pace and can be edited by users. Use a distinctive plan filename suffix only if VS Code needs it for default custom-editor selection and icons; keep `.md` compatibility and ordinary editing available. Organize generated plans with a predictable outline:
 
-1. **User Review** — task in plain language, expected result, assumptions, decisions needing approval.
+1. **User Review** — task in plain language, expected result, assumptions, and every decision needing approval.
 2. **Plan at a glance** — goal, scope, and a few short milestones.
 3. **Current state** — only relevant repository facts and linked files.
 4. **Proposed design** — components and data flow, explained simply before implementation detail.
 5. **Implementation steps** — ordered, concrete, independently reviewable steps.
 6. **Verification** — expected checks and behavior to confirm.
-7. **Risks and open decisions** — concise, actionable items.
+7. **Risks and unknowns** — concise, actionable items.
 
-Keep each finding and step concise. Explain specialized terms on first use. Link file references to paths and line numbers where known. Use nested detail only when it helps explain a decision. Mark assumptions and unresolved decisions clearly. Preserve the original user request as the authority. Do not put research dumps, exhaustive file inventories, or raw agent handoffs in the reader's primary flow.
+Keep each finding and step concise. Explain specialized terms on first use. Link file references to paths and line numbers where known. Use nested detail only when it helps explain a decision. Mark assumptions and unresolved decisions in User Review. Preserve the original user request as the authority. Do not put research dumps, exhaustive file inventories, or raw agent handoffs in the reader's primary flow.
 
 The extension provides a focused Markdown reader, clear section hierarchy, a contents/navigation area, styled callout blocks, and readable linked file references. A file association opens plan files in the reader by default, with an easy “Reopen Editor With...” path to plain Markdown editing. The Pace plans view supplies a plan icon regardless of the user's file icon theme. The implementation uses a read-only custom text editor to support the default opening behavior.
 
@@ -64,7 +64,7 @@ Keep a future tool boundary possible: plan generation should eventually produce 
 3. Trace plan entry paths: `/plan`, planning sessions, plan-verify workflows, plan file loading, task updates, resume, and artifact reporting.
 4. Update prompts and workflow handoffs to produce concise Markdown artifacts under `.pace/artifacts/`. Preserve read-only behavior for planning and verification. Show only a short chat summary with the artifact path.
 5. Scaffold the VS Code extension named Pace. Register preview activation, file association, commands, and extension checks. Use the custom text editor for default opening and the Pace plans view for icons.
-6. Implement the plan reader layout and callout styles, including User Review, Info, Warning, and Decision. Add navigation, accessible contrast, keyboard behavior, and links to source files.
+6. Implement the plan reader layout and callout styles, including User Review, Info, and Warning. Add navigation, accessible contrast, keyboard behavior, and links to source files.
 7. Support plain Markdown editing through VS Code's normal editor and document a “Reopen With” workflow. Keep the extension read-only in the first version.
 8. Verify artifact naming and rendering in VS Code, default editor selection, fallback rendering in GitHub/plain Markdown, theme/icon behavior, workspace trust, and malformed or unknown callouts.
 9. Document install/run/packaging for local use. Marketplace publishing is a separate decision; do not add broader Pace VS Code integration in this slice.
@@ -86,7 +86,7 @@ Keep a future tool boundary possible: plan generation should eventually produce 
 
 - Test generated plan structure and enforce a concise User Review section at the top for every plan workflow.
 - Test artifact creation, update, listing, session resume, old session compatibility, and missing/invalid plan files.
-- Test Markdown preview rendering for User Review, Info, Warning, Decision, unknown callouts, long content, links, and missing optional sections.
+- Test Markdown preview rendering for User Review, Info, Warning, legacy Decision, unknown callouts, long content, links, and missing optional sections.
 - Test extension file association, command activation, icon contribution, workspace trust behavior, and normal-editor fallback.
 - Confirm plans remain readable in generic Markdown viewers and use accessible contrast in light and dark VS Code themes.
 - Run extension tests/package validation and existing planning, artifact, session, and CLI checks.
@@ -112,13 +112,15 @@ Keep a future tool boundary possible: plan generation should eventually produce 
 
 The user changed the storage requirement. New Pace-generated artifacts and plans belong to the current conversation in Pace's application data, under `~/.pace/sessions/<project-key>/<conversation-id>/artifacts/`. The session JSON remains beside the conversation directory. Pace stores relative artifact references in the session, so reconnecting a moved project can carry files and references together. `/artifacts` lists the current conversation's files and still shows older project-local `.pace/artifacts/` files. Old files are preserved in place.
 
-The VS Code extension now contributes two readers: the default reader for `.pace-plan.md` and **Pace Markdown Preview** as an optional choice for any `.md` file. Its Plans view finds plans in the current workspace's saved conversations under `~/.pace/sessions/` and legacy project-local plans. The local VSIX version is `0.1.3`.
+The VS Code extension now contributes two readers: the default reader for `.pace-plan.md` and **Pace Markdown Preview** as an optional choice for any `.md` file. Its Plans view finds plans in the current workspace's saved conversations under `~/.pace/sessions/` and legacy project-local plans. The local VSIX version is `0.1.4`.
 
-The reader colors `User Review`, `Info`, `Warning`, and `Decision` callouts purple, blue, red, and yellow. Section headings and dividers use the section category color. Callouts use one tinted panel, without a second panel around the section. Readers can attach comments to rendered paragraphs and copy a numbered report with section names and quoted paragraph text. Comments remain preview state; they do not edit the Markdown plan.
+The reader colors `User Review`, `Info`, `Warning`, and legacy `Decision` callouts purple, blue, red, and yellow. It also colors matching table-of-contents entries, styles file mentions with type icons, moves navigation left, and widens plan text. Comments copy as compact section groups with quoted text and feedback. Comments remain preview state; they do not edit the Markdown plan.
+
+Pace injects a shared planning style instruction into direct planning, routed planning, and plan verification. It requires concise, direct language, concrete file references and steps, and one User Review section for every approval need. New plans do not use a separate Decision section or callout.
 
 This project note itself remains in the repository's `.pace/artifacts/` folder because it documents implementation work in this repository. Pace-generated conversation artifacts use the new application-data location.
 
-An example reader fixture is available at `.pace/artifacts/sample-plans-view-auto-refresh.pace-plan.md`. It demonstrates the plan outline, four callout types, navigation, task lists, and source-file links. It is a project note for testing, not a plan saved by a Pace conversation.
+An example reader fixture is available at `.pace/artifacts/sample-plans-view-auto-refresh.pace-plan.md`. It demonstrates the plan outline, User Review, Info and Warning callouts, navigation, task lists, and source-file links. It is a project note for testing, not a plan saved by a Pace conversation.
 
 ## Caveman settings diagnosis
 
