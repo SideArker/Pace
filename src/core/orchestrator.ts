@@ -17,10 +17,10 @@ import {
 import { costForUsage, pricedModels, refreshVersionManifest } from "./routing/pricing.js";
 import { advanceTask, retainedTask, type TaskRelation } from "./active-task.js";
 import { PaceStore } from "./sessions.js";
-import { addUsage, awaitRouting, planningPrompt, retainedConversationPrompt } from "./orchestrator-helpers.js";
+import { addUsage, awaitRouting, planningPrompt, readablePlanInstruction, retainedConversationPrompt } from "./orchestrator-helpers.js";
 import { runPlanningStage } from "./workflow-stages.js";
 import { checkpointHandoff } from "./checkpoint.js";
-import { artifactSnapshot, changedArtifacts } from "./system/artifacts.js";
+import { artifactSnapshot, changedArtifacts, savePlanArtifact } from "./system/artifacts.js";
 import { validRoute } from "../shared/config.js";
 import { existingFolder } from "./system/folders.js";
 import {
@@ -527,7 +527,7 @@ export class Orchestrator {
         session.skillOptions,
       );
       const executionPrompt = handoff
-        ? `${baseExecutionPrompt}${shape === "plan_execute" || shape === "scout_plan_execute" ? `\n\n${prompts.handoff.planExecutionInstruction}` : shape === "plan_verify" ? "\n\nReview the planning report against the repository. Return a final corrected plan and your verification findings. Work read only; do not implement." : ""}\n\n${prompts.handoff.reportInstruction}\n${handoff}`
+        ? `${baseExecutionPrompt}${shape === "plan_execute" || shape === "scout_plan_execute" ? `\n\n${prompts.handoff.planExecutionInstruction}` : shape === "plan_verify" ? `\n\nReview the planning report against the repository. Work read only; do not implement.\n${readablePlanInstruction}` : ""}\n\n${prompts.handoff.reportInstruction}\n${handoff}`
         : session.kind === "planning"
           ? planningPrompt(baseExecutionPrompt)
           : baseExecutionPrompt;
@@ -575,7 +575,13 @@ export class Orchestrator {
         estimatedCostUsd: costForUsage(route, execution.usage),
       });
       if (execution.threadId) session.threadId = execution.threadId;
-      if (session.kind === "planning") session.plan = execution.result;
+      const planTurn = shape === "plan_verify" || session.kind === "planning";
+      let displayedResult = execution.result;
+      if (planTurn) {
+        session.plan = execution.result;
+        session.planArtifact = await savePlanArtifact(session.projectPath, session.id, prompt, execution.result, session.planArtifact);
+        displayedResult = `Plan saved: ${session.planArtifact}\n\nOpen it with the Pace VS Code extension. The full plan remains available to /verify and /execute.`;
+      }
       if (checkpoint && session.threadId === checkpoint.threadId) {
         session.threadId = undefined;
         onProgress({ kind: "error", text: "Fresh Codex thread ID was unavailable; the next turn will use retained conversation history." });
@@ -604,7 +610,7 @@ export class Orchestrator {
         ...session.turns,
         {
           prompt,
-          result: execution.result,
+          result: displayedResult,
           at: new Date().toISOString(),
           route,
           routeNote: note,
@@ -619,12 +625,12 @@ export class Orchestrator {
         },
       ].slice(-20);
       if (relationResolved && (priorTask || taskRelation === "replace"))
-        session.activeTask = advanceTask(priorTask, taskRelation, prompt, execution.result, false);
+        session.activeTask = advanceTask(priorTask, taskRelation, prompt, displayedResult, false);
       if (resumedAfterLimit) session.deferredTurn = undefined;
       await save();
       return {
         session,
-        result: execution.result,
+        result: displayedResult,
         note,
         route,
         durationMs,

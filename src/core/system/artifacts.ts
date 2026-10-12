@@ -1,7 +1,16 @@
-import { readdir, stat } from "node:fs/promises";
+import { mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export const artifactDirectory = (project: string) => join(project, ".pace", "artifacts");
+
+export async function savePlanArtifact(project: string, sessionId: string, request: string, plan: string, existing?: string): Promise<string> {
+  const slug = request.normalize("NFKD").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48).replace(/-$/, "") || "implementation";
+  const name = /^\.pace\/artifacts\/([^/\\]+\.pace-plan\.md)$/.exec(existing ?? "")?.[1]
+    ?? `${slug}-${sessionId.slice(0, 8)}.pace-plan.md`;
+  await mkdir(artifactDirectory(project), { recursive: true });
+  await writeFile(join(artifactDirectory(project), name), `${plan.trim()}\n`, "utf8");
+  return `.pace/artifacts/${name}`;
+}
 
 /** A small workspace convention for Codex, only when the user mentions artifacts. */
 export function artifactPrompt(prompt: string): string {

@@ -101,6 +101,7 @@ export type Session = {
   id: string;
   kind?: SessionKind;
   plan?: string;
+  planArtifact?: string;
   title?: string;
   projectPath: string;
   threadId?: string;

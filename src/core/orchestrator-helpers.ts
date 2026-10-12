@@ -139,12 +139,10 @@ export function structuredHandoff(result: string): string {
 
 export function planningPrompt(request: string): string {
   return `${request}\n\n[PLANNING MODE INSTRUCTION]\nYou are in read-only planning mode. Explore the codebase, inspect relevant files, analyze architecture, and produce or refine a clear, actionable implementation plan.\nDo NOT edit or write code files. Provide:
-1. Summary of proposed changes
-2. Files to create/modify
-3. Step-by-step implementation plan
-4. Verification and testing strategy
-5. Risks and edge cases`;
+Start with a short title and a plain-language task description. Put a User Review section first, before technical findings. State what you understood, the expected outcome, assumptions, and decisions that need user approval. Use Markdown callouts for review, information, warnings, and decisions: > [!USER REVIEW], > [!INFO], > [!WARNING], > [!DECISION]. Keep each callout readable in ordinary Markdown. Then provide a short plan at a glance, relevant current state with file references, proposed design, ordered implementation steps, verification, and risks. Explain unfamiliar terms, avoid research dumps, and keep steps concise. Do not claim implementation has begun.`;
 }
+
+export const readablePlanInstruction = `Return the final plan as Markdown in the user's language. Start with a short title and plain-language task description. Put a User Review section before technical details. State the intended outcome, key assumptions, and decisions that need approval. Use > [!USER REVIEW] for its callout. Then give a concise overview, relevant repository facts with clickable Markdown links to workspace-relative files (add #Lline when known), ordered implementation steps, verification, and risks. Use > [!INFO], > [!WARNING], or > [!DECISION] only when helpful. Keep callouts readable in ordinary Markdown. Do not paste raw research notes or JSON handoffs.`;
 
 export function executePlanPrompt(plan: string): string {
   return `Implement the following plan. Follow this two-phase execution:
