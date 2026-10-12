@@ -26,6 +26,8 @@ export class SdkRunner implements CodexRunner {
     signal?: AbortSignal,
     mode: "main" | "side" = "main",
     trustedFolders: string[] = [],
+    _approvalMode?: "full-access" | "request-approval" | "limited",
+    artifactDirectory?: string,
   ): Promise<Execution> {
     const options: ThreadOptions = {
       workingDirectory: await realpath(project),
@@ -37,7 +39,7 @@ export class SdkRunner implements CodexRunner {
       additionalDirectories: mode === "main" ? trustedFolders : [],
     };
     const thread = threadId ? this.codex.resumeThread(threadId, options) : this.codex.startThread(options);
-    const input = turnImageInput(prompt, mode).map(item => item.type === "localImage"
+    const input = turnImageInput(prompt, mode, artifactDirectory).map(item => item.type === "localImage"
       ? { type: "local_image" as const, path: item.path }
       : item);
     const { events } = await thread.runStreamed(input, { signal });

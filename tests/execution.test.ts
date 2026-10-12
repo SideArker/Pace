@@ -559,6 +559,7 @@ it('uses Codex app-server sandbox values for threads and turns', () => {
   expect(appServerTurnParams('work', '/project', {}, 'thread-1', 'main', [], 'full-access')).toMatchObject({ approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' } });
   expect(appServerThreadParams('/project', {}, undefined, 'main', 'limited')).toMatchObject({ approvalPolicy: 'untrusted', sandbox: 'read-only' });
   expect(appServerTurnParams('work', '/project', {}, 'thread-1', 'main', ['/trusted'], 'limited')).toMatchObject({ approvalPolicy: 'untrusted', sandboxPolicy: { type: 'readOnly', networkAccess: false } });
+  expect(appServerTurnParams('Create an artifact', '/project', {}, 'thread-1', 'main', ['/conversation/artifacts'], 'request-approval', '/conversation/artifacts').input[0]).toMatchObject({ text: expect.stringContaining('/conversation/artifacts') });
   expect(appServerTurnParams('scout', '/project', {}, 'thread-1', 'side', [], 'full-access')).toMatchObject({ approvalPolicy: 'never', sandboxPolicy: { type: 'readOnly' } });
 });
 

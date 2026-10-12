@@ -2,6 +2,7 @@ import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import type { Config, Route, Session, TurnActivity } from "../shared/types.js";
 import type { CodexRunner, Progress } from "../integrations/codex.js";
 import { Orchestrator, VexUnavailableError } from "../core/orchestrator.js";
+import { artifactPath } from "../core/system/artifacts.js";
 import { PaceStore } from "../core/sessions.js";
 import { PromptQueue } from "../core/prompt-queue.js";
 import { checkpointDue, createCheckpointIfDue } from "../core/checkpoint.js";
@@ -162,7 +163,7 @@ export function createTurnRunner({
           outcome.estimatedCostUsd,
         ),
       );
-      for (const artifact of outcome.artifacts) addFor(sessionId, "artifact", artifact);
+      for (const artifact of outcome.artifacts) addFor(sessionId, "artifact", artifactPath(store, outcome.session, artifact));
       addFor(sessionId, "divider", "");
       if (!turnSession.deferredTurn && checkpointDue(turnSession)) {
         try {

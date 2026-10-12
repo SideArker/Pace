@@ -9,7 +9,7 @@ import { PromptQueue } from "../core/prompt-queue.js";
 import { AppServerRunner } from "../integrations/codex.js";
 import { VexRouter } from "../core/vex/client.js";
 import { EFFORTS, withModels } from "../shared/config.js";
-import { artifactSnapshot } from "../core/system/artifacts.js";
+import { artifactDirectory, artifactPath, artifactSnapshot, legacyArtifactDirectory } from "../core/system/artifacts.js";
 import { existingFolder, sameFolder } from "../core/system/folders.js";
 import { configuredSkills, defaultSkillFolder, enabledSkills, skillCommand, skillOption, skillRequest, type Skill } from "../core/system/skills.js";
 import { formatTurnFooter, modelName } from "./turn-format.js";
@@ -758,7 +758,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         newLines.push({
           id: id++,
           role: "artifact",
-          text: artifact,
+          text: artifactPath(store, targetSession, artifact),
           spaceBefore: false,
         });
       }
@@ -1563,15 +1563,16 @@ export default function App({ onClear }: { onClear: () => void }) {
       }
       if (command === "/artifacts") {
         try {
-          const files = await artifactSnapshot(session.projectPath);
+          const files = await artifactSnapshot(artifactDirectory(store, session));
+          const legacy = await artifactSnapshot(legacyArtifactDirectory(session.projectPath));
           add(
             "info",
-            files.size
-              ? [...files.keys()]
-                  .sort()
-                  .map((name) => `.pace/artifacts/${name}`)
-                  .join("\n")
-              : "No Markdown artifacts in .pace/artifacts yet.",
+            files.size || legacy.size
+              ? [
+                  ...[...files.keys()].sort().map(name => artifactPath(store, session, `artifacts/${name}`)),
+                  ...[...legacy.keys()].sort().map(name => artifactPath(store, session, `.pace/artifacts/${name}`)),
+                ].join("\n")
+              : "No Markdown artifacts for this conversation yet.",
           );
         } catch (error) {
           add("error", `Could not list artifacts: ${String(error)}`);
