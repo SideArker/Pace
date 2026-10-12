@@ -60,7 +60,7 @@ export function createTurnRunner({
   getConfig: () => Config;
   readLimits?: () => Promise<UsageLimits | undefined>;
 }) {
-  const runTurn = async (text: string, turnSession: Session, turnConfig: Config) => {
+  const runTurn = async (text: string, turnSession: Session, turnConfig: Config, intent?: "verify_plan") => {
     let tasksChanged = false;
     let deferredForUsage = false;
     let activeRoute: Route = turnSession.route;
@@ -146,6 +146,7 @@ export function createTurnRunner({
         onProgress,
         controller.signal,
         () => activeSessionId.current === sessionId,
+        intent,
       );
       if (turnSession.deferredTurn?.prompt === text) {
         turnSession.deferredTurn = undefined;

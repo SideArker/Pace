@@ -74,15 +74,13 @@ const commands = [
 const workflowChoices = [
   { shape: "single", label: "Single agent" },
   { shape: "scout", label: "Scout → Completion" },
-  { shape: "plan_execute", label: "Planning → Execution" },
-  { shape: "scout_plan_execute", label: "Scout → Planning → Execution" },
-  { shape: "plan_verify", label: "Planning → Verification" },
+  { shape: "plan", label: "Plan only" },
+  { shape: "scout_plan", label: "Scout → Plan" },
 ] as const;
 type WorkflowShape = ManualWorkflow["shape"];
 type WorkflowStage = keyof ManualWorkflow["routes"];
 const workflowStages = (shape: WorkflowShape): WorkflowStage[] =>
-  shape === "single" ? ["final"] : shape === "scout" ? ["scout", "final"]
-    : shape === "scout_plan_execute" ? ["scout", "plan", "final"] : ["plan", "final"];
+  shape === "scout" || shape === "scout_plan" ? ["scout", "final"] : ["final"];
 export const commandArguments: Record<string, string> = {
   "/plan": "[prompt|file]",
   "/execute": "[file] [prompt]",
@@ -100,12 +98,12 @@ export const skillArguments = (skillName: string): string => {
 const commandDescriptions: Record<string, string> = {
   "/plan": "Start/toggle planning or load plan file (e.g. /plan plan.md)",
   "/execute": "Dispatch plan to fresh session via Vex (e.g. /execute [plan.md])",
-  "/verify": "Verify plan with high quality model (e.g. /verify [plan.md])",
+  "/verify": "Review plan with a fresh read-only agent (e.g. /verify [plan.md])",
   "/models": "Choose model and reasoning effort",
   "/version": "Show Pace and price catalog versions",
   "/auto": "Let Pace route models automatically",
   "/manual": "Configure workflow stages, models, and effort",
-  "/workflow": "Choose workflow strategy (single, scout, plan-execute)",
+  "/workflow": "Choose workflow strategy (single, scout, plan, scout-plan)",
   "/new": "Start a new conversation",
   "/resume": "Switch to a saved conversation",
   "/convo": "Browse and manage conversation turns",
@@ -213,7 +211,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const [approval, setApproval] = useState<Extract<Progress, { kind: "approval" }>>();
   const [question, setQuestion] = useState<PendingQuestion>();
   const [pendingRevision, setPendingRevision] = useState(0);
-  const runTurnRef = useRef<((text: string, turnSession: Session, turnConfig: Config) => Promise<void>) | undefined>(undefined);
+  const runTurnRef = useRef<((text: string, turnSession: Session, turnConfig: Config, intent?: "verify_plan") => Promise<void>) | undefined>(undefined);
   const [approvalMenu, setApprovalMenu] = useState(false);
   const [vexState, setVexState] = useState<
     "connecting" | "connected" | "failed"
@@ -854,7 +852,7 @@ export default function App({ onClear }: { onClear: () => void }) {
     m.efforts.map((e) => ({ model: m.model, effort: e })),
   );
   const availableWorkflows = workflowChoices.filter(choice =>
-    !["scout", "scout_plan_execute"].includes(choice.shape) || enabledModels.some(model => model.model === "gpt-6-luna"));
+    !["scout", "scout_plan"].includes(choice.shape) || enabledModels.some(model => model.model === "gpt-6-luna"));
   const manualStage = manualWizard.shape ? workflowStages(manualWizard.shape)[manualWizard.stageIndex] : undefined;
   const manualOptions = manualWizard.step === "workflow"
     ? ["Delegate choice to Vex", ...availableWorkflows.map(choice => choice.label)]
@@ -1096,8 +1094,8 @@ export default function App({ onClear }: { onClear: () => void }) {
       add("info", `◈ Loaded plan from ${basename(planFile.path)} for verification.`);
     }
     const goal = session.turns[0]?.prompt;
-    add("info", "◈ Verifying plan against repository with high quality model...");
-    if (config) void runTurnRef.current?.(verifyPlanPrompt(targetPlan, goal), session, config);
+    add("info", "◈ Verifying plan in read-only mode with a fresh agent...");
+    if (config) void runTurnRef.current?.(verifyPlanPrompt(targetPlan, goal), session, config, "verify_plan");
   };
   const cancelArmed = useAppInput({
     interrupt, pickerFocused, setPickerFocused, pickerIndex, setPickerIndex,
