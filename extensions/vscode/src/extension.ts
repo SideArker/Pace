@@ -85,7 +85,142 @@ function htmlFor(document: vscode.TextDocument, webview: vscode.Webview, extensi
   const { body, contents } = renderPlan(document.getText());
   const nonce = crypto.randomBytes(16).toString("base64");
   const style = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "reader.css"));
-  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${style}"><title>Pace Plan</title></head><body><div class="layout"><nav class="toc" aria-label="Plan sections"><strong>Sections</strong>${contents}</nav><main>${body}</main></div><script nonce="${nonce}">const vscode = acquireVsCodeApi(); document.addEventListener('click', event => { const link = event.target.closest('a[href]'); if (!link) return; const href = link.getAttribute('href'); if (!href || href.startsWith('#')) return; event.preventDefault(); vscode.postMessage({ type: 'open', href }); });</script></body></html>`;
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${style}"><title>Pace Plan</title></head><body><div class="reader-toolbar"><button class="copy-comments" type="button" disabled>Copy comments</button></div><div class="layout"><nav class="toc" aria-label="Plan sections"><strong>Sections</strong>${contents}</nav><main>${body}</main></div><script nonce="${nonce}">
+const vscode = acquireVsCodeApi();
+const main = document.querySelector('main');
+const state = vscode.getState() || {};
+const comments = state.comments && typeof state.comments === 'object' ? state.comments : {};
+const category = text => ({ 'USER REVIEW': 'review', INFO: 'info', WARNING: 'warning', DECISION: 'decision' })[text.trim().toUpperCase()] || '';
+for (const heading of [...main.querySelectorAll('h2')]) {
+  if (heading.parentElement !== main) continue;
+  const section = document.createElement('section');
+  section.className = 'plan-section';
+  main.insertBefore(section, heading);
+  let node = heading;
+  while (node && !(node !== heading && node.tagName === 'H2')) { const next = node.nextSibling; section.append(node); node = next; }
+  const headingKind = category(heading.textContent || '');
+  const callout = section.querySelector('.callout');
+  const calloutKind = callout && [...callout.classList].find(name => name.startsWith('callout-') && name !== 'callout');
+  const kind = headingKind || (calloutKind ? calloutKind.slice('callout-'.length) : '');
+  if (kind) section.classList.add('section-' + kind);
+}
+const toolbarButton = document.querySelector('.copy-comments');
+const paragraphById = id => [...main.querySelectorAll('p[data-comment-id]')].find(paragraph => paragraph.dataset.commentId === id);
+const persist = () => { vscode.setState({ comments }); updateToolbar(); };
+function updateToolbar() {
+  const count = Object.keys(comments).length;
+  toolbarButton.disabled = count === 0;
+  toolbarButton.textContent = count ? 'Copy comments (' + count + ')' : 'Copy comments';
+}
+function showComment(id) {
+  const paragraph = paragraphById(id);
+  if (!paragraph) return;
+  const tools = paragraph.nextElementSibling;
+  tools.querySelector('.comment-card')?.remove();
+  const comment = comments[id];
+  const trigger = tools.querySelector('.comment-trigger');
+  trigger.textContent = comment ? 'Edit comment' : '+ Comment';
+  if (!comment) return;
+  const card = document.createElement('div');
+  card.className = 'comment-card';
+  const label = document.createElement('strong');
+  label.textContent = 'Your comment';
+  const content = document.createElement('span');
+  content.textContent = comment.text;
+  const remove = document.createElement('button');
+  remove.className = 'comment-remove';
+  remove.type = 'button';
+  remove.dataset.action = 'remove';
+  remove.dataset.id = id;
+  remove.textContent = 'Remove';
+  card.append(label, content, remove);
+  tools.append(card);
+}
+let paragraphIndex = 0;
+for (const paragraph of main.querySelectorAll('p')) {
+  const id = String(paragraphIndex++);
+  const quote = (paragraph.textContent || '').trim();
+  if (!quote) continue;
+  if (comments[id]?.quote !== quote) delete comments[id];
+  paragraph.dataset.commentId = id;
+  const tools = document.createElement('div');
+  tools.className = 'comment-tools';
+  const trigger = document.createElement('button');
+  trigger.className = 'comment-trigger';
+  trigger.type = 'button';
+  trigger.dataset.action = 'edit';
+  trigger.dataset.id = id;
+  trigger.setAttribute('aria-label', 'Add comment to paragraph');
+  trigger.textContent = '+ Comment';
+  tools.append(trigger);
+  paragraph.after(tools);
+  showComment(id);
+}
+persist();
+main.addEventListener('click', event => {
+  const button = event.target.closest('button[data-action]');
+  if (!button) return;
+  const id = button.dataset.id;
+  const paragraph = paragraphById(id);
+  if (!paragraph) return;
+  const tools = paragraph.nextElementSibling;
+  if (button.dataset.action === 'remove') {
+    delete comments[id];
+    persist();
+    showComment(id);
+    return;
+  }
+  if (button.dataset.action !== 'edit' || tools.querySelector('.comment-editor')) return;
+  const form = document.createElement('div');
+  form.className = 'comment-editor';
+  const input = document.createElement('textarea');
+  input.className = 'comment-input';
+  input.setAttribute('aria-label', 'Comment on this paragraph');
+  input.placeholder = 'Write your review or requested change…';
+  input.value = comments[id]?.text || '';
+  const actions = document.createElement('div');
+  actions.className = 'comment-actions';
+  const save = document.createElement('button');
+  save.type = 'button';
+  save.textContent = 'Save comment';
+  save.addEventListener('click', () => {
+    const text = input.value.trim();
+    if (!text) { input.focus(); return; }
+    comments[id] = { quote: (paragraph.textContent || '').trim(), text, section: tools.closest('.plan-section')?.querySelector('h2')?.textContent || '' };
+    persist();
+    form.remove();
+    showComment(id);
+  });
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'comment-cancel';
+  cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', () => form.remove());
+  actions.append(save, cancel);
+  form.append(input, actions);
+  tools.append(form);
+  input.focus();
+});
+toolbarButton.addEventListener('click', () => {
+  const entries = Object.entries(comments).sort(([a], [b]) => Number(a) - Number(b));
+  if (!entries.length) return;
+  const report = ['# Pace plan comments', ''];
+  for (const [index, [, comment]] of entries.entries()) {
+    const quote = comment.quote.split(String.fromCharCode(10)).map(line => '> ' + line).join(String.fromCharCode(10));
+    const text = comment.text.split(String.fromCharCode(10)).map(line => '   ' + line).join(String.fromCharCode(10));
+    report.push((index + 1) + '. Section: ' + (comment.section || 'Plan'), '   Paragraph:', quote, '   Comment:', text, '');
+  }
+  vscode.postMessage({ type: 'copy-comments', text: report.join(String.fromCharCode(10)), count: entries.length });
+});
+document.addEventListener('click', event => {
+  const link = event.target.closest('a[href]');
+  if (!link) return;
+  const href = link.getAttribute('href');
+  if (!href || href.startsWith('#')) return;
+  event.preventDefault();
+  vscode.postMessage({ type: 'open', href });
+});
+</script></body></html>`;
 }
 
 async function openPlanLink(plan: vscode.Uri, href: string): Promise<void> {
@@ -134,6 +269,11 @@ class PlanEditor implements vscode.CustomTextEditorProvider {
       if (message?.type === "open" && typeof message.href === "string") {
         try { await openPlanLink(document.uri, message.href); }
         catch (error) { void vscode.window.showWarningMessage(`Could not open plan link: ${String(error)}`); }
+      }
+      if (message?.type === "copy-comments" && typeof message.text === "string") {
+        await vscode.env.clipboard.writeText(message.text);
+        const count = Number.isInteger(message.count) ? message.count : 0;
+        void vscode.window.showInformationMessage(`Copied ${count} plan comment${count === 1 ? "" : "s"}.`);
       }
     });
     panel.onDidDispose(() => { change.dispose(); messages.dispose(); });

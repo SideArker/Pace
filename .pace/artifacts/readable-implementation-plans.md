@@ -112,7 +112,9 @@ Keep a future tool boundary possible: plan generation should eventually produce 
 
 The user changed the storage requirement. New Pace-generated artifacts and plans belong to the current conversation in Pace's application data, under `~/.pace/sessions/<project-key>/<conversation-id>/artifacts/`. The session JSON remains beside the conversation directory. Pace stores relative artifact references in the session, so reconnecting a moved project can carry files and references together. `/artifacts` lists the current conversation's files and still shows older project-local `.pace/artifacts/` files. Old files are preserved in place.
 
-The VS Code extension now contributes two readers: the default reader for `.pace-plan.md` and **Pace Markdown Preview** as an optional choice for any `.md` file. Its Plans view finds plans in the current workspace's saved conversations under `~/.pace/sessions/` and legacy project-local plans. The local VSIX version is `0.1.1`.
+The VS Code extension now contributes two readers: the default reader for `.pace-plan.md` and **Pace Markdown Preview** as an optional choice for any `.md` file. Its Plans view finds plans in the current workspace's saved conversations under `~/.pace/sessions/` and legacy project-local plans. The local VSIX version is `0.1.2`.
+
+The reader colors `User Review`, `Info`, `Warning`, and `Decision` callouts purple, blue, red, and yellow. Each plan section inherits its heading's category or first callout's color. Readers can attach comments to rendered paragraphs and copy a numbered report with section names and quoted paragraph text. Comments remain preview state; they do not edit the Markdown plan.
 
 This project note itself remains in the repository's `.pace/artifacts/` folder because it documents implementation work in this repository. Pace-generated conversation artifacts use the new application-data location.
 
