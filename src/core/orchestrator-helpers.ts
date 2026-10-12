@@ -138,16 +138,16 @@ export function structuredHandoff(result: string): string {
   return handoff;
 }
 
-export const pacePlanningStyleInstruction = `PACE PLAN STYLE
-Write in the user's language. Use plain, direct technical language. Keep only facts and steps needed to act. Remove filler, repeated points, generic advice, and research dumps. Explain uncommon terms once.
-Put every user approval request, assumption, and unresolved choice in User Review. Do not create a separate Decision section or Decision callout. If no approval is needed, say so in User Review. Use Info and Warning callouts only when they add useful context or describe a real risk.
-Keep implementation steps short and actionable. Start each step with a verb. Name relevant workspace files and explain why each change is needed. Give concrete verification actions. Link files with workspace-relative Markdown links and line numbers only when known; use inline code for file mentions. Preserve unknowns as unknowns. Do not invent scope or claim work has started.`;
+export const pacePlanningStyleInstruction = readFileSync(
+  new URL("../../skills/pace-planning/SKILL.md", import.meta.url),
+  "utf8",
+).replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, "").trim();
 
 export function planningPrompt(request: string): string {
-  return `${request}\n\n[PLANNING MODE INSTRUCTION]\nYou are in read-only planning mode. Inspect relevant code and produce a concise, actionable implementation plan. Do NOT edit or write code files.\n\n${pacePlanningStyleInstruction}\n\nUse this outline: short title and task summary; User Review; plan at a glance; relevant current state; proposed design; ordered implementation steps; verification; risks. In Markdown, make User Review a section before technical detail and put its content in a > [!USER REVIEW] blockquote. Include the request, expected result, assumptions, and approval needs. Use > [!INFO] or > [!WARNING] only when useful. Keep each section focused. Do not claim implementation has begun.`;
+  return `${request}\n\n[PLANNING MODE INSTRUCTION]\nYou are in read-only planning mode. Inspect relevant code and produce a concise, actionable implementation plan. Do NOT edit or write code files.\n\n${pacePlanningStyleInstruction}`;
 }
 
-export const readablePlanInstruction = `Return final plan as Markdown in the user's language. Follow these Pace planning standards:\n\n${pacePlanningStyleInstruction}\n\nUse a short title and task summary, then a User Review section containing a > [!USER REVIEW] blockquote before technical detail. Include the request, expected result, assumptions, and approval needs. Follow with plan at a glance, current state, proposed design, implementation steps, verification, and risks. Do not paste raw research notes or JSON handoffs.`;
+export const readablePlanInstruction = `Return the final plan as Markdown, not a JSON handoff. Follow these Pace planning standards:\n\n${pacePlanningStyleInstruction}`;
 
 export function executePlanPrompt(plan: string): string {
   return `Implement the following plan. Follow this two-phase execution:

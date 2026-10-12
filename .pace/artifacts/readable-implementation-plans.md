@@ -116,7 +116,7 @@ The VS Code extension now contributes two readers: the default reader for `.pace
 
 The reader colors `User Review`, `Info`, `Warning`, and legacy `Decision` callouts purple, blue, red, and yellow. It also colors matching table-of-contents entries, styles file mentions with type icons, moves navigation left, and widens plan text. Comments copy as compact section groups with quoted text and feedback. Comments remain preview state; they do not edit the Markdown plan.
 
-Pace injects a shared planning style instruction into direct planning, routed planning, and plan verification. It requires concise, direct language, concrete file references and steps, and one User Review section for every approval need. New plans do not use a separate Decision section or callout.
+Pace now bundles `skills/pace-planning/SKILL.md`. Direct planning, routed planning, and plan verification inject that skill's instructions, so the skill is the single source for plan style. It is also discoverable as `/pace-planning` for explicit use. The skill requires concise, direct language, concrete file references and steps, and one User Review section for every approval need. New plans do not use a separate Decision section or callout.
 
 This project note itself remains in the repository's `.pace/artifacts/` folder because it documents implementation work in this repository. Pace-generated conversation artifacts use the new application-data location.
 
