@@ -146,15 +146,10 @@ export async function main() {
           run.preferredHit = item.preferred === shape;
           if (!options.shapeOnly && shape !== "clarify") {
             let handoff: string | undefined;
-            if (shape !== "single") {
+            if (shape === "scout" || shape === "scout_plan") {
               const sideModels: ModelOption[] =
-                shape === "scout" || shape === "scout_plan_execute"
-                  ? models.filter((model) => model.model === "gpt-6-luna")
-                  : models;
-              const objective =
-                shape === "scout" || shape === "scout_plan_execute"
-                  ? prompts.objectives.scout
-                  : prompts.objectives.plan;
+                models.filter((model) => model.model === "gpt-6-luna");
+              const objective = prompts.objectives.scout;
               const sideRequest = stageRequest(
                 item.prompt,
                 turns,
@@ -180,18 +175,6 @@ export async function main() {
                   risks: [],
                 },
               );
-              if (shape === "scout_plan_execute") {
-                const planRequest = stageRequest(
-                  item.prompt, turns, models, prompts.objectives.plan, handoff, models, prompts,
-                );
-                const planIndex = run.decisions.length;
-                const planDecision = await decide(planRequest, prompts.objectives.plan, run);
-                run.decisions[planIndex].route = chosenRoute(planDecision.choice, models);
-                handoff = `Scout report:\n${handoff}\n\nPlanning report:\n${JSON.stringify(item.handoff ?? {
-                  summary: "Fixture plan: implement and verify the requested work.",
-                  findings: [], nextSteps: [], checks: [], risks: [],
-                })}`;
-              }
             }
             const objective = completionObjective(shape, prompts);
             const completionRequest = stageRequest(
