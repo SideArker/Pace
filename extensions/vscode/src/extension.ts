@@ -1,10 +1,34 @@
 import * as path from "node:path";
 import * as crypto from "node:crypto";
+import * as os from "node:os";
+import { readFile, readdir } from "node:fs/promises";
 import * as vscode from "vscode";
 import MarkdownIt from "markdown-it";
 
 const VIEW = "pace.planPreview";
+const MARKDOWN_VIEW = "pace.markdownPreview";
 const PLAN_GLOB = "**/.pace/artifacts/*.pace-plan.md";
+
+async function savedPlans(): Promise<vscode.Uri[]> {
+  const plans: vscode.Uri[] = [];
+  for (const folder of vscode.workspace.workspaceFolders ?? []) {
+    if (folder.uri.scheme !== "file") continue;
+    const project = path.resolve(folder.uri.fsPath);
+    const normalized = process.platform === "win32" ? project.toLowerCase() : project;
+    const key = crypto.createHash("sha256").update(normalized).digest("hex");
+    const root = path.join(os.homedir(), ".pace", "sessions", key);
+    const sessions = await readdir(root, { withFileTypes: true }).catch(() => []);
+    for (const session of sessions) {
+      if (!session.isDirectory() || !/^[0-9a-f-]{36}$/.test(session.name)) continue;
+      const directory = path.join(root, session.name, "artifacts");
+      const files = await readdir(directory, { withFileTypes: true }).catch(() => []);
+      for (const file of files) {
+        if (file.isFile() && file.name.endsWith(".pace-plan.md")) plans.push(vscode.Uri.file(path.join(directory, file.name)));
+      }
+    }
+  }
+  return plans;
+}
 
 class PlanTree implements vscode.TreeDataProvider<vscode.Uri> {
   private readonly changed = new vscode.EventEmitter<void>();
@@ -14,12 +38,13 @@ class PlanTree implements vscode.TreeDataProvider<vscode.Uri> {
     const item = new vscode.TreeItem(path.basename(uri.fsPath), vscode.TreeItemCollapsibleState.None);
     item.resourceUri = uri;
     item.iconPath = new vscode.ThemeIcon("book");
+    if (uri.fsPath.includes(`${path.sep}sessions${path.sep}`)) item.description = path.basename(path.dirname(path.dirname(uri.fsPath))).slice(0, 8);
     item.command = { command: "pace.openPlan", title: "Open Pace Plan", arguments: [uri] };
     item.tooltip = uri.fsPath;
     return item;
   }
   async getChildren(): Promise<vscode.Uri[]> {
-    const files = await vscode.workspace.findFiles(PLAN_GLOB);
+    const files = [...await savedPlans(), ...await vscode.workspace.findFiles(PLAN_GLOB)];
     return files.sort((a, b) => a.fsPath.localeCompare(b.fsPath));
   }
 }
@@ -71,12 +96,23 @@ async function openPlanLink(plan: vscode.Uri, href: string): Promise<void> {
   if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("//")) return;
   const match = /^([^#?]+)(?:#L(\d+))?$/.exec(decodeURIComponent(href));
   if (!match) return;
-  const marker = `${path.sep}.pace${path.sep}artifacts${path.sep}`;
-  const position = plan.fsPath.lastIndexOf(marker);
-  if (position < 0) return;
-  const project = plan.fsPath.slice(0, position);
-  const target = path.resolve(project, match[1]!);
-  if (!target.startsWith(project + path.sep)) return;
+  const legacyMarker = `${path.sep}.pace${path.sep}artifacts${path.sep}`;
+  const position = plan.fsPath.lastIndexOf(legacyMarker);
+  let base = position >= 0 ? plan.fsPath.slice(0, position) : path.dirname(plan.fsPath);
+  let allowedRoot = vscode.workspace.getWorkspaceFolder(plan)?.uri.fsPath ?? base;
+  const sessionId = path.basename(path.dirname(path.dirname(plan.fsPath)));
+  if (/^[0-9a-f-]{36}$/.test(sessionId)) {
+    const sessionFile = path.join(path.dirname(path.dirname(path.dirname(plan.fsPath))), `${sessionId}.json`);
+    try {
+      const saved: unknown = JSON.parse(await readFile(sessionFile, "utf8"));
+      if (saved && typeof saved === "object" && "projectPath" in saved && typeof saved.projectPath === "string") {
+        base = saved.projectPath;
+        allowedRoot = base;
+      }
+    } catch { /* Keep ordinary relative-link behavior. */ }
+  }
+  const target = path.resolve(base, match[1]!);
+  if (!target.startsWith(allowedRoot + path.sep)) return;
   const uri = vscode.Uri.file(target);
   const document = await vscode.workspace.openTextDocument(uri);
   const editor = await vscode.window.showTextDocument(document, { preview: true, viewColumn: vscode.ViewColumn.Beside });
@@ -112,12 +148,15 @@ export function activate(context: vscode.ExtensionContext): void {
   watcher.onDidDelete(() => tree.refresh(), null, context.subscriptions);
   context.subscriptions.push(watcher);
   context.subscriptions.push(vscode.window.registerTreeDataProvider("pace.plans", tree));
-  context.subscriptions.push(vscode.window.registerCustomEditorProvider(VIEW, new PlanEditor(context.extensionUri), { supportsMultipleEditorsPerDocument: true }));
+  const editor = new PlanEditor(context.extensionUri);
+  context.subscriptions.push(vscode.window.registerCustomEditorProvider(VIEW, editor, { supportsMultipleEditorsPerDocument: true }));
+  context.subscriptions.push(vscode.window.registerCustomEditorProvider(MARKDOWN_VIEW, editor, { supportsMultipleEditorsPerDocument: true }));
+  context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => tree.refresh()));
   context.subscriptions.push(vscode.commands.registerCommand("pace.refreshPlans", () => tree.refresh()));
   context.subscriptions.push(vscode.commands.registerCommand("pace.openPlan", async (uri?: vscode.Uri) => {
     const file = uri ?? vscode.window.activeTextEditor?.document.uri;
     if (!file) return;
-    await vscode.commands.executeCommand("vscode.openWith", file, VIEW);
+    await vscode.commands.executeCommand("vscode.openWith", file, file.fsPath.endsWith(".pace-plan.md") ? VIEW : MARKDOWN_VIEW);
   }));
 }
 

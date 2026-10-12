@@ -2,35 +2,93 @@
   "name": "pace-plan-reader",
   "displayName": "Pace",
   "description": "Read Pace implementation plans in VS Code.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "pace-local",
   "private": true,
-  "repository": { "type": "git", "url": "https://github.com/SideArker/Pace.git" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SideArker/Pace.git"
+  },
   "license": "ISC",
-  "engines": { "vscode": "^1.90.0" },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
   "main": "./out/extension.js",
   "scripts": {
     "build": "tsc -p .",
     "package": "npm run build && vsce package",
     "test": "npm run build"
   },
-  "activationEvents": ["onCustomEditor:pace.planPreview", "onView:pace.plans"],
+  "activationEvents": [
+    "onCustomEditor:pace.planPreview",
+    "onCustomEditor:pace.markdownPreview",
+    "onView:pace.plans"
+  ],
   "contributes": {
-    "customEditors": [{
-      "viewType": "pace.planPreview",
-      "displayName": "Pace Plan Reader",
-      "selector": [{ "filenamePattern": "*.pace-plan.md" }],
-      "priority": "default"
-    }],
-    "commands": [
-      { "command": "pace.openPlan", "title": "Pace: Open Plan Reader", "icon": "$(book)" },
-      { "command": "pace.refreshPlans", "title": "Pace: Refresh Plans", "icon": "$(refresh)" }
+    "customEditors": [
+      {
+        "viewType": "pace.planPreview",
+        "displayName": "Pace Plan Reader",
+        "selector": [
+          {
+            "filenamePattern": "*.pace-plan.md"
+          }
+        ],
+        "priority": "default"
+      },
+      {
+        "viewType": "pace.markdownPreview",
+        "displayName": "Pace Markdown Preview",
+        "selector": [
+          {
+            "filenamePattern": "*.md"
+          }
+        ],
+        "priority": "option"
+      }
     ],
-    "menus": { "view/title": [{ "command": "pace.refreshPlans", "when": "view == pace.plans", "group": "navigation" }] },
-    "viewsContainers": { "activitybar": [{ "id": "pace", "title": "Pace", "icon": "media/pace.svg" }] },
-    "views": { "pace": [{ "id": "pace.plans", "name": "Plans" }] }
+    "commands": [
+      {
+        "command": "pace.openPlan",
+        "title": "Pace: Open Plan Reader",
+        "icon": "$(book)"
+      },
+      {
+        "command": "pace.refreshPlans",
+        "title": "Pace: Refresh Plans",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "pace.refreshPlans",
+          "when": "view == pace.plans",
+          "group": "navigation"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "pace",
+          "title": "Pace",
+          "icon": "media/pace.svg"
+        }
+      ]
+    },
+    "views": {
+      "pace": [
+        {
+          "id": "pace.plans",
+          "name": "Plans"
+        }
+      ]
+    }
   },
-  "dependencies": { "markdown-it": "^14.1.0" },
+  "dependencies": {
+    "markdown-it": "^14.1.0"
+  },
   "devDependencies": {
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^22.0.0",
