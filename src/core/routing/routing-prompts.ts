@@ -9,8 +9,8 @@ const defaultPath = fileURLToPath(
   new URL("../../../routing-prompts.default.json", import.meta.url),
 );
 export const routingPromptFile = "routing-prompts.json";
-const choiceIds = ["single", "scout", "plan_execute", "scout_plan_execute", "plan_verify", "clarify"] as const;
-const legacyChoiceIds = ["single", "scout", "plan_execute", "clarify"] as const;
+const choiceIds = ["single", "scout", "plan", "scout_plan", "clarify"] as const;
+const retiredChoiceIds = ["plan_execute", "scout_plan_execute", "plan_verify"] as const;
 
 export type RoutingPrompts = {
   version: 1;
@@ -92,10 +92,10 @@ export function parseRoutingPrompts(value: unknown): RoutingPrompts {
   for (const id of ["continue", "replace", "aside"] as const) nonempty(relationChoices[id], `taskRelation.choices.${id}`);
   if (Object.keys(relationChoices).length !== 3)
     throw new Error("routing-prompts.json: taskRelation.choices contains an unknown choice");
-  for (const id of legacyChoiceIds) nonempty(choices[id], `workflow.choices.${id}`);
-  if (choices.scout_plan_execute !== undefined) nonempty(choices.scout_plan_execute, "workflow.choices.scout_plan_execute");
-  if (choices.plan_verify !== undefined) nonempty(choices.plan_verify, "workflow.choices.plan_verify");
-  if (Object.keys(choices).some(id => !choiceIds.includes(id as (typeof choiceIds)[number])))
+  for (const id of ["single", "scout", "clarify"] as const) nonempty(choices[id], `workflow.choices.${id}`);
+  if (choices.plan !== undefined) nonempty(choices.plan, "workflow.choices.plan");
+  if (choices.scout_plan !== undefined) nonempty(choices.scout_plan, "workflow.choices.scout_plan");
+  if (Object.keys(choices).some(id => ![...choiceIds, ...retiredChoiceIds].includes(id as (typeof choiceIds)[number])))
     throw new Error(
       "routing-prompts.json: workflow.choices contains an unknown choice",
     );
@@ -182,6 +182,7 @@ export function parseRoutingPrompts(value: unknown): RoutingPrompts {
 const defaultText = readFileSync(defaultPath, "utf8");
 // The first shipped editable default. Refresh only this exact file, never user edits.
 const legacyDefaultSha256 = new Set([
+  "8d5313f5f956f5a0408b9d9b0cf133ee5d5db9b7ee7c75826763f329e26dee36",
   "b7598bd321ec4aec3ffb4826e9ff665a342a3c67d0bfe4ecf31cd2567782fc21",
   "d4ab14ad9720473b296e2456111b859c226eae99f1a3dd580d57c319dc8441d9",
   "32e9fecdb9404f8b4a756c0a62b46b7a3655297a331981385ba335e9b58b383a",
@@ -193,9 +194,7 @@ export const DEFAULT_ROUTING_PROMPTS = parseRoutingPrompts(
 
 export function completionObjective(shape: string, prompts: RoutingPrompts): string {
   if (shape === "single") return prompts.objectives.single;
-  if (shape === "plan_verify") return "Review the read-only plan and return a corrected final plan without implementing it";
-  if (shape === "plan_execute" || shape === "scout_plan_execute")
-    return prompts.objectives.afterPlanHandoff;
+  if (shape === "plan" || shape === "scout_plan") return prompts.objectives.plan;
   return prompts.objectives.afterHandoff;
 }
 

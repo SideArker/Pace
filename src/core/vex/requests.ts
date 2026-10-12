@@ -104,13 +104,13 @@ export function shapeRequest(
   );
   const options = models.some((model) => model.model === "gpt-6-luna")
     ? configuredChoices
-    : configuredChoices.filter((choice) => choice.id !== "scout" && choice.id !== "scout_plan_execute");
+    : configuredChoices.filter((choice) => choice.id !== "scout" && choice.id !== "scout_plan");
   return {
     question: prompts.workflow.question,
     context: taskContext(prompt, turns, models, prompts, state),
     options,
     decisionType: "routing",
-    constraints: `${prompts.workflow.constraints}\n\n${prompts.routingRules.workflowResolution}`,
+    constraints: `${prompts.workflow.constraints}\n\n${prompts.routingRules.workflowResolution}\n\nPlan and scout_plan stop after a read-only saved plan. Only /execute may start implementation from that plan. Retired plan_execute, scout_plan_execute, and plan_verify choices are unavailable.`,
   };
 }
 export function stageRequest(
