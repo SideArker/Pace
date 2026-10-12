@@ -42,6 +42,7 @@ Use one watcher for each saved conversation root associated with an open workspa
 ## Verification
 
 - [ ] Open this file as a `.pace-plan.md` plan. Confirm the User Review, Info, Decision, and Warning callouts render.
+- [ ] Confirm section headings and dividers carry category colors without adding a second panel around callouts.
 - [ ] Use the contents links to jump between sections.
 - [ ] Click a source-file link above. Confirm VS Code opens the file beside the plan at the cited line.
 - [ ] Create, edit, and remove a conversation plan while VS Code is open. Confirm the Plans view updates once per change burst.
