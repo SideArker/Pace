@@ -79,17 +79,21 @@ it('reconnects a moved project while preserving sessions, thread and active sele
   first.turns.push({ prompt: 'Keep this', result: 'Kept', at: '2026-01-01' });
   const second = newSession(oldPath, 'auto');
   second.threadId = 'codex-thread-2';
+  first.planArtifact = 'artifacts/plan.pace-plan.md';
   await store.save(first);
   await store.save(second);
+  await mkdir(join(store.conversationDir(oldPath, first.id), 'artifacts'), { recursive: true });
+  await writeFile(join(store.conversationDir(oldPath, first.id), first.planArtifact), '# Plan\n');
   await rename(oldPath, newPath);
 
   expect(await store.reconnectProject(oldPath, newPath)).toBe(2);
   expect((await store.list(newPath)).map(item => item.id).sort()).toEqual([first.id, second.id].sort());
   expect((await store.latest(newPath))?.id).toBe(second.id);
   expect((await store.list(newPath)).find(item => item.id === first.id)).toMatchObject({
-    projectPath: normalizeProject(newPath), threadId: 'codex-thread-1',
+    projectPath: normalizeProject(newPath), threadId: 'codex-thread-1', planArtifact: 'artifacts/plan.pace-plan.md',
     turns: [{ prompt: 'Keep this', result: 'Kept', at: '2026-01-01' }],
   });
+  expect(await readFile(join(store.conversationDir(newPath, first.id), first.planArtifact), 'utf8')).toBe('# Plan\n');
   expect(await store.listProjects()).toMatchObject([{ projectPath: normalizeProject(newPath), exists: true }]);
   expect((await readdir(join(dir, 'storage', 'reconnected'))).length).toBe(1);
 });

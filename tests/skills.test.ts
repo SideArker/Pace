@@ -41,7 +41,8 @@ it('validates trusted folders before execution and passes skill names to the run
   } };
   const orchestrator = new Orchestrator(new PaceStore(join(dir, 'store')), runner, singleVex('0:medium'));
   await orchestrator.turn('Check this', newSession(dir, 'auto'), config, () => {});
-  expect(folders).toEqual([trusted]);
+  expect(folders[0]).toBe(trusted);
+  expect(folders[1]).toMatch(/\/artifacts$/);
   expect(received).toContain('review: Review code changes.');
   await orchestrator.turn('/review inspect this', newSession(dir, 'auto'), config, () => {});
   expect(received).toContain(`/review (${join(skillFolder, 'review', 'SKILL.md')})`);
