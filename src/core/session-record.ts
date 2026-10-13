@@ -94,6 +94,7 @@ export function parseSession(value: unknown, project: string): Session | undefin
       (turn: unknown) =>
         isRecord(turn) &&
         typeof turn.prompt === "string" &&
+        (turn.displayPrompt === undefined || typeof turn.displayPrompt === "string") &&
         typeof turn.result === "string" &&
         typeof turn.at === "string" &&
         (turn.route === undefined || (isRecord(turn.route) && (turn.route.model === undefined || typeof turn.route.model === "string") && (turn.route.effort === undefined || EFFORTS.includes(turn.route.effort as (typeof EFFORTS)[number])))) &&
@@ -137,7 +138,9 @@ export function parseSession(value: unknown, project: string): Session | undefin
     (value.deferredTurn !== undefined && (!isRecord(value.deferredTurn) ||
       typeof value.deferredTurn.prompt !== "string" || !value.deferredTurn.prompt.trim() ||
       typeof value.deferredTurn.retryAt !== "string" || !Number.isFinite(Date.parse(value.deferredTurn.retryAt)) ||
-      !Number.isInteger(value.deferredTurn.attempt) || (value.deferredTurn.attempt as number) < 1)) ||
+      !Number.isInteger(value.deferredTurn.attempt) || (value.deferredTurn.attempt as number) < 1 ||
+      (value.deferredTurn.intent !== undefined && value.deferredTurn.intent !== "verify_plan" && value.deferredTurn.intent !== "execute_plan") ||
+      (value.deferredTurn.displayPrompt !== undefined && typeof value.deferredTurn.displayPrompt !== "string"))) ||
     (value.kind !== undefined && value.kind !== "normal" && value.kind !== "planning") ||
     (value.plan !== undefined && (typeof value.plan !== "string" || value.plan.length > 50000)) ||
     (value.planArtifact !== undefined && (typeof value.planArtifact !== "string" || !/^(?:\.pace\/)?artifacts\/[^/\\]+\.pace-plan\.md$/.test(value.planArtifact))) ||
@@ -182,6 +185,8 @@ export function parseSessionSummary(value: unknown, project: string): Session | 
           prompt: value.deferredTurn.prompt,
           retryAt: value.deferredTurn.retryAt,
           attempt: value.deferredTurn.attempt,
+          ...(value.deferredTurn.intent === "verify_plan" || value.deferredTurn.intent === "execute_plan" ? { intent: value.deferredTurn.intent as "verify_plan" | "execute_plan" } : {}),
+          ...(typeof value.deferredTurn.displayPrompt === "string" ? { displayPrompt: value.deferredTurn.displayPrompt } : {}),
         }
       : undefined;
 

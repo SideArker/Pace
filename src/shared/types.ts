@@ -38,6 +38,7 @@ export type Config = {
 };
 export type TurnSummary = {
   prompt: string;
+  displayPrompt?: string;
   result: string;
   at: string;
   route?: Route;
@@ -115,7 +116,7 @@ export type Session = {
   activeSkills?: string[];
   tasks?: Task[];
   activeTask?: { originalRequest: string; instructions: string[]; latestOutcome?: string; failed?: boolean };
-  deferredTurn?: { prompt: string; retryAt: string; attempt: number };
+  deferredTurn?: { prompt: string; retryAt: string; attempt: number; intent?: "verify_plan" | "execute_plan"; displayPrompt?: string };
   skillOptions?: Record<string, string>;
   turns: TurnSummary[];
   compactions?: CompactionRecord[];

@@ -2,10 +2,22 @@ import { Codex, type CodexOptions, type ThreadEvent, type ThreadOptions, type Us
 import type { Route } from "../shared/types.js";
 import { realpath } from "node:fs/promises";
 import { vexServerPath } from "../core/vex/client.js";
-import type { CodexRunner, Execution, Progress } from "./codex-types.js";
+import type { CodexRunner, Execution, Progress, RunnerMode } from "./codex-types.js";
 import { codexOptions } from "./codex-options.js";
 import { eventProgress } from "./codex-events.js";
 import { turnImageInput } from "./image-input.js";
+export async function sdkThreadOptions(project: string, route: Route, mode: RunnerMode, trustedFolders: string[], artifactDirectory?: string): Promise<ThreadOptions> {
+  if (mode === "planning" && !artifactDirectory) throw new Error("Planning requires an artifact directory");
+  return {
+    workingDirectory: await realpath(mode === "planning" ? artifactDirectory! : project),
+    sandboxMode: mode === "side" ? "read-only" : "workspace-write",
+    approvalPolicy: "never",
+    networkAccessEnabled: false,
+    model: route.model,
+    modelReasoningEffort: route.effort,
+    additionalDirectories: mode === "main" ? trustedFolders : [],
+  };
+}
 /** Direct TypeScript SDK runner retained for SDK-focused integrations. */
 export class SdkRunner implements CodexRunner {
   private codex: Codex;
@@ -24,20 +36,12 @@ export class SdkRunner implements CodexRunner {
     threadId: string | undefined,
     onProgress: (progress: Progress) => void | Promise<void>,
     signal?: AbortSignal,
-    mode: "main" | "side" = "main",
+    mode: RunnerMode = "main",
     trustedFolders: string[] = [],
     _approvalMode?: "full-access" | "request-approval" | "limited",
     artifactDirectory?: string,
   ): Promise<Execution> {
-    const options: ThreadOptions = {
-      workingDirectory: await realpath(project),
-      sandboxMode: mode === "side" ? "read-only" : "workspace-write",
-      approvalPolicy: "never",
-      networkAccessEnabled: false,
-      model: route.model,
-      modelReasoningEffort: route.effort,
-      additionalDirectories: mode === "main" ? trustedFolders : [],
-    };
+    const options = await sdkThreadOptions(project, route, mode, trustedFolders, artifactDirectory);
     const thread = threadId ? this.codex.resumeThread(threadId, options) : this.codex.startThread(options);
     const input = turnImageInput(prompt, mode, artifactDirectory).map(item => item.type === "localImage"
       ? { type: "local_image" as const, path: item.path }

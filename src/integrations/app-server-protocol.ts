@@ -2,6 +2,7 @@ import type { Usage } from "@openai/codex-sdk";
 import type { ApprovalMode, Route } from "../shared/types.js";
 import { turnImageInput } from "./image-input.js";
 import { isRecord } from "../shared/config.js";
+import type { RunnerMode } from "./codex-types.js";
 export function appUsage(value: unknown): Usage | undefined {
   if (!isRecord(value)) return undefined;
   const last = isRecord(value.last) ? value.last : value;
@@ -25,7 +26,7 @@ export function appServerThreadParams(
   cwd: string,
   route: Route,
   threadId: string | undefined,
-  mode: "main" | "side",
+  mode: RunnerMode,
   approvalMode: ApprovalMode = "request-approval",
 ) {
   const policy = approvalMode === "full-access" ? "never" : approvalMode === "limited" ? "untrusted" : "on-request";
@@ -34,8 +35,8 @@ export function appServerThreadParams(
     ...(threadId ? { threadId } : {}),
     ...(route.model ? { model: route.model } : {}),
     cwd,
-    approvalPolicy: mode === "side" ? "never" : policy,
-    sandbox: mode === "side" ? "read-only" : sandbox,
+    approvalPolicy: mode !== "main" ? "never" : policy,
+    sandbox: mode === "side" ? "read-only" : mode === "planning" ? "workspace-write" : sandbox,
     serviceName: "pace",
   };
 }
@@ -45,7 +46,7 @@ export function appServerTurnParams(
   cwd: string,
   route: Route,
   threadId: string,
-  mode: "main" | "side",
+  mode: RunnerMode,
   trustedFolders: string[],
   approvalMode: ApprovalMode = "request-approval",
   artifactDirectory?: string,
@@ -55,9 +56,10 @@ export function appServerTurnParams(
     threadId,
     input: turnImageInput(prompt, mode, artifactDirectory),
     cwd,
-    approvalPolicy: mode === "side" ? "never" : policy,
+    approvalPolicy: mode !== "main" ? "never" : policy,
     sandboxPolicy: mode === "side"
       ? { type: "readOnly", networkAccess: false }
+      : mode === "planning" ? { type: "workspaceWrite", writableRoots: [cwd], networkAccess: false, excludeTmpdirEnvVar: true, excludeSlashTmp: true }
       : approvalMode === "full-access" ? { type: "dangerFullAccess" }
       : approvalMode === "limited" ? { type: "readOnly", networkAccess: false }
       : { type: "workspaceWrite", writableRoots: [cwd, ...trustedFolders], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false },

@@ -2,7 +2,7 @@ import type { ApprovalMode, Route } from "../shared/types.js";
 import { realpath } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import type { Usage } from "@openai/codex-sdk";
-import { CodexRunError, type ApprovalDecision, type CodexRunner, type Execution, type Progress, type UserAnswers, type UserQuestion } from "./codex-types.js";
+import { CodexRunError, type ApprovalDecision, type CodexRunner, type Execution, type Progress, type RunnerMode, type UserAnswers, type UserQuestion } from "./codex-types.js";
 import { AppServer, isRecord, type AppServerConnection, type JsonRecord } from "./app-server-process.js";
 import { appServerThreadParams, appServerTurnParams, appUsage } from "./app-server-protocol.js";
 import { appItemProgress, fileChangeProgress } from "./codex-events.js";
@@ -133,14 +133,15 @@ export class AppServerRunner implements CodexRunner {
     threadId: string | undefined,
     onProgress: (progress: Progress) => void | Promise<void>,
     signal?: AbortSignal,
-    mode: "main" | "side" = "main",
+    mode: RunnerMode = "main",
     trustedFolders: string[] = [],
     approvalMode: ApprovalMode = "request-approval",
     artifactDirectory?: string,
   ): Promise<Execution> {
     if (signal?.aborted) throw new Error("Turn cancelled");
     const { realpath } = await import("node:fs/promises");
-    const cwd = await realpath(project);
+    if (mode === "planning" && !artifactDirectory) throw new Error("Planning requires an artifact directory");
+    const cwd = await realpath(mode === "planning" ? artifactDirectory! : project);
     signal?.throwIfAborted();
     let result = "";
     let usage: Usage | undefined;
@@ -275,6 +276,10 @@ export class AppServerRunner implements CodexRunner {
       const isCommandApproval = message.method === "item/commandExecution/requestApproval";
       const isFileApproval = message.method === "item/fileChange/requestApproval";
       if (!isCommandApproval && !isFileApproval) {
+        server.respond(message.id, { decision: "decline" });
+        return;
+      }
+      if (mode !== "main") {
         server.respond(message.id, { decision: "decline" });
         return;
       }

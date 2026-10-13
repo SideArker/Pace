@@ -1,5 +1,5 @@
 import type { Usage } from "@openai/codex-sdk";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import type { Config, Route, Session } from "../shared/types.js";
 import type { CodexRunner, Progress } from "../integrations/codex.js";
 import type { UserAnswers } from "../integrations/codex-types.js";
@@ -18,10 +18,10 @@ import {
 import { costForUsage, pricedModels, refreshVersionManifest } from "./routing/pricing.js";
 import { advanceTask, retainedTask, type TaskRelation } from "./active-task.js";
 import { PaceStore } from "./sessions.js";
-import { addUsage, awaitRouting, planningPrompt, readablePlanInstruction, retainedConversationPrompt } from "./orchestrator-helpers.js";
+import { addUsage, awaitRouting, loadPlanningInstructions, planningPrompt, readablePlanInstruction, retainedConversationPrompt } from "./orchestrator-helpers.js";
 import { runPlanningStage } from "./workflow-stages.js";
 import { checkpointHandoff } from "./checkpoint.js";
-import { artifactDirectory, artifactPath, artifactSnapshot, changedArtifacts, savePlanArtifact } from "./system/artifacts.js";
+import { artifactDirectory, artifactPath, artifactSnapshot, changedArtifacts, planArtifactReference, savePlanArtifact } from "./system/artifacts.js";
 import { validRoute } from "../shared/config.js";
 import { existingFolder } from "./system/folders.js";
 import {
@@ -90,6 +90,7 @@ export class Orchestrator {
     signal?: AbortSignal,
     activateOnSave: boolean | (() => boolean) = true,
     intent?: "verify_plan" | "execute_plan",
+    displayPrompt?: string,
   ): Promise<TurnOutcome> {
     const startedAt = performance.now();
     const prompts =
@@ -331,7 +332,7 @@ export class Orchestrator {
                     },
                   ]
                 : []),
-              { label: "Plan only", description: "Save a read-only plan; use /execute later" },
+              { label: "Plan only", description: "Save a plan in conversation artifacts; use /execute later" },
             ];
             if (session.route?.model) {
               options.push({
@@ -456,13 +457,26 @@ export class Orchestrator {
         session.kind = "planning";
         await save();
         if (intent !== "verify_plan")
-          systemMessage("Pace switched to read-only planning mode. Use /verify or /execute after the plan is saved.");
+          systemMessage("Pace switched to planning mode. Only conversation artifacts are writable; use /verify or /execute after the plan is saved.");
       }
       const conversationArtifacts = artifactDirectory(this.store, session);
+      await mkdir(conversationArtifacts, { recursive: true });
+      const planningTurn = session.kind === "planning" && intent !== "verify_plan";
+      const separatePlan = planningTurn && /\b(?:separate|another|new) plan\b/i.test(prompt) && !!session.planArtifact;
+      const planReference = planningTurn ? planArtifactReference(session.id, prompt, session.planArtifact, separatePlan) : undefined;
+      const planPath = planReference ? artifactPath(this.store, session, planReference) : undefined;
+      let planBefore: string | undefined;
+      if (planPath) {
+        try { planBefore = await readFile(planPath, "utf8"); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+        if (planBefore === undefined && session.plan && !separatePlan) {
+          planBefore = session.plan;
+          await writeFile(planPath, planBefore, "utf8");
+        }
+      }
       const artifactsBefore = await artifactSnapshot(conversationArtifacts).catch(
         () => new Map<string, number>(),
       );
-      await mkdir(conversationArtifacts, { recursive: true });
       const trustedFolders = await Promise.all(
         (config.trustedFolders ?? []).map(existingFolder),
       );
@@ -541,7 +555,7 @@ export class Orchestrator {
         : baseExecutionPrompt;
       const executionPrompt = intent === "verify_plan"
         ? `${promptWithHandoff}\n\nWork read only. Independently verify the plan and return corrected Markdown.\n\n${readablePlanInstruction}`
-        : session.kind === "planning" ? planningPrompt(promptWithHandoff) : promptWithHandoff;
+        : planningTurn ? planningPrompt(promptWithHandoff, session.projectPath, planPath!, planBefore ?? session.plan, await loadPlanningInstructions()) : promptWithHandoff;
       const checkpoint = intent !== "verify_plan" && session.checkpoint?.threadId === session.threadId &&
         session.turns.some(turn => turn.at === session.checkpoint?.sourceTurnAt)
         ? session.checkpoint : undefined;
@@ -573,7 +587,7 @@ export class Orchestrator {
           } else onProgress(progress);
         },
         signal,
-        intent === "verify_plan" || session.kind === "planning" ? "side" : "main",
+        intent === "verify_plan" ? "side" : planningTurn ? "planning" : "main",
         trustedFolders,
         config.approvalMode,
         conversationArtifacts,
@@ -587,12 +601,29 @@ export class Orchestrator {
         estimatedCostUsd: costForUsage(route, execution.usage),
       });
       if (execution.threadId) session.threadId = execution.threadId;
-      const planTurn = intent === "verify_plan" || session.kind === "planning";
       let displayedResult = execution.result;
-      if (planTurn) {
+      let planChanged = false;
+      if (intent === "verify_plan") {
         session.plan = execution.result;
         session.planArtifact = await savePlanArtifact(conversationArtifacts, session.id, prompt, execution.result, session.planArtifact);
         displayedResult = `Plan saved: ${artifactPath(this.store, session, session.planArtifact)}\n\nOpen it with the Pace VS Code extension. The full plan remains available to /verify and /execute.`;
+      } else if (planningTurn) {
+        let planAfter: string | undefined;
+        try { planAfter = await readFile(planPath!, "utf8"); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+        if (planAfter !== undefined && !planAfter.trim() && planBefore?.trim()) {
+          await writeFile(planPath!, planBefore, "utf8");
+          planAfter = planBefore;
+        }
+        if (planAfter?.trim() && planAfter !== planBefore) {
+          planChanged = true;
+          session.plan = planAfter;
+          session.planArtifact = planReference;
+          const summary = execution.result.trim().split(/\r?\n/, 1)[0] ?? "";
+          displayedResult = `${summary.length > 240 || /^\s*#/.test(summary) ? "Plan updated." : summary || "Plan updated."}\n\nPlan: ${planPath}`;
+        } else if (!planAfter?.trim() || /\b(?:revise|update|edit|change|modify|rewrite|amend|add|remove|include|expand|fix|adjust|create|draft|write)\b/i.test(prompt) && !/^\s*(?:how|what|why|where|when|which)\b/i.test(prompt)) {
+          displayedResult = `The plan file was not changed: ${planPath}`;
+        }
       }
       if (checkpoint && session.threadId === checkpoint.threadId) {
         session.threadId = undefined;
@@ -611,6 +642,7 @@ export class Orchestrator {
           () => new Map<string, number>(),
         ),
       );
+      if (planChanged && planReference && !artifacts.includes(planReference)) artifacts.push(planReference);
       const durationMs = Math.round(performance.now() - startedAt);
       const usage = addUsage(stages);
       const estimatedCostUsd = stages.every(
@@ -622,6 +654,7 @@ export class Orchestrator {
         ...session.turns,
         {
           prompt,
+          ...(displayPrompt ? { displayPrompt } : {}),
           result: displayedResult,
           at: new Date().toISOString(),
           route,

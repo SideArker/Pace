@@ -1,5 +1,7 @@
 import { existsSync, statSync, readFileSync } from "node:fs";
-import { resolve, isAbsolute } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { resolve, isAbsolute, join, dirname } from "node:path";
 import type { Usage } from "@openai/codex-sdk";
 import type { Session, TurnSummary } from "../shared/types.js";
 import type { RoutingPrompts } from "./routing/routing-prompts.js";
@@ -138,16 +140,26 @@ export const pacePlanningStyleInstruction = readFileSync(
   "utf8",
 ).replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, "").trim();
 
-export function planningPrompt(request: string): string {
-  return `${request}\n\n[PLANNING MODE INSTRUCTION]\nYou are in read-only planning mode. Inspect relevant code and produce a concise, actionable implementation plan. Do NOT edit or write code files.\n\n${pacePlanningStyleInstruction}`;
+export async function loadPlanningInstructions(file = join(homedir(), ".pace", "planning-instructions.md")): Promise<string> {
+  await mkdir(dirname(file), { recursive: true });
+  try {
+    await writeFile(file, `${pacePlanningStyleInstruction}\n`, { flag: "wx" });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+  return (await readFile(file, "utf8")).trim();
 }
 
-export const readablePlanInstruction = `Return the final plan as Markdown, not a JSON handoff. Follow these Pace planning standards:\n\n${pacePlanningStyleInstruction}`;
+export function planningPrompt(request: string, projectPath: string, planPath: string, currentPlan: string | undefined, instructions: string): string {
+  return `${request}\n\n[PLANNING MODE INSTRUCTION]\nThe project is at ${projectPath}. Read its files for source context. Only ${dirname(planPath)} is writable. Do not edit project files, request approval, or use the network.\nThe saved plan path is ${planPath}. ${currentPlan === undefined ? "Create the first plan there if the user requested a plan." : "For a requested revision, edit this same file unless the user explicitly requested a separate plan."}\nAnswer questions directly in chat without changing the plan file. Write the plan only when the user requests a plan or a change to it. After a file edit, reply with a short summary and the absolute path.\n${currentPlan === undefined ? "There is no saved plan yet." : `Complete saved plan text (the file is the source of truth):\n${currentPlan}`}\n\nPlanning instructions:\n${instructions}`;
+}
+
+export const readablePlanInstruction = `Return the corrected plan as standalone Markdown, not a JSON handoff. Use User Review first only when a user decision is needed, followed by Risk, Task description, Comparison when applicable, Implementation steps, and Verification last. Include the original goal, constraints, verified findings, relevant paths, assumptions, acceptance criteria, and commands. The executor will not have access to this review conversation.`;
 
 export function executePlanPrompt(plan: string): string {
-  return `Implement the following plan. Follow this two-phase execution:
-PHASE 1 (EXPLORE & GROUND): First, explore and inspect all files mentioned in the plan to verify existing signatures, imports, AST structure, and tests. Do not make code edits yet during this initial verification.
-PHASE 2 (IMPLEMENT & VERIFY): Implement the changes step-by-step according to the verified plan, run tests, and confirm that all requirements are met.
+  return `Implement the following plan. This is the full handoff from a planning conversation. You are a fresh agent and cannot access that conversation, its thread, or its tool history. Follow this two-phase execution:
+PHASE 1 (EXPLORE & GROUND): Inspect the current repository and all files cited in the plan. Check its findings against existing signatures, imports, code structure, and tests. Do not edit code during this phase.
+PHASE 2 (IMPLEMENT & VERIFY): Follow the plan's ordered steps and constraints, run its listed verification commands, and check its acceptance criteria. Report discrepancies, failed checks, and unfinished work.
 
 Implementation Plan:
 ${plan}`;

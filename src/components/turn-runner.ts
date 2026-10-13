@@ -60,7 +60,7 @@ export function createTurnRunner({
   getConfig: () => Config;
   readLimits?: () => Promise<UsageLimits | undefined>;
 }) {
-  const runTurn = async (text: string, turnSession: Session, turnConfig: Config, intent?: "verify_plan" | "execute_plan") => {
+  const runTurn = async (text: string, turnSession: Session, turnConfig: Config, intent?: "verify_plan" | "execute_plan", displayPrompt?: string) => {
     let tasksChanged = false;
     let deferredForUsage = false;
     let activeRoute: Route = turnSession.route;
@@ -73,7 +73,7 @@ export function createTurnRunner({
     rememberSession(turnSession);
     jobs.current.set(sessionId, { session: turnSession, controller, prompt: text });
     setRunningIds([...jobs.current.keys()]);
-    addFor(sessionId, "you", text);
+    addFor(sessionId, displayPrompt ? "system" : "you", displayPrompt ?? text);
     setStatusFor(sessionId, "Starting…");
     if (!turnSession.turns.length && !turnSession.title && !titleAborts.current.has(sessionId)) {
       const luna = turnConfig.models.find(model => model.enabled !== false && model.model === "gpt-6-luna");
@@ -147,6 +147,7 @@ export function createTurnRunner({
         controller.signal,
         () => activeSessionId.current === sessionId,
         intent,
+        displayPrompt,
       );
       if (turnSession.deferredTurn?.prompt === text) {
         turnSession.deferredTurn = undefined;
@@ -197,7 +198,7 @@ export function createTurnRunner({
         const limits = await readLimits().catch(() => undefined);
         const retryAt = usageRetryAt(error, limits);
         const attempt = (turnSession.deferredTurn?.prompt === text ? turnSession.deferredTurn.attempt : 0) + 1;
-        turnSession.deferredTurn = { prompt: text, retryAt: retryAt.toISOString(), attempt };
+        turnSession.deferredTurn = { prompt: text, retryAt: retryAt.toISOString(), attempt, intent, displayPrompt };
         try {
           await store.save(turnSession, () => activeSessionId.current === sessionId);
           deferredForUsage = true;

@@ -27,6 +27,7 @@ export class CodexRunError extends Error {
     this.name = "Error";
   }
 }
+export type RunnerMode = "main" | "side" | "planning";
 export interface CodexRunner {
   run(
     prompt: string,
@@ -35,7 +36,7 @@ export interface CodexRunner {
     threadId: string | undefined,
     onProgress: (progress: Progress) => void | Promise<void>,
     signal?: AbortSignal,
-    mode?: "main" | "side",
+    mode?: RunnerMode,
     trustedFolders?: string[],
     approvalMode?: ApprovalMode,
     artifactDirectory?: string,

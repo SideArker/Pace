@@ -9,7 +9,7 @@ import { PromptQueue } from "../core/prompt-queue.js";
 import { AppServerRunner } from "../integrations/codex.js";
 import { VexRouter } from "../core/vex/client.js";
 import { EFFORTS, withModels } from "../shared/config.js";
-import { artifactDirectory, artifactPath, artifactSnapshot, legacyArtifactDirectory } from "../core/system/artifacts.js";
+import { artifactDirectory, artifactPath, artifactSnapshot, legacyArtifactDirectory, savePlanArtifact } from "../core/system/artifacts.js";
 import { existingFolder, sameFolder } from "../core/system/folders.js";
 import { configuredSkills, defaultSkillFolder, enabledSkills, skillCommand, skillOption, skillRequest, type Skill } from "../core/system/skills.js";
 import { formatTurnFooter, modelName } from "./turn-format.js";
@@ -211,7 +211,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const [approval, setApproval] = useState<Extract<Progress, { kind: "approval" }>>();
   const [question, setQuestion] = useState<PendingQuestion>();
   const [pendingRevision, setPendingRevision] = useState(0);
-  const runTurnRef = useRef<((text: string, turnSession: Session, turnConfig: Config, intent?: "verify_plan" | "execute_plan") => Promise<void>) | undefined>(undefined);
+  const runTurnRef = useRef<((text: string, turnSession: Session, turnConfig: Config, intent?: "verify_plan" | "execute_plan", displayPrompt?: string) => Promise<void>) | undefined>(undefined);
   const [approvalMenu, setApprovalMenu] = useState(false);
   const [vexState, setVexState] = useState<
     "connecting" | "connected" | "failed"
@@ -726,8 +726,8 @@ export default function App({ onClear }: { onClear: () => void }) {
     for (const turn of targetSession.turns) {
       newLines.push({
         id: id++,
-        role: "you",
-        text: turn.prompt,
+        role: turn.displayPrompt ? "system" : "you",
+        text: turn.displayPrompt ?? turn.prompt,
         spaceBefore: newLines.length > 0,
       });
       for (const action of turn.activities ?? []) newLines.push({
@@ -933,14 +933,15 @@ export default function App({ onClear }: { onClear: () => void }) {
         ...(loadedPlan ? { plan: loadedPlan, title: planTitle } : {}),
       };
       try {
+        if (loadedPlan) updated.planArtifact = await savePlanArtifact(artifactDirectory(store, updated), updated.id, "imported plan", loadedPlan, updated.planArtifact);
         await store.save(updated);
         setSession(updated);
         rememberSession(updated);
         if (loadedPlan && planPath) {
-          add("info", `◈ Loaded plan from ${basename(planPath)} (${loadedPlan.split("\n").length} lines). Prompts are read-only; use /verify or /execute.`);
-          add("codex", `Plan: ${planPath}. Full content is available to /verify and /execute.`);
+          add("info", `◈ Loaded plan from ${basename(planPath)} (${loadedPlan.split("\n").length} lines). Project files remain read-only; use /verify or /execute.`);
+          add("codex", `Plan: ${artifactPath(store, updated, updated.planArtifact!)}. Full content is available to /verify and /execute.`);
         } else {
-          add("info", "◈ Planning mode active (purple plan). Prompts are read-only; explore and draft your plan.");
+          add("info", "◈ Planning mode active (purple plan). Explore and draft a plan in conversation artifacts.");
           if (promptText && config) void runTurnRef.current?.(promptText, updated, config);
         }
       } catch (error) {
@@ -963,6 +964,7 @@ export default function App({ onClear }: { onClear: () => void }) {
     }
     activeSessionId.current = fresh.id;
     try {
+      if (loadedPlan) fresh.planArtifact = await savePlanArtifact(artifactDirectory(store, fresh), fresh.id, "imported plan", loadedPlan);
       await store.save(fresh);
       stopSideQuestion();
       onClear();
@@ -985,10 +987,10 @@ export default function App({ onClear }: { onClear: () => void }) {
       setStatus("Ready");
       setApproval(undefined);
       if (loadedPlan && planPath) {
-        add("info", `◈ Started planning session with ${basename(planPath)} (${loadedPlan.split("\n").length} lines). Work is read-only; use /verify or /execute.`);
-        add("codex", `Plan: ${planPath}. Full content is available to /verify and /execute.`);
+        add("info", `◈ Started planning session with ${basename(planPath)} (${loadedPlan.split("\n").length} lines). Plan artifacts are writable; use /verify or /execute.`);
+        add("codex", `Plan: ${artifactPath(store, fresh, fresh.planArtifact!)}. Full content is available to /verify and /execute.`);
       } else {
-        add("info", "◈ Started fresh planning session (purple plan). Work is read-only; explore and draft your plan.");
+        add("info", "◈ Started fresh planning session (purple plan). Explore and draft a plan in conversation artifacts.");
         if (promptText && config) void runTurnRef.current?.(promptText, fresh, config);
       }
     } catch (error) {
@@ -1001,7 +1003,9 @@ export default function App({ onClear }: { onClear: () => void }) {
   };
   const handleExecutePlan = async (arg?: string) => {
     if (!session) return;
-    let targetPlan = session.plan;
+    let targetPlan = session.planArtifact
+      ? tryReadPlanFile(artifactPath(store, session, session.planArtifact), session.projectPath)?.content
+      : session.plan;
     let extraPrompt: string | undefined;
     let loadedFromPath: string | undefined;
 
@@ -1020,10 +1024,6 @@ export default function App({ onClear }: { onClear: () => void }) {
       } else {
         extraPrompt = trimmed;
       }
-    }
-
-    if (!targetPlan) {
-      targetPlan = session.turns.slice().reverse().find(t => !t.failed)?.result;
     }
 
     if (!targetPlan) {
@@ -1073,7 +1073,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       const prompt = extraPrompt
         ? `${executePlanPrompt(targetPlan)}\n\nAdditional user instructions:\n${extraPrompt}`
         : executePlanPrompt(targetPlan);
-      if (config) void runTurnRef.current?.(prompt, fresh, config, "execute_plan");
+      if (config) void runTurnRef.current?.(prompt, fresh, config, "execute_plan", "Executing saved plan in a fresh agent session. The plan details are hidden from this chat.");
     } catch (error) {
       activeSessionId.current = previousId;
       if (previousId) setLines(sessionLines.current.get(previousId) ?? []);
@@ -1085,7 +1085,9 @@ export default function App({ onClear }: { onClear: () => void }) {
   const handleVerifyPlan = async (arg?: string) => {
     if (!session) return;
     const planFile = arg ? tryReadPlanFile(arg, session.projectPath) : undefined;
-    const targetPlan = planFile?.content || session.plan || session.turns.slice().reverse().find(t => !t.failed)?.result;
+    const targetPlan = planFile?.content || (session.planArtifact
+      ? tryReadPlanFile(artifactPath(store, session, session.planArtifact), session.projectPath)?.content
+      : session.plan);
     if (!targetPlan) {
       add("error", "No plan found to verify. Provide a plan file (e.g. /verify plan.md) or create one with /plan.");
       return;
@@ -1790,7 +1792,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         if (Date.parse(pending.retryAt) > Date.now()) continue;
         if (!sessionLines.current.has(target.id)) renderSessionTurns(target);
         addFor(target.id, "meta", "Codex usage retry time reached. Resuming saved request…");
-        void runTurn(pending.prompt, target, latestConfig.current ?? config);
+        void runTurn(pending.prompt, target, latestConfig.current ?? config, pending.intent, pending.displayPrompt);
       }
     };
     check();

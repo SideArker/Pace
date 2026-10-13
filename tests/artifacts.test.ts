@@ -40,28 +40,51 @@ it("records a Markdown artifact created during a coding turn and finds it later"
   expect(artifactPath(store, session, outcome.artifacts[0]!)).toBe(join(directory, "plan.md"));
 });
 
-it("persists a read-only planning result while keeping full text for execution", async () => {
+it("uses one editable plan file while questions remain in chat", async () => {
   root = await mkdtemp(join(tmpdir(), "pace-plan-artifact-"));
   const project = join(root, "project");
   await mkdir(project);
   const store = new PaceStore(join(root, "store"));
   const config: Config = { routingMode: "auto", models: [{ model: "gpt-6-sol", efforts: ["medium"] }], defaultRoute: { model: "gpt-6-sol", effort: "medium" } };
-  const fullPlan = "# Improve plans\n\n## User Review\n\n> [!USER REVIEW]\n> Make plans easier to read.\n\n## Steps\n\n1. Save plan.\n";
-  let mode: string | undefined;
-  const runner = { async run(_prompt: string, _project: string, _route: unknown, _thread: unknown, _progress: unknown, _signal: unknown, receivedMode?: string) {
-    mode = receivedMode;
-    return { result: fullPlan, completed: true };
+  const fullPlan = "# Improve plans\n\n## Task description\n\nMake plans clearer.\n\n## Implementation steps\n\n1. Save plan.\n\n## Verification\n\n- Read the file.\n";
+  const revisedPlan = fullPlan.replace("Make plans clearer.", "Make plans clearer and shorter.");
+  const calls: { mode?: string; path?: string; prompt: string }[] = [];
+  const runner = { async run(runPrompt: string, _project: string, _route: unknown, _thread: unknown, _progress: unknown, _signal: unknown, receivedMode?: string, trustedFolders?: string[], _approval?: unknown, artifactRoot?: string) {
+    const path = runPrompt.match(/The saved plan path is (\/[^\n]+?\.pace-plan\.md)/)?.[1];
+    calls.push({ mode: receivedMode, path, prompt: runPrompt });
+    expect(receivedMode).toBe("planning");
+    expect(trustedFolders).toContain(artifactRoot);
+    expect(path).toBeTruthy();
+    if (calls.length === 1) await writeFile(path!, fullPlan);
+    if (calls.length === 3) await writeFile(path!, revisedPlan);
+    return { result: calls.length === 2 ? "The verification section lists the check." : "Updated the plan summary.", completed: true };
   } };
   const session = newSession(project, "auto", "planning");
-  const vex = { choose: async (request: VexRequest) => decision(request, request.options.some(option => option.id === "plan") ? "plan" : "0:medium") };
-  const outcome = await new Orchestrator(store, runner, vex).turn("Improve plans", session, config, () => {});
-  expect(mode).toBe("side");
-  expect(outcome.session.plan).toBe(fullPlan);
-  expect(outcome.result).toContain(".pace-plan.md");
-  expect(outcome.result).not.toContain("## Steps");
-  expect(outcome.artifacts).toEqual([outcome.session.planArtifact]);
-  expect(await readFile(artifactPath(store, session, outcome.session.planArtifact!), "utf8")).toBe(fullPlan);
-  expect((await store.latest(project))?.planArtifact).toBe(outcome.session.planArtifact);
+  const vex = { choose: async (request: VexRequest) => decision(request, request.options.some(option => option.id === "continue") ? "continue" : request.options.some(option => option.id === "plan") ? "plan" : "0:medium") };
+  const orchestrator = new Orchestrator(store, runner, vex);
+  const first = await orchestrator.turn("Improve plans", session, config, () => {});
+  expect(first.session.plan).toBe(fullPlan);
+  expect(first.result).toContain(".pace-plan.md");
+  expect(first.result).not.toContain("## Implementation steps");
+  expect(first.artifacts).toEqual([first.session.planArtifact]);
+  const initialPath = first.session.planArtifact;
+  const question = await orchestrator.turn("What check does the plan list?", session, config, () => {});
+  expect(question.result).toBe("The verification section lists the check.");
+  expect(question.artifacts).toEqual([]);
+  expect(session.plan).toBe(fullPlan);
+  const revision = await orchestrator.turn("Revise the plan to make it shorter", session, config, () => {});
+  expect(revision.result).toContain("Updated the plan summary.");
+  expect(revision.result).toContain(calls[0]!.path!);
+  expect(session.planArtifact).toBe(initialPath);
+  expect(session.plan).toBe(revisedPlan);
+  expect(revision.artifacts).toEqual([initialPath]);
+  expect(calls.map(call => call.path)).toEqual([calls[0]!.path, calls[0]!.path, calls[0]!.path]);
+  expect(await readFile(artifactPath(store, session, session.planArtifact!), "utf8")).toBe(revisedPlan);
+  const unchanged = await orchestrator.turn("Revise the plan again", session, config, () => {});
+  expect(unchanged.result).toContain("The plan file was not changed");
+  expect(unchanged.artifacts).toEqual([]);
+  expect(session.plan).toBe(revisedPlan);
+  expect((await store.latest(project))?.planArtifact).toBe(initialPath);
 });
 
 it("continues to resolve old project artifact references without moving files", async () => {

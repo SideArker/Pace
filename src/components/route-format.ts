@@ -9,7 +9,7 @@ const routeName = (model?: string, effort?: string) =>
 function describeChoice(choice: string): string {
   if (choice === "single") return "one execution stage";
   if (choice === "scout") return "read only scan, then implementation";
-  if (choice === "plan") return "save a read-only plan";
+  if (choice === "plan") return "save a plan artifact";
   if (choice === "scout_plan") return "read-only scan, then saved plan";
   if (choice === "clarify") return "ask for clarification";
   return /^\d+:[a-z]+$/.test(choice) ? `saved choice ${choice} (model label unavailable)` : choice;

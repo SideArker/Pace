@@ -12,13 +12,17 @@ export function artifactPath(store: PaceStore, session: Session, reference: stri
   return reference;
 }
 
-export async function savePlanArtifact(directory: string, sessionId: string, request: string, plan: string, existing?: string): Promise<string> {
+export function planArtifactReference(sessionId: string, request: string, existing?: string, separate = false): string {
+  if (!separate && /^artifacts\/[^/\\]+\.pace-plan\.md$/.test(existing ?? "")) return existing!;
   const slug = request.normalize("NFKD").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48).replace(/-$/, "") || "implementation";
-  const name = /^artifacts\/([^/\\]+\.pace-plan\.md)$/.exec(existing ?? "")?.[1]
-    ?? `${slug}-${sessionId.slice(0, 8)}.pace-plan.md`;
+  return `artifacts/${slug}-${sessionId.slice(0, 8)}${separate ? `-${Date.now()}` : ""}.pace-plan.md`;
+}
+
+export async function savePlanArtifact(directory: string, sessionId: string, request: string, plan: string, existing?: string): Promise<string> {
+  const reference = planArtifactReference(sessionId, request, existing);
   await mkdir(directory, { recursive: true });
-  await writeFile(join(directory, name), `${plan.trim()}\n`, "utf8");
-  return `artifacts/${name}`;
+  await writeFile(join(directory, reference.slice("artifacts/".length)), `${plan.trim()}\n`, "utf8");
+  return reference;
 }
 
 /** A small workspace convention for Codex, only when the user mentions artifacts. */

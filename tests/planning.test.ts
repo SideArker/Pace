@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { planningPrompt, executePlanPrompt, verifyPlanPrompt } from "../src/core/orchestrator-helpers.js";
+import { planningPrompt, loadPlanningInstructions, executePlanPrompt, verifyPlanPrompt } from "../src/core/orchestrator-helpers.js";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { getTheme, GlobalColors } from "../src/shared/colors.js";
 import { newSession } from "../src/core/session-model.js";
 
@@ -19,11 +22,24 @@ describe("Planning helpers and theme", () => {
     expect(session.turns).toEqual([]);
   });
 
-  it("formats planning prompt with read-only instructions", () => {
-    const prompt = planningPrompt("Add user authentication");
+  it("formats planning prompt with artifact scope and existing plan", () => {
+    const prompt = planningPrompt("Add user authentication", "/project", "/artifacts/plan.md", "# Existing plan", "custom guidance");
     expect(prompt).toContain("Add user authentication");
-    expect(prompt).toContain("read-only planning mode");
-    expect(prompt).toContain("Do NOT edit or write code files");
+    expect(prompt).toContain("Only /artifacts is writable");
+    expect(prompt).toContain("# Existing plan");
+    expect(prompt).toContain("custom guidance");
+    expect(prompt).toContain("Answer questions directly in chat");
+  });
+
+  it("seeds instructions once and reloads user edits", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pace-planning-instructions-"));
+    const file = join(root, "planning-instructions.md");
+    try {
+      expect(await loadPlanningInstructions(file)).toContain("fresh agent");
+      expect(await readFile(file, "utf8")).toContain("Implementation steps");
+      await writeFile(file, "My custom instructions\n");
+      expect(await loadPlanningInstructions(file)).toBe("My custom instructions");
+    } finally { await rm(root, { recursive: true, force: true }); }
   });
 
   it("formats execution prompt with explore then implement phases", () => {
@@ -31,6 +47,8 @@ describe("Planning helpers and theme", () => {
     const prompt = executePlanPrompt(plan);
     expect(prompt).toContain("PHASE 1 (EXPLORE & GROUND)");
     expect(prompt).toContain("PHASE 2 (IMPLEMENT & VERIFY)");
+    expect(prompt).toContain("cannot access that conversation");
+    expect(prompt).toContain("acceptance criteria");
     expect(prompt).toContain(plan);
   });
 

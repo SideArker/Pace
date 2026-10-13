@@ -110,7 +110,7 @@ export function shapeRequest(
     context: taskContext(prompt, turns, models, prompts, state),
     options,
     decisionType: "routing",
-    constraints: `${prompts.workflow.constraints}\n\n${prompts.routingRules.workflowResolution}\n\nPlan and scout_plan stop after a read-only saved plan. Only /execute may start implementation from that plan. Retired plan_execute, scout_plan_execute, and plan_verify choices are unavailable.`,
+    constraints: `${prompts.workflow.constraints}\n\n${prompts.routingRules.workflowResolution}\n\nPlan and scout_plan stop after saving a plan in conversation artifacts. Project files remain read-only in planning mode. Only /execute may start implementation from that plan. Retired plan_execute, scout_plan_execute, and plan_verify choices are unavailable.`,
   };
 }
 export function stageRequest(

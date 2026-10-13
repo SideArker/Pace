@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Orchestrator } from '../src/core/orchestrator.js';
@@ -10,12 +10,19 @@ import type { Config, Route } from '../src/shared/types.js';
 import type { VexRequest } from '../src/core/vex/client.js';
 import { decision } from './routing-fixture.js';
 import { checkpointDue } from '../src/core/checkpoint.js';
+import { sdkThreadOptions } from '../src/integrations/sdk-runner.js';
+import { executePlanPrompt } from '../src/core/orchestrator-helpers.js';
 
 let dir: string;
 afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true }); });
 const config: Config = { routingMode: 'auto', defaultRoute: { model: 'gpt-6-sol', effort: 'high' }, models: [
   { model: 'gpt-6-luna', efforts: ['low'] }, { model: 'gpt-6-sol', efforts: ['medium', 'high'] },
 ] };
+async function writePromptPlan(prompt: string, content: string) {
+  const path = prompt.match(/The saved plan path is (\/[^\n]+?\.pace-plan\.md)/)?.[1];
+  if (!path) throw new Error('Planning prompt omitted artifact path');
+  await writeFile(path, content);
+}
 
 it('keeps the existing thread when routing changes model', async () => {
   dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
@@ -192,12 +199,13 @@ it('runs a read-only scout, reroutes after handoff, and sums stage costs', async
   expect(outcome.routing).toHaveLength(4);
 });
 
-it('passes scout findings to a terminal read-only plan', async () => {
+it('passes scout findings to a terminal artifact plan', async () => {
   dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
   const calls: { prompt: string; mode?: string; threadId?: string }[] = [];
   const usage = { input_tokens: 100, cached_input_tokens: 20, cache_write_input_tokens: 0, output_tokens: 10, reasoning_output_tokens: 2 };
   const runner: CodexRunner = { async run(prompt, _project, _route, threadId, _progress, _signal, mode) {
     calls.push({ prompt, mode, threadId });
+    if (calls.length === 2) await writePromptPlan(prompt, '# Plan parser migration\n\nScout found parser.\n');
     return { result: calls.length === 1
       ? JSON.stringify({ summary: 'Scout found parser', findings: [], nextSteps: [], checks: [], risks: [] })
       : '# Plan parser migration\n\nScout found parser.\n', threadId: calls.length === 2 ? 'plan-thread' : undefined, completed: true, usage };
@@ -209,7 +217,7 @@ it('passes scout findings to a terminal read-only plan', async () => {
   } };
   const session = newSession('/example/project', 'auto');
   const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('Implement broad migration', session, config, () => {});
-  expect(calls.map(call => call.mode)).toEqual(['side', 'side']);
+  expect(calls.map(call => call.mode)).toEqual(['side', 'planning']);
   expect(calls[1]?.prompt).toContain('Scout found parser');
   expect(calls[1]?.prompt).toContain('pace-planning');
   expect(calls.map(call => call.threadId)).toEqual([undefined, undefined]);
@@ -398,17 +406,18 @@ it('uses a corrected scout report for the completion stage', async () => {
   expect(outcome.stages[1]?.handoff).toContain('Parser lives here');
 });
 
-it('stops after a Vex-selected read-only plan', async () => {
+it('stops after a Vex-selected artifact plan', async () => {
   dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
   const calls: { mode?: string; prompt: string; route: Route }[] = [];
   const runner: CodexRunner = { async run(prompt, _project, route, _id, _progress, _signal, mode) {
     calls.push({ prompt, route, mode });
+    await writePromptPlan(prompt, '# Parser plan\n\n1. Update src/parser.ts.\n');
     return { result: '# Parser plan\n\n1. Update src/parser.ts.\n', completed: true };
   } };
   const vex = { choose: async (request: VexRequest) => decision(request, request.options[0]?.id === 'single' ? 'plan' : '1:high') };
   const session = newSession('/example/project', 'auto');
   const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('Plan parser changes', session, config, () => {});
-  expect(calls.map(call => call.mode)).toEqual(['side']);
+  expect(calls.map(call => call.mode)).toEqual(['planning']);
   expect(calls[0]?.prompt).toContain('[PLANNING MODE INSTRUCTION]');
   expect(outcome.stages.map(stage => stage.route)).toEqual([{ model: 'gpt-6-sol', effort: 'high' }]);
   expect(session.kind).toBe('planning');
@@ -430,13 +439,19 @@ it('keeps explicit plan execution on writable completion routes', async () => {
     requests.push(request);
     return decision(request, request.options[0]?.id === 'single' ? 'single' : '1:high');
   } };
+  const fullPlan = '# Parser plan\n\n## Implementation steps\n\n1. Update src/parser.ts.\n\n## Verification\n\n- Run npm test.\n';
+  const displayPrompt = 'Executing saved plan in a fresh agent session. The plan details are hidden from this chat.';
   const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn(
-    'Implement this saved plan', session, config, () => {}, undefined, true, 'execute_plan',
+    executePlanPrompt(fullPlan), session, config, () => {}, undefined, true, 'execute_plan', displayPrompt,
   );
   expect(requests[0]?.options.map(option => option.id)).toEqual(['single', 'scout']);
   expect(requests[0]?.constraints).toContain('The user invoked /execute');
   expect(calls.map(call => call.mode)).toEqual(['main']);
+  expect(calls[0]?.prompt).toContain(fullPlan);
+  expect(calls[0]?.prompt).toContain('cannot access that conversation');
   expect(outcome.result).toBe('Implemented');
+  expect(session.turns.at(-1)?.displayPrompt).toBe(displayPrompt);
+  expect((await new PaceStore(dir).latest(session.projectPath))?.turns.at(-1)?.displayPrompt).toBe(displayPrompt);
   expect(session.kind).toBe('normal');
 });
 
@@ -445,6 +460,7 @@ it('loads an older manual plan-verify workflow as plan only', async () => {
   const calls: { prompt: string; route: Route; mode?: string }[] = [];
   const runner: CodexRunner = { async run(prompt, _project, route, _id, _progress, _signal, mode) {
     calls.push({ prompt, route, mode });
+    await writePromptPlan(prompt, '# Legacy plan\n\nUpdate parser.\n');
     return { result: '# Legacy plan\n\nUpdate parser.\n', completed: true };
   } };
   const session = newSession(dir, 'manual');
@@ -452,7 +468,7 @@ it('loads an older manual plan-verify workflow as plan only', async () => {
     plan: { model: 'gpt-6-luna', effort: 'low' }, final: { model: 'gpt-6-sol', effort: 'high' },
   } };
   const outcome = await new Orchestrator(new PaceStore(dir), runner, { choose: async () => { throw new Error('Vex should not choose explicit routes'); } }).turn('Plan parser', session, config, () => {});
-  expect(calls.map(call => call.mode)).toEqual(['side']);
+  expect(calls.map(call => call.mode)).toEqual(['planning']);
   expect(outcome.result).toContain('.pace-plan.md');
   expect(outcome.session.plan).toContain('Legacy plan');
   expect(outcome.stages.map(stage => stage.route)).toEqual([{ model: 'gpt-6-sol', effort: 'high' }]);
@@ -611,6 +627,23 @@ it('uses Codex app-server sandbox values for threads and turns', () => {
   expect(appServerTurnParams('work', '/project', {}, 'thread-1', 'main', ['/trusted'], 'limited')).toMatchObject({ approvalPolicy: 'untrusted', sandboxPolicy: { type: 'readOnly', networkAccess: false } });
   expect(appServerTurnParams('Create an artifact', '/project', {}, 'thread-1', 'main', ['/conversation/artifacts'], 'request-approval', '/conversation/artifacts').input[0]).toMatchObject({ text: expect.stringContaining('/conversation/artifacts') });
   expect(appServerTurnParams('scout', '/project', {}, 'thread-1', 'side', [], 'full-access')).toMatchObject({ approvalPolicy: 'never', sandboxPolicy: { type: 'readOnly' } });
+  expect(appServerThreadParams('/conversation/artifacts', {}, undefined, 'planning', 'full-access')).toMatchObject({ cwd: '/conversation/artifacts', approvalPolicy: 'never', sandbox: 'workspace-write' });
+  const planning = appServerTurnParams('plan', '/conversation/artifacts', {}, 'thread-1', 'planning', ['/project', '/trusted'], 'full-access');
+  expect(planning).toMatchObject({ cwd: '/conversation/artifacts', approvalPolicy: 'never', sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['/conversation/artifacts'], networkAccess: false, excludeTmpdirEnvVar: true, excludeSlashTmp: true } });
+  expect(JSON.stringify(planning)).not.toContain('/project');
+  expect(JSON.stringify(planning)).not.toContain('/trusted');
+});
+
+it('scopes SDK planning writes to the artifact working directory', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-sdk-policy-'));
+  const project = join(dir, 'project');
+  const artifacts = join(dir, 'artifacts');
+  await mkdir(project);
+  await mkdir(artifacts);
+  expect(await sdkThreadOptions(project, {}, 'planning', [project, join(dir, 'trusted')], artifacts)).toMatchObject({
+    workingDirectory: artifacts, sandboxMode: 'workspace-write', approvalPolicy: 'never', networkAccessEnabled: false, additionalDirectories: [],
+  });
+  expect(await sdkThreadOptions(project, {}, 'side', [artifacts], artifacts)).toMatchObject({ workingDirectory: project, sandboxMode: 'read-only', additionalDirectories: [] });
 });
 
 it('declines a destructive Codex command before showing an approval prompt', async () => {
@@ -638,6 +671,35 @@ it('declines a destructive Codex command before showing an approval prompt', asy
     };
   });
   await runner.run('work', process.cwd(), {}, undefined, event => { progress.push(event); });
+  expect(decisions).toEqual([{ decision: 'decline' }]);
+  expect(progress.some(event => event.kind === 'approval')).toBe(false);
+});
+
+it('declines planning approval requests without prompting', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-planning-approval-'));
+  const artifacts = join(dir, 'artifacts');
+  await mkdir(artifacts);
+  let onMessage!: (message: { method: string; params: unknown }) => void;
+  let onRequest!: (message: { id: number; method: string; params: unknown }) => void;
+  const decisions: unknown[] = [];
+  const progress: Progress[] = [];
+  const runner = new AppServerRunner(message => {
+    onMessage = message;
+    return {
+      setRequestHandler(handler) { onRequest = handler; },
+      notify() {}, kill() {},
+      respond(_id, decision) {
+        decisions.push(decision);
+        queueMicrotask(() => onMessage({ method: 'turn/completed', params: { turn: { status: 'completed' } } }));
+      },
+      async request(method: string) {
+        if (method === 'thread/start') return { thread: { id: 'thread-1' } };
+        if (method === 'turn/start') queueMicrotask(() => onRequest({ id: 7, method: 'item/fileChange/requestApproval', params: {} }));
+        return {};
+      },
+    };
+  });
+  await runner.run('plan', dir, {}, undefined, event => { progress.push(event); }, undefined, 'planning', [dir], 'full-access', artifacts);
   expect(decisions).toEqual([{ decision: 'decline' }]);
   expect(progress.some(event => event.kind === 'approval')).toBe(false);
 });
