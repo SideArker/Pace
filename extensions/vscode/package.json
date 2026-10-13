@@ -1,8 +1,8 @@
 {
   "name": "pace-plan-reader",
   "displayName": "Pace",
-  "description": "Read Pace implementation plans in VS Code.",
-  "version": "0.1.4",
+  "description": "Read Pace implementation plans and artifacts in VS Code.",
+  "version": "0.1.7",
   "publisher": "pace-local",
   "private": true,
   "repository": {
@@ -17,11 +17,12 @@
   "scripts": {
     "build": "tsc -p .",
     "package": "npm run build && vsce package",
-    "test": "npm run build"
+    "test": "npm run build && node --test tests/*.test.cjs"
   },
   "activationEvents": [
     "onCustomEditor:pace.planPreview",
     "onCustomEditor:pace.markdownPreview",
+    "onView:pace.artifacts",
     "onView:pace.plans"
   ],
   "contributes": {
@@ -49,9 +50,19 @@
     ],
     "commands": [
       {
+        "command": "pace.openArtifact",
+        "title": "Pace: Open Artifact",
+        "icon": "$(book)"
+      },
+      {
         "command": "pace.openPlan",
         "title": "Pace: Open Plan Reader",
         "icon": "$(book)"
+      },
+      {
+        "command": "pace.refreshArtifacts",
+        "title": "Pace: Refresh Artifacts",
+        "icon": "$(refresh)"
       },
       {
         "command": "pace.refreshPlans",
@@ -62,8 +73,8 @@
     "menus": {
       "view/title": [
         {
-          "command": "pace.refreshPlans",
-          "when": "view == pace.plans",
+          "command": "pace.refreshArtifacts",
+          "when": "view == pace.artifacts || view == pace.plans",
           "group": "navigation"
         }
       ]
@@ -80,8 +91,8 @@
     "views": {
       "pace": [
         {
-          "id": "pace.plans",
-          "name": "Plans"
+          "id": "pace.artifacts",
+          "name": "Artifacts"
         }
       ]
     }
@@ -94,6 +105,7 @@
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.90.0",
     "@vscode/vsce": "^3.6.0",
+    "jsdom": "^26.1.0",
     "typescript": "^5.9.0"
   }
 }

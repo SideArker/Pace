@@ -1,53 +1,153 @@
 import * as path from "node:path";
 import * as crypto from "node:crypto";
 import * as os from "node:os";
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, realpath } from "node:fs/promises";
 import * as vscode from "vscode";
 import MarkdownIt from "markdown-it";
 
 const VIEW = "pace.planPreview";
 const MARKDOWN_VIEW = "pace.markdownPreview";
-const PLAN_GLOB = "**/.pace/artifacts/*.pace-plan.md";
+const ARTIFACT_GLOB = "**/.pace/artifacts/**";
 
-async function savedPlans(): Promise<vscode.Uri[]> {
-  const plans: vscode.Uri[] = [];
-  for (const folder of vscode.workspace.workspaceFolders ?? []) {
+export async function collectFiles(directory: string): Promise<string[]> {
+  const result: string[] = [];
+  const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    if (entry.name.startsWith(".")) continue;
+    const full = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      result.push(...await collectFiles(full));
+    } else if (entry.isFile()) {
+      result.push(full);
+    }
+  }
+  return result;
+}
+
+export async function savedArtifacts(): Promise<vscode.Uri[]> {
+  const artifacts: vscode.Uri[] = [];
+  const folders = vscode.workspace.workspaceFolders ?? [];
+  const sessionsBase = path.join(os.homedir(), ".pace", "sessions");
+
+  if (folders.length === 0) {
+    const projectKeys = await readdir(sessionsBase, { withFileTypes: true }).catch(() => []);
+    for (const projectKey of projectKeys) {
+      if (!projectKey.isDirectory() || !/^[0-9a-f]{64}$/.test(projectKey.name)) continue;
+      const root = path.join(sessionsBase, projectKey.name);
+      const sessions = await readdir(root, { withFileTypes: true }).catch(() => []);
+      for (const session of sessions) {
+        if (!session.isDirectory() || !/^[0-9a-f-]{36}$/.test(session.name)) continue;
+        const directory = path.join(root, session.name, "artifacts");
+        const files = await collectFiles(directory);
+        for (const file of files) artifacts.push(vscode.Uri.file(file));
+      }
+    }
+    return artifacts;
+  }
+
+  const targetKeys = new Set<string>();
+  for (const folder of folders) {
     if (folder.uri.scheme !== "file") continue;
     const project = path.resolve(folder.uri.fsPath);
     const normalized = process.platform === "win32" ? project.toLowerCase() : project;
-    const key = crypto.createHash("sha256").update(normalized).digest("hex");
-    const root = path.join(os.homedir(), ".pace", "sessions", key);
-    const sessions = await readdir(root, { withFileTypes: true }).catch(() => []);
-    for (const session of sessions) {
-      if (!session.isDirectory() || !/^[0-9a-f-]{36}$/.test(session.name)) continue;
-      const directory = path.join(root, session.name, "artifacts");
-      const files = await readdir(directory, { withFileTypes: true }).catch(() => []);
-      for (const file of files) {
-        if (file.isFile() && file.name.endsWith(".pace-plan.md")) plans.push(vscode.Uri.file(path.join(directory, file.name)));
+    targetKeys.add(crypto.createHash("sha256").update(normalized).digest("hex"));
+    try {
+      const real = await realpath(project);
+      const normalizedReal = process.platform === "win32" ? real.toLowerCase() : real;
+      targetKeys.add(crypto.createHash("sha256").update(normalizedReal).digest("hex"));
+    } catch {}
+  }
+
+  const projectEntries = await readdir(sessionsBase, { withFileTypes: true }).catch(() => []);
+  for (const projectEntry of projectEntries) {
+    if (!projectEntry.isDirectory() || !/^[0-9a-f]{64}$/.test(projectEntry.name)) continue;
+    let isMatch = targetKeys.has(projectEntry.name);
+    const root = path.join(sessionsBase, projectEntry.name);
+
+    if (!isMatch) {
+      const sessionFiles = await readdir(root, { withFileTypes: true }).catch(() => []);
+      for (const sessionFile of sessionFiles) {
+        if (!sessionFile.isFile() || !sessionFile.name.endsWith(".json") || sessionFile.name === "active.json") continue;
+        try {
+          const raw: unknown = JSON.parse(await readFile(path.join(root, sessionFile.name), "utf8"));
+          if (raw && typeof raw === "object" && "projectPath" in raw && typeof raw.projectPath === "string") {
+            const sessProj = path.resolve(raw.projectPath);
+            const sessNorm = process.platform === "win32" ? sessProj.toLowerCase() : sessProj;
+            for (const folder of folders) {
+              const wfProj = path.resolve(folder.uri.fsPath);
+              const wfNorm = process.platform === "win32" ? wfProj.toLowerCase() : wfProj;
+              if (sessNorm === wfNorm || wfNorm.startsWith(sessNorm + path.sep) || sessNorm.startsWith(wfNorm + path.sep)) {
+                isMatch = true;
+                break;
+              }
+            }
+          }
+        } catch {}
+        if (isMatch) break;
+      }
+    }
+
+    if (isMatch) {
+      const sessions = await readdir(root, { withFileTypes: true }).catch(() => []);
+      for (const session of sessions) {
+        if (!session.isDirectory() || !/^[0-9a-f-]{36}$/.test(session.name)) continue;
+        const directory = path.join(root, session.name, "artifacts");
+        const files = await collectFiles(directory);
+        for (const file of files) artifacts.push(vscode.Uri.file(file));
       }
     }
   }
-  return plans;
+
+  return artifacts;
 }
 
-class PlanTree implements vscode.TreeDataProvider<vscode.Uri> {
+export async function workspaceArtifacts(): Promise<vscode.Uri[]> {
+  const uris: vscode.Uri[] = [];
+  for (const folder of vscode.workspace.workspaceFolders ?? []) {
+    if (folder.uri.scheme !== "file") continue;
+    const legacyDir = path.join(folder.uri.fsPath, ".pace", "artifacts");
+    const files = await collectFiles(legacyDir);
+    for (const file of files) uris.push(vscode.Uri.file(file));
+  }
+  return uris;
+}
+
+export class ArtifactTree implements vscode.TreeDataProvider<vscode.Uri> {
   private readonly changed = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this.changed.event;
   refresh(): void { this.changed.fire(); }
   getTreeItem(uri: vscode.Uri): vscode.TreeItem {
     const item = new vscode.TreeItem(path.basename(uri.fsPath), vscode.TreeItemCollapsibleState.None);
     item.resourceUri = uri;
-    item.iconPath = new vscode.ThemeIcon("book");
-    if (uri.fsPath.includes(`${path.sep}sessions${path.sep}`)) item.description = path.basename(path.dirname(path.dirname(uri.fsPath))).slice(0, 8);
-    item.command = { command: "pace.openPlan", title: "Open Pace Plan", arguments: [uri] };
+    item.iconPath = uri.fsPath.endsWith(".pace-plan.md")
+      ? new vscode.ThemeIcon("book")
+      : uri.fsPath.endsWith(".md")
+      ? new vscode.ThemeIcon("file-text")
+      : new vscode.ThemeIcon("file");
+    const sessionMatch = uri.fsPath.match(/[\\/]sessions[\\/][^\\/]+[\\/]([0-9a-f-]{36})[\\/]artifacts/);
+    if (sessionMatch) item.description = sessionMatch[1].slice(0, 8);
+    item.command = { command: "pace.openArtifact", title: "Open Pace Artifact", arguments: [uri] };
     item.tooltip = uri.fsPath;
     return item;
   }
   async getChildren(): Promise<vscode.Uri[]> {
-    const files = [...await savedPlans(), ...await vscode.workspace.findFiles(PLAN_GLOB)];
+    const sessionFiles = await savedArtifacts();
+    const wsDirect = await workspaceArtifacts();
+    const wsGlob = await Promise.resolve(vscode.workspace.findFiles(ARTIFACT_GLOB)).catch(() => []);
+    const seen = new Set<string>();
+    const files: vscode.Uri[] = [];
+    for (const uri of [...sessionFiles, ...wsDirect, ...wsGlob]) {
+      if (!seen.has(uri.fsPath)) {
+        seen.add(uri.fsPath);
+        files.push(uri);
+      }
+    }
     return files.sort((a, b) => a.fsPath.localeCompare(b.fsPath));
   }
 }
+
+export const PlanTree = ArtifactTree;
+export const savedPlans = savedArtifacts;
 
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
@@ -85,7 +185,7 @@ function htmlFor(document: vscode.TextDocument, webview: vscode.Webview, extensi
   const { body, contents } = renderPlan(document.getText());
   const nonce = crypto.randomBytes(16).toString("base64");
   const style = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "reader.css"));
-  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${style}"><title>Pace Plan</title></head><body><div class="reader-toolbar"><button class="copy-comments" type="button" disabled>Copy comments</button></div><div class="layout"><nav class="toc" aria-label="Plan sections"><strong>Sections</strong>${contents}</nav><main>${body}</main></div><script nonce="${nonce}">
+  return String.raw`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${style}"><title>Pace Plan</title></head><body><div class="reader-toolbar"><button class="copy-comments" type="button" disabled>Copy comments</button></div><div class="layout"><nav class="toc" aria-label="Plan sections"><strong>Sections</strong>${contents}</nav><main>${body}</main></div><script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
 const main = document.querySelector('main');
 const state = vscode.getState() || {};
@@ -192,7 +292,13 @@ for (const node of textNodes) {
   }
 }
 const toolbarButton = document.querySelector('.copy-comments');
-const paragraphById = id => [...main.querySelectorAll('p[data-comment-id]')].find(paragraph => paragraph.dataset.commentId === id);
+const targets = new Map();
+function quoteFor(target) {
+  if (target.tagName === 'P') return (target.textContent || '').trim();
+  const copy = target.cloneNode(true);
+  for (const nested of copy.querySelectorAll('ol, ul, .comment-tools')) nested.remove();
+  return (copy.textContent || '').trim();
+}
 const persist = () => { vscode.setState({ comments }); updateToolbar(); };
 function updateToolbar() {
   const count = Object.keys(comments).length;
@@ -200,9 +306,8 @@ function updateToolbar() {
   toolbarButton.textContent = count ? 'Copy comments (' + count + ')' : 'Copy comments';
 }
 function showComment(id) {
-  const paragraph = paragraphById(id);
-  if (!paragraph) return;
-  const tools = paragraph.nextElementSibling;
+  const tools = targets.get(id)?.tools;
+  if (!tools) return;
   tools.querySelector('.comment-card')?.remove();
   const comment = comments[id];
   const trigger = tools.querySelector('.comment-trigger');
@@ -223,34 +328,40 @@ function showComment(id) {
   card.append(label, content, remove);
   tools.append(card);
 }
-let paragraphIndex = 0;
-for (const paragraph of main.querySelectorAll('p')) {
-  const id = String(paragraphIndex++);
-  const quote = (paragraph.textContent || '').trim();
-  if (!quote) continue;
+function addCommentTarget(target, id) {
+  const quote = quoteFor(target);
+  if (!quote) return;
   if (comments[id]?.quote !== quote) delete comments[id];
-  paragraph.dataset.commentId = id;
+  target.dataset.commentId = id;
   const tools = document.createElement('div');
   tools.className = 'comment-tools';
+  if (target.tagName === 'LI') tools.classList.add('list-comment-tools');
   const trigger = document.createElement('button');
   trigger.className = 'comment-trigger';
   trigger.type = 'button';
   trigger.dataset.action = 'edit';
   trigger.dataset.id = id;
-  trigger.setAttribute('aria-label', 'Add comment to paragraph');
+  trigger.setAttribute('aria-label', target.tagName === 'LI' ? 'Add comment to list item' : 'Add comment to paragraph');
   trigger.textContent = '+ Comment';
   tools.append(trigger);
-  paragraph.after(tools);
+  if (target.tagName === 'LI') target.insertBefore(tools, [...target.children].find(child => child.matches('ol, ul')) || null);
+  else target.after(tools);
+  targets.set(id, { target, tools });
   showComment(id);
 }
+for (const [index, paragraph] of [...main.querySelectorAll('p')].entries()) addCommentTarget(paragraph, String(index));
+for (const [index, item] of [...main.querySelectorAll('li')].entries()) {
+  if (!item.querySelector(':scope > p')) addCommentTarget(item, 'li-' + index);
+}
+for (const id of Object.keys(comments)) if (!targets.has(id)) delete comments[id];
 persist();
 main.addEventListener('click', event => {
   const button = event.target.closest('button[data-action]');
   if (!button) return;
   const id = button.dataset.id;
-  const paragraph = paragraphById(id);
-  if (!paragraph) return;
-  const tools = paragraph.nextElementSibling;
+  const entry = targets.get(id);
+  if (!entry) return;
+  const { target, tools } = entry;
   if (button.dataset.action === 'remove') {
     delete comments[id];
     persist();
@@ -273,7 +384,7 @@ main.addEventListener('click', event => {
   save.addEventListener('click', () => {
     const text = input.value.trim();
     if (!text) { input.focus(); return; }
-    comments[id] = { quote: (paragraph.textContent || '').trim(), text, section: tools.closest('.plan-section')?.querySelector('h2')?.textContent || '' };
+    comments[id] = { quote: quoteFor(target), text, section: tools.closest('.plan-section')?.querySelector('h2')?.textContent || '' };
     persist();
     form.remove();
     showComment(id);
@@ -289,7 +400,8 @@ main.addEventListener('click', event => {
   input.focus();
 });
 toolbarButton.addEventListener('click', () => {
-  const entries = Object.entries(comments).sort(([a], [b]) => Number(a) - Number(b));
+  const order = new Map([...main.querySelectorAll('[data-comment-id]')].map((target, index) => [target.dataset.commentId, index]));
+  const entries = Object.entries(comments).sort(([a], [b]) => order.get(a) - order.get(b));
   if (!entries.length) return;
   const groups = new Map();
   for (const [, comment] of entries) {
@@ -331,9 +443,11 @@ async function openPlanLink(plan: vscode.Uri, href: string): Promise<void> {
   const position = plan.fsPath.lastIndexOf(legacyMarker);
   let base = position >= 0 ? plan.fsPath.slice(0, position) : path.dirname(plan.fsPath);
   let allowedRoot = vscode.workspace.getWorkspaceFolder(plan)?.uri.fsPath ?? base;
-  const sessionId = path.basename(path.dirname(path.dirname(plan.fsPath)));
-  if (/^[0-9a-f-]{36}$/.test(sessionId)) {
-    const sessionFile = path.join(path.dirname(path.dirname(path.dirname(plan.fsPath))), `${sessionId}.json`);
+  const sessionMatch = plan.fsPath.match(/[\\/]sessions[\\/][^\\/]+[\\/]([0-9a-f-]{36})[\\/]artifacts/);
+  if (sessionMatch) {
+    const sessionId = sessionMatch[1];
+    const sessionDir = plan.fsPath.slice(0, plan.fsPath.indexOf(`${path.sep}artifacts`));
+    const sessionFile = path.join(path.dirname(sessionDir), `${sessionId}.json`);
     try {
       const saved: unknown = JSON.parse(await readFile(sessionFile, "utf8"));
       if (saved && typeof saved === "object" && "projectPath" in saved && typeof saved.projectPath === "string") {
@@ -376,24 +490,38 @@ class PlanEditor implements vscode.CustomTextEditorProvider {
   }
 }
 
+async function openArtifact(uri?: vscode.Uri): Promise<void> {
+  const file = uri ?? vscode.window.activeTextEditor?.document.uri;
+  if (!file) return;
+  if (file.fsPath.endsWith(".pace-plan.md")) {
+    await vscode.commands.executeCommand("vscode.openWith", file, VIEW);
+  } else if (file.fsPath.endsWith(".md")) {
+    await vscode.commands.executeCommand("vscode.openWith", file, MARKDOWN_VIEW);
+  } else {
+    await vscode.commands.executeCommand("vscode.open", file);
+  }
+}
+
 export function activate(context: vscode.ExtensionContext): void {
-  const tree = new PlanTree();
-  const watcher = vscode.workspace.createFileSystemWatcher(PLAN_GLOB);
+  const tree = new ArtifactTree();
+  const watcher = vscode.workspace.createFileSystemWatcher(ARTIFACT_GLOB);
   watcher.onDidCreate(() => tree.refresh(), null, context.subscriptions);
   watcher.onDidChange(() => tree.refresh(), null, context.subscriptions);
   watcher.onDidDelete(() => tree.refresh(), null, context.subscriptions);
   context.subscriptions.push(watcher);
-  context.subscriptions.push(vscode.window.registerTreeDataProvider("pace.plans", tree));
+
+  context.subscriptions.push(vscode.window.registerTreeDataProvider("pace.artifacts", tree));
+  try {
+    context.subscriptions.push(vscode.window.registerTreeDataProvider("pace.plans", tree));
+  } catch {}
   const editor = new PlanEditor(context.extensionUri);
   context.subscriptions.push(vscode.window.registerCustomEditorProvider(VIEW, editor, { supportsMultipleEditorsPerDocument: true }));
   context.subscriptions.push(vscode.window.registerCustomEditorProvider(MARKDOWN_VIEW, editor, { supportsMultipleEditorsPerDocument: true }));
   context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => tree.refresh()));
+  context.subscriptions.push(vscode.commands.registerCommand("pace.refreshArtifacts", () => tree.refresh()));
   context.subscriptions.push(vscode.commands.registerCommand("pace.refreshPlans", () => tree.refresh()));
-  context.subscriptions.push(vscode.commands.registerCommand("pace.openPlan", async (uri?: vscode.Uri) => {
-    const file = uri ?? vscode.window.activeTextEditor?.document.uri;
-    if (!file) return;
-    await vscode.commands.executeCommand("vscode.openWith", file, file.fsPath.endsWith(".pace-plan.md") ? VIEW : MARKDOWN_VIEW);
-  }));
+  context.subscriptions.push(vscode.commands.registerCommand("pace.openArtifact", openArtifact));
+  context.subscriptions.push(vscode.commands.registerCommand("pace.openPlan", openArtifact));
 }
 
 export function deactivate(): void {}

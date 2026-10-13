@@ -1,4 +1,5 @@
 src/**
+tests/**
 tsconfig.json
 *.vsix
 node_modules/@types/**

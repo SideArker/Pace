@@ -39,6 +39,7 @@ blockquote > :first-child { margin-top: 0; } blockquote > :last-child { margin-b
 .copy-comments:hover:not(:disabled) { background: var(--vscode-button-hoverBackground); }
 .copy-comments:disabled { opacity: .65; cursor: default; }
 .comment-tools { max-width: 75ch; margin: -8px 0 14px; }
+.list-comment-tools { margin: 2px 0 10px; }
 .comment-trigger, .comment-remove { color: var(--vscode-textLink-foreground); background: transparent; border: 0; font: inherit; font-size: .88em; padding: 3px 6px; cursor: pointer; }
 .comment-trigger { opacity: .7; }
 .comment-trigger:hover, .comment-trigger:focus-visible, .comment-remove:hover { opacity: 1; text-decoration: underline; }

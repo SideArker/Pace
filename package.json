@@ -19,7 +19,7 @@
   },
   "main": "index.js",
   "scripts": {
-    "test": "vitest run --pool=threads --maxWorkers=1",
+    "test": "vitest run --pool=threads --maxWorkers=1 --exclude '**/extensions/**'",
     "dev": "tsx src/entrypoints/cli.ts",
     "build": "tsc",
     "start": "node dist/entrypoints/cli.js",
