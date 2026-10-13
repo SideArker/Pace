@@ -17,6 +17,7 @@ export function isSecondEscape(previous: { sessionId: string; at: number } | und
 
 export function useAppInput(options: {
   interrupt: () => void;
+  cancelRetry: () => void;
   pickerFocused: boolean;
   setPickerFocused: Dispatch<SetStateAction<boolean>>;
   pickerIndex: number;
@@ -75,7 +76,7 @@ export function useAppInput(options: {
   setPickerSearch?: Dispatch<SetStateAction<string>>;
 }) {
   const {
-    interrupt, pickerFocused, setPickerFocused, pickerIndex, setPickerIndex,
+    interrupt, cancelRetry, pickerFocused, setPickerFocused, pickerIndex, setPickerIndex,
     openSessions, activateSession, approval, question, focusPicker, pendingApprovals,
     activeSessionId, jobs, sideAbort, outputsExpanded, setOutputsExpanded, redrawTranscript,
     modelMenu, setModelMenu, approvalMenu, setApprovalMenu, selectApprovalMode,
@@ -99,6 +100,14 @@ export function useAppInput(options: {
   useEffect(() => () => { if (escapeTimer.current) clearTimeout(escapeTimer.current); }, []);
   const handleCancelEscape = () => {
     const id = activeSessionId.current;
+    if (id && !jobs.current.has(id) && !sideAbort.current && !approval && !question && session?.deferredTurn) {
+      cancelRetry();
+      return true;
+    }
+    if (id && jobs.current.get(id)?.automaticRetry) {
+      interrupt();
+      return true;
+    }
     if (!(id && jobs.current.has(id)) && !sideAbort.current && !approval && !question) return false;
     const sessionId = id ?? "";
     const now = Date.now();

@@ -27,7 +27,7 @@ function fixture(overrides: Partial<Options> = {}) {
   const second = newSession(process.cwd(), "manual");
   const queue = new PromptQueue();
   const events = {
-    interrupt: vi.fn(), activateSession: vi.fn(async () => {}), focusPicker: vi.fn(() => true),
+    interrupt: vi.fn(), cancelRetry: vi.fn(), activateSession: vi.fn(async () => {}), focusPicker: vi.fn(() => true),
     redrawTranscript: vi.fn(), toggleModel: vi.fn(), toggleEffort: vi.fn(),
     selectApprovalMode: vi.fn(async () => {}), add: vi.fn(), renderSessionTurns: vi.fn(),
     selectManualRoute: vi.fn(async () => {}), setManualMenu: vi.fn(),
@@ -156,6 +156,21 @@ describe("application keyboard input", () => {
     expect(events.interrupt).not.toHaveBeenCalled();
     await ui.key("", { escape: true });
     expect(events.interrupt).toHaveBeenCalledOnce();
+  });
+
+  it("cancels a waiting or running automatic retry with one Escape", async () => {
+    const waiting = fixture();
+    waiting.session.deferredTurn = { prompt: "retry me", retryAt: new Date().toISOString(), attempt: 1, reason: "network" };
+    const waitingUi = await mount(waiting.options);
+    await waitingUi.key("", { escape: true });
+    expect(waiting.events.cancelRetry).toHaveBeenCalledOnce();
+    expect(waiting.events.interrupt).not.toHaveBeenCalled();
+
+    const running = fixture();
+    running.options.jobs.current.set(running.session.id, { automaticRetry: true } as never);
+    const runningUi = await mount(running.options);
+    await runningUi.key("", { escape: true });
+    expect(running.events.interrupt).toHaveBeenCalledOnce();
   });
 
   it("does not interrupt when no turn, approval, or question is active", async () => {

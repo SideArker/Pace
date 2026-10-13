@@ -93,6 +93,8 @@ it('continues a saved task when Vex would otherwise ask for the deliverable agai
   const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('BRO CONTINUE', session, config, () => {});
   expect(requests[0]?.options.map(option => option.id)).not.toContain('clarify');
   expect(requests[0]?.context.conversationState).toMatchObject({ activeTask: { originalRequest: 'Implement CSV export and tests' } });
+  expect(JSON.stringify(requests)).not.toContain('Usage limit before completion');
+  expect(JSON.stringify(requests)).not.toContain('"assistant":"Usage limit"');
   expect(executionPrompt).toContain("Use this Codex thread's earlier conversation and tool history");
   expect(executionPrompt).not.toContain("Pace's saved task brief");
   expect(outcome.result).toBe('Implemented CSV export and tests');

@@ -18,6 +18,7 @@ import {
 import { costForUsage, pricedModels, refreshVersionManifest } from "./routing/pricing.js";
 import { advanceTask, retainedTask, type TaskRelation } from "./active-task.js";
 import { PaceStore } from "./sessions.js";
+import { retryableTurn } from "./session-model.js";
 import { addUsage, awaitRouting, loadPlanningInstructions, planningPrompt, readablePlanInstruction, retainedConversationPrompt } from "./orchestrator-helpers.js";
 import { runPlanningStage } from "./workflow-stages.js";
 import { checkpointHandoff } from "./checkpoint.js";
@@ -152,14 +153,15 @@ export class Orchestrator {
         };
       }
     }
-    const routingTurns = session.turns.map((turn) => {
+    const routingTurns = session.turns.filter(turn => !turn.failed).map((turn) => {
       const previousSkill = skillCommand(turn.prompt, skills);
       return previousSkill
         ? { ...turn, prompt: skillRequest(turn.prompt, previousSkill) }
         : turn;
     });
     const enabled = config.models.filter((model) => model.enabled !== false);
-    const priorTask = retainedTask(session);
+    const savedTask = retainedTask(session);
+    const priorTask = savedTask?.failed ? { ...savedTask, latestOutcome: undefined } : savedTask;
     let taskRelation: TaskRelation = "replace";
     let relationResolved = !priorTask && !session.turns.length;
     const routingState = {
@@ -535,7 +537,9 @@ export class Orchestrator {
       const basePrompt = userClarification
         ? `${prompt}\n\nClarification: ${userClarification}`
         : prompt;
-      const resumedAfterLimit = session.deferredTurn?.prompt === prompt;
+      const resumingDeferred = session.deferredTurn?.prompt === prompt;
+      const resumedAfterLimit = resumingDeferred && (!session.deferredTurn?.reason || session.deferredTurn.reason === "usage");
+      const retryingFailure = retryableTurn(session)?.prompt === prompt;
       const resolvedPrompt = taskRelation === "continue" && priorTask && !session.threadId
         ? `${basePrompt}\n\nPace's saved task brief (verify against conversation): ${priorTask.originalRequest}\nLater instructions: ${JSON.stringify(priorTask.instructions)}\nLast outcome: ${priorTask.latestOutcome ?? "Unknown"}\n${prompts.execution.savedTaskInstruction}`
         : (taskRelation === "continue" || usedThreadForClarification) && session.threadId && intent !== "verify_plan"
@@ -543,7 +547,9 @@ export class Orchestrator {
           : basePrompt;
       const safePrompt = resumedAfterLimit
         ? `${resolvedPrompt}\n\n${prompts.execution.usageRetryInstruction}`
-        : resolvedPrompt;
+        : retryingFailure
+          ? `${resolvedPrompt}\n\nThis request was interrupted by an error. Inspect current files and prior conversation before editing. Continue only unfinished work. Report completed work, remaining work, and checks.`
+          : resolvedPrompt;
       const baseExecutionPrompt = skillPrompt(
         safePrompt,
         skills,
@@ -562,7 +568,7 @@ export class Orchestrator {
       const runThreadId = checkpoint || intent === "verify_plan" ? undefined : session.threadId;
       const checkpointTurn = checkpoint ? session.turns.findIndex(turn => turn.at === checkpoint.sourceTurnAt) : -1;
       const promptWithHistory = checkpoint
-        ? checkpointHandoff(checkpoint.note, session.turns.slice(checkpointTurn + 1).slice(-3).map(turn => ({ user: turn.prompt.slice(0, 1000), assistant: turn.result.slice(0, 1000) })), executionPrompt)
+        ? checkpointHandoff(checkpoint.note, session.turns.slice(checkpointTurn + 1).filter(turn => !turn.failed).slice(-3).map(turn => ({ user: turn.prompt.slice(0, 1000), assistant: turn.result.slice(0, 1000) })), executionPrompt)
         : retainedConversationPrompt(executionPrompt, intent === "verify_plan" ? { ...session, threadId: undefined, turns: [] } : session);
       if (checkpoint) onProgress({ kind: "status", text: "Starting fresh thread from checkpoint…" });
       const stageStart = performance.now();
@@ -671,7 +677,7 @@ export class Orchestrator {
       ].slice(-20);
       if (relationResolved && (priorTask || taskRelation === "replace"))
         session.activeTask = advanceTask(priorTask, taskRelation, prompt, displayedResult, false);
-      if (resumedAfterLimit) session.deferredTurn = undefined;
+      if (resumingDeferred) session.deferredTurn = undefined;
       await save();
       return {
         session,
@@ -687,10 +693,15 @@ export class Orchestrator {
       };
     } catch (error) {
       const cancelled = !!signal?.aborted;
+      const previousFailure = session.turns.at(-1);
+      const retainedTurns = previousFailure?.failed && !previousFailure.cancelled && previousFailure.prompt === prompt
+        ? session.turns.slice(0, -1) : session.turns;
       session.turns = [
-        ...session.turns,
+        ...retainedTurns,
         {
           prompt,
+          ...(displayPrompt ? { displayPrompt } : {}),
+          ...(intent ? { intent } : {}),
           result: cancelled ? "Turn cancelled by user" : String(error),
           at: new Date().toISOString(),
           route,

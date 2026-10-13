@@ -1,6 +1,29 @@
 import type { UsageLimits } from "../integrations/usage.js";
+import type { Session } from "../shared/types.js";
 
 const RETRY_INTERVAL_MS = 5 * 60_000;
+export type RetryReason = NonNullable<Session["deferredTurn"]>["reason"];
+
+export function transientRetryReason(error: unknown): "network" | "capacity" | undefined {
+  const message = String(error);
+  if (/(?:ENETUNREACH|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EHOSTUNREACH|ConnectTimeoutError|socket hang up|fetch failed|network (?:error|unavailable|is unreachable)|internet connection|connection (?:error|lost|timed out|refused)|DNS lookup)/i.test(message)) return "network";
+  if (/(?:model.{0,40}(?:at capacity|overloaded|unavailable)|(?:server|service).{0,30}(?:overloaded|at capacity)|(?:HTTP|status)\s*(?:429|503|529)\b|too many requests|temporarily unavailable)/i.test(message)) return "capacity";
+  return undefined;
+}
+
+export function transientRetryAt(reason: "network" | "capacity", attempt: number, now = new Date()): Date {
+  const delay = reason === "network" ? 15_000 : Math.min(120_000, 10_000 * 2 ** Math.min(attempt - 1, 4));
+  return new Date(now.getTime() + delay);
+}
+
+export async function networkReachable(): Promise<boolean> {
+  try {
+    await fetch("https://api.openai.com/v1/models", {
+      method: "HEAD", redirect: "manual", signal: AbortSignal.timeout(5000),
+    });
+    return true;
+  } catch { return false; }
+}
 
 export function isUsageLimitError(error: unknown): boolean {
   return /(?:usage|rate|quota|credit).{0,60}(?:limit|exhaust|exceed)|(?:limit|exhaust|exceed).{0,60}(?:usage|rate|quota|credit)|try again at .{1,30}(?:AM|PM)/i.test(String(error));

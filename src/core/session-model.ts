@@ -53,3 +53,12 @@ export function undoConversationTurn(session: Session): TurnSummary | undefined 
   if (turn) { session.threadId = undefined; session.threadTurnCount = undefined; session.checkpoint = undefined; session.activeTask = undefined; session.deferredTurn = undefined; }
   return turn;
 }
+
+export function retryableTurn(session: Session): TurnSummary | undefined {
+  for (let index = session.turns.length - 1; index >= 0; index--) {
+    const turn = session.turns[index]!;
+    if (!turn.failed || turn.cancelled) continue;
+    if (!session.turns.slice(index + 1).some(later => !later.failed && later.prompt === turn.prompt)) return turn;
+  }
+  return undefined;
+}

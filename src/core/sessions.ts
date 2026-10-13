@@ -15,7 +15,7 @@ import { DEFAULT_CONFIG, isRecord, parseConfig } from "../shared/config.js";
 import type { Config, Notice, Session } from "../shared/types.js";
 import { normalizeProject, projectKey } from "./session-model.js";
 import { parseSession, parseSessionSummary } from "./session-record.js";
-export { normalizeProject, projectKey, newSession, rewindConversation, deleteConversationTurn, undoConversationTurn } from "./session-model.js";
+export { normalizeProject, projectKey, newSession, rewindConversation, deleteConversationTurn, undoConversationTurn, retryableTurn } from "./session-model.js";
 export { parseSessionSummary } from "./session-record.js";
 
 export async function atomicJson(path: string, value: unknown): Promise<void> {

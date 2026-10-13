@@ -11,10 +11,10 @@ import type { Line } from "./Transcript.js";
 import { updateAgentTasks } from "../core/tasks.js";
 import { formatCommandActivity, formatCommandStatus } from "./shell-runner.js";
 import { readUsageLimits, type UsageLimits } from "../integrations/usage.js";
-import { isUsageLimitError, usageRetryAt } from "../core/usage-retry.js";
+import { isUsageLimitError, transientRetryAt, transientRetryReason, usageRetryAt } from "../core/usage-retry.js";
 import type { RunningProcess } from "./RunningProcesses.js";
 
-type TurnJob = { session: Session; controller: AbortController; prompt: string };
+type TurnJob = { session: Session; controller: AbortController; prompt: string; automaticRetry?: boolean };
 type PendingApproval = Extract<Progress, { kind: "approval" }> & { owner?: AbortController };
 type PendingQuestion = Extract<Progress, { kind: "question" }> & { owner?: AbortController };
 type AddLine = (sessionId: string, role: Line["role"], text: string) => void;
@@ -60,9 +60,10 @@ export function createTurnRunner({
   getConfig: () => Config;
   readLimits?: () => Promise<UsageLimits | undefined>;
 }) {
-  const runTurn = async (text: string, turnSession: Session, turnConfig: Config, intent?: "verify_plan" | "execute_plan", displayPrompt?: string) => {
+  const runTurn = async (text: string, turnSession: Session, turnConfig: Config, intent?: "verify_plan" | "execute_plan", displayPrompt?: string, automaticRetry = false) => {
     let tasksChanged = false;
-    let deferredForUsage = false;
+    let deferredForRetry = false;
+    let failedForRetry = false;
     let activeRoute: Route = turnSession.route;
     const controller = new AbortController();
     const turnId = ++turnSequence.current;
@@ -71,7 +72,7 @@ export function createTurnRunner({
     resetThoughtUsage(sessionId);
     onTurnStart(sessionId);
     rememberSession(turnSession);
-    jobs.current.set(sessionId, { session: turnSession, controller, prompt: text });
+    jobs.current.set(sessionId, { session: turnSession, controller, prompt: text, automaticRetry });
     setRunningIds([...jobs.current.keys()]);
     addFor(sessionId, displayPrompt ? "system" : "you", displayPrompt ?? text);
     setStatusFor(sessionId, "Starting…");
@@ -185,8 +186,12 @@ export function createTurnRunner({
         }
       }
       setStatusFor(sessionId, "Done");
+      if (turnSession.routingMode === "auto") setVexState("connected");
       refreshUsage();
     } catch (error) {
+      const retryReason = error instanceof VexUnavailableError
+        ? error.source === "connection" ? "network" : transientRetryReason(error)
+        : isUsageLimitError(error) ? "usage" : transientRetryReason(error);
       if (controller.signal.aborted) {
         if (turnSession.deferredTurn?.prompt === text) {
           turnSession.deferredTurn = undefined;
@@ -194,29 +199,38 @@ export function createTurnRunner({
         }
         addFor(sessionId, "meta", "Turn cancelled by user");
         setStatusFor(sessionId, "Cancelled");
-      } else if (!(error instanceof VexUnavailableError) && isUsageLimitError(error)) {
-        const limits = await readLimits().catch(() => undefined);
-        const retryAt = usageRetryAt(error, limits);
+      } else if (retryReason) {
+        const reason = retryReason;
         const attempt = (turnSession.deferredTurn?.prompt === text ? turnSession.deferredTurn.attempt : 0) + 1;
-        turnSession.deferredTurn = { prompt: text, retryAt: retryAt.toISOString(), attempt, intent, displayPrompt };
+        const retryAt = reason === "usage"
+          ? usageRetryAt(error, await readLimits().catch(() => undefined))
+          : transientRetryAt(reason, attempt);
+        turnSession.deferredTurn = { prompt: text, retryAt: retryAt.toISOString(), attempt, reason, intent, displayPrompt };
         try {
           await store.save(turnSession, () => activeSessionId.current === sessionId);
-          deferredForUsage = true;
+          deferredForRetry = true;
           rememberSession(turnSession);
           if (activeSessionId.current === sessionId) setSession({ ...turnSession });
           addFor(sessionId, "error", String(error));
-          addFor(sessionId, "meta", `Usage limit reached. Pace saved this request and will resume it after ${retryAt.toLocaleString()} while Pace is open, or on next launch. Existing changes remain; the resumed agent will inspect them before continuing.`);
-          setStatusFor(sessionId, "Waiting for Codex usage reset");
+          const label = reason === "usage" ? "Usage limit reached" : reason === "network" ? "Connection unavailable" : "Model capacity reached";
+          addFor(sessionId, "meta", `${label}. Pace saved this request and will retry ${reason === "network" ? "when the connection returns" : `after ${retryAt.toLocaleString()}`} while open, or on next launch. Press Esc to cancel. Existing changes remain; the resumed agent will inspect them before continuing.`);
+          setStatusFor(sessionId, reason === "usage" ? "Waiting for Codex usage reset" : reason === "network" ? "Waiting for connection" : "Waiting for model capacity");
         } catch (saveError) {
           addFor(sessionId, "error", `Could not save automatic retry: ${String(saveError)}`);
           setStatusFor(sessionId, "Failed");
         }
       } else {
+        const failedTurn = turnSession.turns.at(-1);
+        failedForRetry = !!failedTurn?.failed && !failedTurn.cancelled && failedTurn.prompt === text;
         if (turnSession.deferredTurn?.prompt === text) {
           turnSession.deferredTurn = undefined;
           await store.save(turnSession, () => activeSessionId.current === sessionId).catch(() => {});
         }
         addFor(sessionId, "error", String(error));
+        if (failedForRetry)
+          addFor(sessionId, "meta", "Use /retry to run this request again. Existing file changes remain in place.");
+        if (failedForRetry && promptQueue.current.list(sessionId).length)
+          addFor(sessionId, "meta", "Queued prompts are paused until a turn succeeds.");
         if (error instanceof VexUnavailableError && error.source === "connection") setVexState("failed");
         setStatusFor(sessionId, "Failed");
       }
@@ -246,7 +260,7 @@ export function createTurnRunner({
       if (typeof performance !== "undefined" && typeof performance.clearMeasures === "function") {
         try { performance.clearMeasures(); } catch {}
       }
-      const next = deferredForUsage || turnSession.deferredTurn ? undefined : promptQueue.current.take(sessionId);
+      const next = deferredForRetry || failedForRetry || turnSession.deferredTurn ? undefined : promptQueue.current.take(sessionId);
       if (next !== undefined) {
         setQueueVersion(value => value + 1);
         void runTurn(next, turnSession, getConfig());

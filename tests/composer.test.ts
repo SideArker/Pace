@@ -309,6 +309,7 @@ it("marks only registered commands in multiline input", () => {
   expect(commandRanges("@review and /help", registered)).toEqual([{ start: 0, end: 7 }, { start: 12, end: 17 }]);
   expect(commandRanges("/unknown and /usr/bin/python", registered)).toEqual([]);
   expect(isRegisteredCommand("/clear")).toBe(true);
+  expect(isRegisteredCommand("/retry")).toBe(true);
   expect(isRegisteredCommand("/help")).toBe(true);
   expect(isRegisteredCommand("/caveman full", ["/caveman"])).toBe(true);
   expect(isRegisteredCommand("/unknown and /clear")).toBe(false);

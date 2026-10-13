@@ -3,7 +3,7 @@ import { Box, Static, Text, useApp, useStdout } from "ink";
 import type { ApprovalDecision, Progress } from "../integrations/codex.js";
 import type { UserAnswers } from "../integrations/codex-types.js";
 import type { ApprovalMode, Config, ManualWorkflow, Route, Session } from "../shared/types.js";
-import { PaceStore, newSession, rewindConversation, deleteConversationTurn, undoConversationTurn } from "../core/sessions.js";
+import { PaceStore, newSession, rewindConversation, deleteConversationTurn, undoConversationTurn, retryableTurn } from "../core/sessions.js";
 import { Orchestrator, VexUnavailableError } from "../core/orchestrator.js";
 import { PromptQueue } from "../core/prompt-queue.js";
 import { AppServerRunner } from "../integrations/codex.js";
@@ -40,6 +40,7 @@ import { createTurnRunner, type PendingApproval, type PendingQuestion, type Turn
 import { costForUsage, currentManifestSource, currentVersionManifest, modelRates, newerPaceVersion, refreshVersionManifest } from "../core/routing/pricing.js";
 import { formatLatestRoute } from "./route-format.js";
 import { contextPercent, measuredContext } from "../core/context.js";
+import { networkReachable, transientRetryAt } from "../core/usage-retry.js";
 import { loadResumeChoices } from "./resume-choices.js";
 import { executePlanPrompt, tryReadPlanFile, verifyPlanPrompt } from "../core/orchestrator-helpers.js";
 export const commands = [
@@ -56,6 +57,7 @@ export const commands = [
   "/convo",
   "/undo",
   "/usage",
+  "/retry",
   "/cancelretry",
   "/btw",
   "/artifacts",
@@ -113,7 +115,8 @@ const commandDescriptions: Record<string, string> = {
   "/convo": "Browse and manage conversation turns",
   "/undo": "Revert latest turn and file changes",
   "/usage": "Show Codex account usage and rate limits",
-  "/cancelretry": "Cancel saved usage-limit retry and queue",
+  "/retry": "Retry the latest failed request in this conversation",
+  "/cancelretry": "Cancel automatic retry and clear its queue",
   "/btw": "Ask a side question without adding to context",
   "/artifacts": "Show generated artifacts",
   "/trust": "Manage trusted project folders",
@@ -214,7 +217,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const [approval, setApproval] = useState<Extract<Progress, { kind: "approval" }>>();
   const [question, setQuestion] = useState<PendingQuestion>();
   const [pendingRevision, setPendingRevision] = useState(0);
-  const runTurnRef = useRef<((text: string, turnSession: Session, turnConfig: Config, intent?: "verify_plan" | "execute_plan", displayPrompt?: string) => Promise<void>) | undefined>(undefined);
+  const runTurnRef = useRef<((text: string, turnSession: Session, turnConfig: Config, intent?: "verify_plan" | "execute_plan", displayPrompt?: string, automaticRetry?: boolean) => Promise<void>) | undefined>(undefined);
   const [approvalMenu, setApprovalMenu] = useState(false);
   const [vexState, setVexState] = useState<
     "connecting" | "connected" | "failed"
@@ -587,7 +590,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       setOpenSessions(loadedChoices.sessions);
       setMissingProjectPaths(loadedChoices.missingProjectPaths);
       const waiting = loadedChoices.sessions.filter(item => item.deferredTurn);
-      if (waiting.length) add("info", `${waiting.length} saved conversation${waiting.length === 1 ? "" : "s"} waiting for Codex usage reset. Pace will resume pending requests when due.`);
+      if (waiting.length) add("info", `${waiting.length} saved conversation${waiting.length === 1 ? "" : "s"} waiting for automatic retry. Pace will resume pending requests when ready.`);
       for (const notice of notices) add("error", notice);
       setStatus("Ready");
     };
@@ -773,7 +776,7 @@ export default function App({ onClear }: { onClear: () => void }) {
     }
     if (targetSession.deferredTurn) newLines.push({
       id: id++, role: "meta", spaceBefore: false,
-      text: `Usage limit reached. Pace will resume this request after ${new Date(targetSession.deferredTurn.retryAt).toLocaleString()} while open, or on next launch.`,
+      text: `Automatic ${targetSession.deferredTurn.reason ?? "usage"} retry: ${targetSession.deferredTurn.reason === "network" ? "checking connection" : `resuming after ${new Date(targetSession.deferredTurn.retryAt).toLocaleString()}`}. Press Esc to cancel.`,
     });
     nextId.current = id;
     sessionLines.current.set(targetSession.id, newLines);
@@ -810,7 +813,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       setApproval(pendingApprovals.current.get(target.id));
       setQuestion(pendingQuestions.current.get(target.id));
       setHistory(target.turns.map(t => t.prompt));
-      setStatus(sessionStatuses.current.get(target.id) ?? (target.deferredTurn ? "Waiting for Codex usage reset" : "Ready"));
+      setStatus(sessionStatuses.current.get(target.id) ?? (target.deferredTurn ? "Waiting for automatic retry" : "Ready"));
     } catch (error) {
       activeSessionId.current = previousId;
       if (previousId) setLines(sessionLines.current.get(previousId) ?? []);
@@ -818,6 +821,19 @@ export default function App({ onClear }: { onClear: () => void }) {
     } finally {
       switchingSession.current = false;
     }
+  };
+  const cancelRetry = async () => {
+    const target = session;
+    if (!target?.deferredTurn || jobs.current.has(target.id)) return;
+    target.deferredTurn = undefined;
+    const removed = promptQueue.current.clear(target.id);
+    setQueueVersion(value => value + 1);
+    setSession({ ...target });
+    rememberSession(target);
+    setStatusFor(target.id, "Ready");
+    addFor(target.id, "info", `Automatic retry cancelled${removed ? `; ${removed} queued prompt${removed === 1 ? "" : "s"} cleared` : ""}.`);
+    try { await store.save(target); }
+    catch (error) { addFor(target.id, "error", `Could not save retry cancellation: ${String(error)}`); }
   };
   const interrupt = () => {
     const now = Date.now();
@@ -840,6 +856,8 @@ export default function App({ onClear }: { onClear: () => void }) {
       job?.controller.abort();
       sideAbort.current?.abort();
       if (id) setStatusFor(id, "Cancelling…");
+    } else if (session?.deferredTurn) {
+      void cancelRetry();
     } else if (jobs.current.size) {
       add("info", `${jobs.current.size} background turn(s) running. Use /resume to switch or /exit to quit.`);
     } else exit();
@@ -1104,7 +1122,7 @@ export default function App({ onClear }: { onClear: () => void }) {
     if (config) void runTurnRef.current?.(verifyPlanPrompt(targetPlan, goal), session, config, "verify_plan");
   };
   const cancelArmed = useAppInput({
-    interrupt, pickerFocused, setPickerFocused, pickerIndex, setPickerIndex,
+    interrupt, cancelRetry, pickerFocused, setPickerFocused, pickerIndex, setPickerIndex,
     pickerSearch, setPickerSearch,
     openSessions: sortedSessions, activateSession, approval, question, focusPicker, pendingApprovals,
     activeSessionId, jobs, sideAbort, outputsExpanded, setOutputsExpanded,
@@ -1346,7 +1364,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       if (command === "/help") {
         add(
           "info",
-          "/plan [prompt] · /execute · /verify · /models · /auto · /manual [model] [effort] · /workflow [name|auto] · /approval [full-access|request-approval|limited] · /tasks · /new · /resume · /convo · /undo · /compact · /context · /usage · /btw <q> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /stats · /route · /clear · /exit · Esc twice/Ctrl+C cancel · Ctrl+Z undo · Alt+P/Ctrl+P plan · Alt+E/Ctrl+E execute · ! Bash · Ctrl+O toggle command, diff, and reasoning details · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
+          "/plan [prompt] · /execute · /verify · /models · /auto · /manual [model] [effort] · /workflow [name|auto] · /approval [full-access|request-approval|limited] · /tasks · /new · /resume · /convo · /undo · /compact · /context · /usage · /retry · /cancelretry · /btw <q> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /stats · /route · /clear · /exit · Esc cancels automatic retry; Esc twice/Ctrl+C cancels other turns · Ctrl+Z undo · Alt+P/Ctrl+P plan · Alt+E/Ctrl+E execute · ! Bash · Ctrl+O toggle command, diff, and reasoning details · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
         );
         add("info", "With multiple open conversations, press Down from the input to focus the picker. Use arrows and Enter to switch; Esc returns to input. Ctrl+C cancels the selected turn. /exit quits.");
         return;
@@ -1714,23 +1732,25 @@ export default function App({ onClear }: { onClear: () => void }) {
         add("info", "Undid last turn. Prompt restored to composer.");
         return;
       }
+      if (command === "/retry") {
+        if (parts.length) { add("error", "Type /retry without arguments."); return; }
+        const pending = session.deferredTurn;
+        const failed = pending ? undefined : retryableTurn(session);
+        if (!pending && !failed) { add("info", "No failed request to retry."); return; }
+        add("meta", "Retrying saved request. Existing file changes remain in place.");
+        void runTurn(
+          pending?.prompt ?? failed!.prompt,
+          session,
+          config,
+          pending?.intent ?? failed?.intent,
+          pending?.displayPrompt ?? failed?.displayPrompt,
+        );
+        return;
+      }
       if (command === "/cancelretry") {
         if (parts.length) { add("error", "Type /cancelretry without arguments."); return; }
-        if (!session.deferredTurn) { add("info", "No usage-limit retry is scheduled."); return; }
-        const pending = session.deferredTurn;
-        session.deferredTurn = undefined;
-        try {
-          await store.save(session);
-          const removed = promptQueue.current.clear(session.id);
-          setQueueVersion(value => value + 1);
-          setSession({ ...session });
-          rememberSession(session);
-          setStatusFor(session.id, "Ready");
-          add("info", `Automatic retry cancelled${removed ? `; ${removed} queued prompt${removed === 1 ? "" : "s"} cleared` : ""}.`);
-        } catch (error) {
-          session.deferredTurn = pending;
-          add("error", `Could not cancel automatic retry: ${String(error)}`);
-        }
+        if (!session.deferredTurn) { add("info", "No automatic retry is scheduled."); return; }
+        await cancelRetry();
         return;
       }
       if (command === "/convo" || command === "/turns") {
@@ -1758,7 +1778,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       }
       const position = promptQueue.current.add(session.id, text);
       setQueueVersion(value => value + 1);
-      add("info", `Queued prompt ${position} until the usage-limit retry finishes.`);
+      add("info", `Queued prompt ${position} until the automatic retry finishes.`);
       return;
     }
     if (vexState !== "connected" && session.routingMode === "auto" && !localSkillCommand && !stopCaveman) {
@@ -1788,20 +1808,38 @@ export default function App({ onClear }: { onClear: () => void }) {
   runTurnRef.current = runTurn;
   useEffect(() => {
     if (!config) return;
+    let active = true;
+    const checking = new Set<string>();
     const check = () => {
       for (const target of openSessions) {
         const pending = target.deferredTurn;
         if (!pending || jobs.current.has(target.id)) continue;
-        if (target.routingMode === "auto" && vexState !== "connected") continue;
         if (Date.parse(pending.retryAt) > Date.now()) continue;
-        if (!sessionLines.current.has(target.id)) renderSessionTurns(target);
-        addFor(target.id, "meta", "Codex usage retry time reached. Resuming saved request…");
-        void runTurn(pending.prompt, target, latestConfig.current ?? config, pending.intent, pending.displayPrompt);
+        if (checking.has(target.id)) continue;
+        checking.add(target.id);
+        void (async () => {
+          const full = await store.load(target.projectPath, target.id);
+          if (!active || target.deferredTurn !== pending || jobs.current.has(target.id) || !full?.deferredTurn) return;
+          const saved = full.deferredTurn;
+          if (Date.parse(saved.retryAt) > Date.now()) return;
+          if (saved.reason === "network" && !await networkReachable()) {
+            if (!active || target.deferredTurn !== pending || jobs.current.has(target.id)) return;
+            saved.retryAt = transientRetryAt("network", saved.attempt).toISOString();
+            rememberSession(full);
+            if (activeSessionId.current === full.id) setSession({ ...full });
+            return;
+          }
+          if (!active || target.deferredTurn !== pending || jobs.current.has(target.id)) return;
+          if (!sessionLines.current.has(full.id)) renderSessionTurns(full);
+          addFor(full.id, "meta", saved.reason === "network" ? "Connection restored. Resuming saved request…" : "Retry time reached. Resuming saved request…");
+          void runTurn(saved.prompt, full, latestConfig.current ?? config, saved.intent, saved.displayPrompt, true);
+        })().catch(error => addFor(target.id, "error", `Could not resume automatic retry: ${String(error)}`))
+          .finally(() => checking.delete(target.id));
       }
     };
     check();
-    const timer = setInterval(check, 30_000);
-    return () => clearInterval(timer);
+    const timer = setInterval(check, 5_000);
+    return () => { active = false; clearInterval(timer); };
   }, [config, openSessions, vexState]);
   const { history: settledLines, live: liveLines } = useMemo(() => splitTranscript(lines), [lines]);
   const staticState = staticHistory.current;
@@ -1864,7 +1902,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       ) : null}
       {question ? <QuestionPanel key={`${session?.id}-${question.id}`} questions={question.questions} onSubmit={question.respond} isActive={!pickerFocused && !approval} /> : null}
       {cancelArmed ? <Text color="#FBBF24">Press Esc again to cancel the turn</Text> : null}
-      {session?.deferredTurn && !busy ? <Text color="#FBBF24">Usage limit: saved request resumes after {new Date(session.deferredTurn.retryAt).toLocaleString()} while Pace is open, or on next launch.</Text> : null}
+      {session?.deferredTurn && !busy ? <Text color="#FBBF24">Automatic retry ({session.deferredTurn.reason ?? "usage"}): {session.deferredTurn.reason === "network" ? "checking connection" : `after ${new Date(session.deferredTurn.retryAt).toLocaleString()}`} · Esc cancels</Text> : null}
       </Box>
       <ComposerFrame width={contentWidth} session={session} shellMode={shellMode} approvalMode={config?.approvalMode}>
         <Composer key={session?.id} value={draft} width={contentWidth} maxRows={maxComposerRows} onChange={value => { setDraft(value); setSelection(0); }} onSubmit={value => { void submit(value); }} history={history}

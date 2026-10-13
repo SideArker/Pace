@@ -95,6 +95,7 @@ export function parseSession(value: unknown, project: string): Session | undefin
         isRecord(turn) &&
         typeof turn.prompt === "string" &&
         (turn.displayPrompt === undefined || typeof turn.displayPrompt === "string") &&
+        (turn.intent === undefined || turn.intent === "verify_plan" || turn.intent === "execute_plan") &&
         typeof turn.result === "string" &&
         typeof turn.at === "string" &&
         (turn.route === undefined || (isRecord(turn.route) && (turn.route.model === undefined || typeof turn.route.model === "string") && (turn.route.effort === undefined || EFFORTS.includes(turn.route.effort as (typeof EFFORTS)[number])))) &&
@@ -139,6 +140,7 @@ export function parseSession(value: unknown, project: string): Session | undefin
       typeof value.deferredTurn.prompt !== "string" || !value.deferredTurn.prompt.trim() ||
       typeof value.deferredTurn.retryAt !== "string" || !Number.isFinite(Date.parse(value.deferredTurn.retryAt)) ||
       !Number.isInteger(value.deferredTurn.attempt) || (value.deferredTurn.attempt as number) < 1 ||
+      (value.deferredTurn.reason !== undefined && !["usage", "network", "capacity"].includes(String(value.deferredTurn.reason))) ||
       (value.deferredTurn.intent !== undefined && value.deferredTurn.intent !== "verify_plan" && value.deferredTurn.intent !== "execute_plan") ||
       (value.deferredTurn.displayPrompt !== undefined && typeof value.deferredTurn.displayPrompt !== "string"))) ||
     (value.kind !== undefined && value.kind !== "normal" && value.kind !== "planning") ||
@@ -185,6 +187,7 @@ export function parseSessionSummary(value: unknown, project: string): Session | 
           prompt: value.deferredTurn.prompt,
           retryAt: value.deferredTurn.retryAt,
           attempt: value.deferredTurn.attempt,
+          ...(value.deferredTurn.reason === "usage" || value.deferredTurn.reason === "network" || value.deferredTurn.reason === "capacity" ? { reason: value.deferredTurn.reason as "usage" | "network" | "capacity" } : {}),
           ...(value.deferredTurn.intent === "verify_plan" || value.deferredTurn.intent === "execute_plan" ? { intent: value.deferredTurn.intent as "verify_plan" | "execute_plan" } : {}),
           ...(typeof value.deferredTurn.displayPrompt === "string" ? { displayPrompt: value.deferredTurn.displayPrompt } : {}),
         }
