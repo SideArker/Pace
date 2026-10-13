@@ -216,6 +216,7 @@ type Props = {
   completion?: string;
   completionStart?: number;
   onComplete: () => void;
+  onAutoLaunchToggle?: () => void;
   onHistory?: (direction: "up" | "down") => boolean;
   onMoveDown?: () => boolean;
   onQueueEdit?: () => string | undefined;
@@ -224,7 +225,7 @@ type Props = {
   maxRows?: number;
 };
 
-export function Composer({ value, onChange, onSubmit, onImagePaste, history, disabled, shellMode, registeredCommands = [], placeholder, completion, completionStart, onComplete, onHistory, onMoveDown, onQueueEdit, onDeleteQueued, width, maxRows = 4 }: Props) {
+export function Composer({ value, onChange, onSubmit, onImagePaste, history, disabled, shellMode, registeredCommands = [], placeholder, completion, completionStart, onComplete, onAutoLaunchToggle, onHistory, onMoveDown, onQueueEdit, onDeleteQueued, width, maxRows = 4 }: Props) {
   const { stdout } = useStdout();
   const [terminalWidth, setTerminalWidth] = useState(width ?? stdout?.columns ?? 80);
 
@@ -285,6 +286,7 @@ export function Composer({ value, onChange, onSubmit, onImagePaste, history, dis
       void onImagePaste().then(marker => { if (active.current && marker) insertLatest.current(`${value ? " " : ""}${marker} `); });
       return;
     }
+    if (key.meta && input.toLowerCase() === "a") { onAutoLaunchToggle?.(); return; }
     if (isNewlineKey(input, key)) { insert("\n"); return; }
     if (key.upArrow || key.downArrow) {
       const nextCursor = verticalCursor(value, cursor, key.upArrow ? "up" : "down");

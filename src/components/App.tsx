@@ -11,7 +11,7 @@ import { VexRouter } from "../core/vex/client.js";
 import { EFFORTS, withModels } from "../shared/config.js";
 import { artifactDirectory, artifactPath, artifactSnapshot, legacyArtifactDirectory, savePlanArtifact } from "../core/system/artifacts.js";
 import { existingFolder, sameFolder } from "../core/system/folders.js";
-import { configuredSkills, defaultSkillFolder, enabledSkills, skillCommand, skillOption, skillRequest, type Skill } from "../core/system/skills.js";
+import { configuredSkills, defaultSkillFolder, enabledSkills, skillCommand, skillOption, skillRequest, updateAutoLaunchSkills, validSkillName, type Skill } from "../core/system/skills.js";
 import { formatTurnFooter, modelName } from "./turn-format.js";
 import { readUsageLimits, usageWarnings } from "../integrations/usage.js";
 import { readAvailableModels, type AvailableModel } from "../integrations/models.js";
@@ -94,7 +94,7 @@ export const commandArguments: Record<string, string> = {
   "/manual": "[model] [effort]",
   "/workflow": "[name|auto]",
   "/approval": "[mode]",
-  "/skills": "[folder|enable|disable|off]",
+  "/skills": "[folder|enable|disable|auto|off]",
   "/btw": "<question>",
 };
 export const skillArguments = (skillName: string): string => {
@@ -447,15 +447,15 @@ export default function App({ onClear }: { onClear: () => void }) {
     if (activeSessionId.current === sessionId) setQuestion(undefined);
     setStatusFor(sessionId, "Question expired");
   };
-  const skillNamesSet = useMemo(() => new Set(
-    (config ? enabledSkills(skills, config) : []).map(skill => skill.name),
-  ), [config, skills]);
   const skillCommands = (config ? enabledSkills(skills, config) : [])
     .flatMap(skill => [`/${skill.name}`, `@${skill.name}`])
     .filter(command => !commands.includes(command));
+  const selectableAutoSkills = (config ? enabledSkills(skills, config) : []).filter(skill => validSkillName(skill.name));
   const registeredCommands = [...commands, ...hiddenCommands, ...skillCommands];
   const commandDescriptionsWithSkills = Object.fromEntries([
     ...Object.entries(commandDescriptions),
+    ...skills.map(skill => [`/skills auto ${skill.name}`, skill.description]),
+    ["/skills auto off", "Clear all ON-LAUNCH skills in this conversation"],
     ...(config ? enabledSkills(skills, config).flatMap(skill => [
       [`/${skill.name}`, skill.description],
       [`@${skill.name}`, skill.description],
@@ -470,10 +470,28 @@ export default function App({ onClear }: { onClear: () => void }) {
       ]),
     ) : {}),
   };
-  const token = shellMode ? undefined : commandToken(draft);
-  const matches = token
-    ? [...commands, ...skillCommands].filter((command) => command.startsWith(token.prefix))
-    : [];
+  const autoSkillInput = !shellMode && /^\/skills auto(?:\s+([a-z0-9_-]*))?$/i.exec(draft);
+  const token = autoSkillInput ? { start: 0, prefix: draft } : shellMode ? undefined : commandToken(draft);
+  const matches = autoSkillInput
+    ? [...selectableAutoSkills.map(skill => `/skills auto ${skill.name}`), "/skills auto off"].filter(command => command.startsWith(draft.endsWith(" ") ? draft : `${draft} `) || command === draft)
+    : token ? [...commands, ...skillCommands].filter(command => command.startsWith(token.prefix)) : [];
+  const selectedAutoSkill = () => {
+    const match = matches[selection];
+    if (!match || (!skillCommands.includes(match) && !match.startsWith("/skills auto "))) return undefined;
+    const name = match.startsWith("/skills auto ") ? match.slice("/skills auto ".length) : match.replace(/^[/@]/, "");
+    return selectableAutoSkills.find(skill => skill.name === name);
+  };
+  const changeAutoLaunch = async (name?: string, toggle = false) => {
+    if (!session) return;
+    const selected = updateAutoLaunchSkills(session, name, toggle);
+    session.updatedAt = new Date().toISOString();
+    try {
+      await store.save(session);
+      rememberSession(session);
+      setSession({ ...session });
+      add("info", selected.length ? `ON-LAUNCH skills: ${selected.join(", ")}.` : "ON-LAUNCH skills cleared.");
+    } catch (error) { add("error", `Could not save ON-LAUNCH skills: ${String(error)}`); }
+  };
   const refreshUsage = () => {
     if (usageRequestPending.current) return;
     usageRequestPending.current = true;
@@ -1691,6 +1709,16 @@ export default function App({ onClear }: { onClear: () => void }) {
       }
       if (command === "/skills") {
         try {
+          if (parts[0] === "auto") {
+            if (parts.length !== 2) { add("error", "Use /skills auto <name|off>."); return; }
+            if (parts[1] === "off") { await changeAutoLaunch(); return; }
+            const found = skills.find(skill => skill.name.toLowerCase() === parts[1]!.toLowerCase());
+            if (!found) { add("error", `Unknown skill: ${parts[1]}. Use /skills to refresh discovery.`); return; }
+            if (!enabledSkills(skills, config).includes(found)) { add("error", `Skill is disabled: ${found.name}.`); return; }
+            if (!validSkillName(found.name)) { add("error", `Skill name cannot be used for ON-LAUNCH: ${found.name}.`); return; }
+            await changeAutoLaunch(found.name);
+            return;
+          }
           if (parts.join(" ") === "off") {
             const updated = { ...config, skillFolder: null };
             await store.saveConfig(updated);
@@ -1950,6 +1978,7 @@ export default function App({ onClear }: { onClear: () => void }) {
             const completed = chosen ? (commandArgsWithSkills[chosen] ? `${chosen} ` : chosen) : token?.prefix;
             setDraft(token ? draft.slice(0, token.start) + (completed ?? token.prefix) : draft);
           }}
+          onAutoLaunchToggle={matches.length && selectedAutoSkill() ? () => { void changeAutoLaunch(selectedAutoSkill()!.name, true); } : undefined}
           onHistory={direction => {
             if (!matches.length) return false;
             setSelection(value => (value + (direction === "up" ? -1 : 1) + matches.length) % matches.length);
@@ -1969,7 +1998,8 @@ export default function App({ onClear }: { onClear: () => void }) {
           args={commandArgsWithSkills}
           selectedIndex={selection}
           width={contentWidth}
-          skillNames={skillNamesSet}
+          skillNames={skillCommands}
+          autoLaunchSkills={session?.autoLaunchSkills}
         />
       ) : null}
       <BottomPanel

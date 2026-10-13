@@ -336,6 +336,7 @@ export function CommandMenu({
   selectedIndex,
   width,
   skillNames,
+  autoLaunchSkills = [],
 }: {
   matches: string[];
   descriptions?: Record<string, string>;
@@ -343,10 +344,12 @@ export function CommandMenu({
   selectedIndex: number;
   width?: number;
   skillNames?: ReadonlySet<string> | readonly string[];
+  autoLaunchSkills?: readonly string[];
 }) {
   const { start, end } = menuWindow(matches.length, selectedIndex);
   const skillSet = skillNames instanceof Set ? skillNames : new Set(skillNames ?? []);
   const isSkill = (cmd: string) =>
+    (cmd.startsWith("/skills auto ") && (skillSet.has(`/${cmd.slice("/skills auto ".length)}`) || skillSet.has(cmd.slice("/skills auto ".length)))) ||
     cmd.startsWith("/@") ||
     cmd.startsWith("@") ||
     skillSet.has(cmd) ||
@@ -379,6 +382,8 @@ export function CommandMenu({
         const firstLine = rawDesc.split(/\r?\n/)[0]?.trim() ?? "";
         const displayDescription = truncateWithEllipsis(firstLine, maxDescWidth);
         const matchIsSkill = isSkill(match);
+        const autoSkillName = match.startsWith("/skills auto ") ? match.slice("/skills auto ".length) : match.replace(/^[/@]/, "");
+        const onLaunch = matchIsSkill && autoLaunchSkills.includes(autoSkillName);
         const isFirstSkillInWindow = !allVisibleAreSkills && matchIsSkill && (offset === 0 ? false : !isSkill(visibleMatches[offset - 1]!));
 
         return (
@@ -402,7 +407,7 @@ export function CommandMenu({
               </Box>
               <Box flexGrow={1} flexShrink={1}>
                 <Text color={selected ? "#CBD5E1" : "#64748B"} wrap="truncate">
-                  {displayDescription}
+                  {onLaunch ? "ON-LAUNCH · " : ""}{truncateWithEllipsis(displayDescription, Math.max(4, maxDescWidth - (onLaunch ? 12 : 0)))}
                 </Text>
               </Box>
             </Box>
@@ -424,7 +429,7 @@ export function CommandMenu({
         </Box>
       ) : null}
       <Box marginTop={0}>
-        <Text color="#64748B">↑/↓ select · Tab complete</Text>
+        <Text color="#64748B">↑/↓ select · Tab complete · Alt+A toggle skill</Text>
       </Box>
     </Box>
   );

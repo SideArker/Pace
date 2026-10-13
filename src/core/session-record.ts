@@ -123,6 +123,9 @@ export function parseSession(value: unknown, project: string): Session | undefin
       !EFFORTS.includes(value.route.effort as (typeof EFFORTS)[number])) ||
     (value.activeSkills !== undefined && (!Array.isArray(value.activeSkills) ||
       !value.activeSkills.every((name: unknown) => typeof name === "string" && /^[a-z0-9][a-z0-9_-]*$/i.test(name)))) ||
+    (value.autoLaunchSkills !== undefined && (!Array.isArray(value.autoLaunchSkills) || value.autoLaunchSkills.length > 32 ||
+      !value.autoLaunchSkills.every((name: unknown) => typeof name === "string" && /^[a-z0-9][a-z0-9_-]*$/i.test(name)))) ||
+    (value.autoLaunchThreadId !== undefined && (typeof value.autoLaunchThreadId !== "string" || !value.autoLaunchThreadId || value.autoLaunchThreadId.length > 200)) ||
     (value.skillOptions !== undefined && (!isRecord(value.skillOptions) ||
       !Object.entries(value.skillOptions).every(([name, option]) => /^[a-z0-9][a-z0-9_-]*$/i.test(name) && typeof option === "string" && option.length <= 80))) ||
     (value.tasks !== undefined && (!Array.isArray(value.tasks) || value.tasks.length > 100 ||

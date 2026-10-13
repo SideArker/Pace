@@ -16,6 +16,19 @@ it('stores a session atomically under a hashed project key and reloads it', asyn
   expect((await readFile(join(store.sessionDir('/example/project'), `${session.id}.json`), 'utf8'))).toContain('thread-123');
   expect(store.conversationDir('/example/project', session.id)).toBe(join(store.sessionDir('/example/project'), session.id));
 });
+it('persists multiple ON-LAUNCH skills while loading older sessions without them', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  const store = new PaceStore(dir);
+  const session = newSession('/example/project', 'manual');
+  await store.save(session);
+  expect((await store.load(session.projectPath, session.id))?.autoLaunchSkills).toBeUndefined();
+  session.autoLaunchSkills = ['review', 'format'];
+  session.autoLaunchThreadId = 'thread-1';
+  await store.save(session);
+  expect(await store.load(session.projectPath, session.id)).toMatchObject({ autoLaunchSkills: ['review', 'format'], autoLaunchThreadId: 'thread-1' });
+  await writeFile(join(store.sessionDir(session.projectPath), `${session.id}.json`), JSON.stringify({ ...session, autoLaunchSkills: ['/invalid'] }));
+  expect(await store.load(session.projectPath, session.id)).toBeUndefined();
+});
 it('restores queued prompts from full sessions and startup summaries', async () => {
   dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
   const store = new PaceStore(dir);

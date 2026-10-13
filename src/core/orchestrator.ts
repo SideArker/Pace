@@ -26,6 +26,7 @@ import { artifactDirectory, artifactPath, artifactSnapshot, changedArtifacts, pl
 import { validRoute } from "../shared/config.js";
 import { existingFolder } from "./system/folders.js";
 import {
+  autoLaunchPrompt,
   configuredSkills,
   enabledSkills,
   skillCommand,
@@ -575,10 +576,13 @@ export class Orchestrator {
       const promptWithHistory = checkpoint
         ? checkpointHandoff(checkpoint.note, session.turns.slice(checkpointTurn + 1).filter(turn => !turn.failed).slice(-3).map(turn => ({ user: turn.prompt.slice(0, 1000), assistant: turn.result.slice(0, 1000) })), executionPrompt)
         : retainedConversationPrompt(executionPrompt, intent === "verify_plan" ? { ...session, threadId: undefined, turns: [] } : session);
+      const selectedAutoSkills = !runThreadId && intent !== "verify_plan" && !planningTurn
+        ? skills.filter(skill => session.autoLaunchSkills?.includes(skill.name)) : [];
+      const runnerPrompt = autoLaunchPrompt(promptWithHistory, selectedAutoSkills);
       if (checkpoint) onProgress({ kind: "status", text: "Starting fresh thread from checkpoint…" });
       const stageStart = performance.now();
       const execution = await this.runner.run(
-        promptWithHistory,
+        runnerPrompt,
         session.projectPath,
         route,
         runThreadId,
@@ -586,6 +590,7 @@ export class Orchestrator {
           if (progress.kind === "thread") {
             session.threadId = progress.text;
             if (progress.text !== runThreadId) session.threadTurnCount = 0;
+            if (intent !== "verify_plan" && !planningTurn && session.autoLaunchSkills?.length) session.autoLaunchThreadId = progress.text;
             await save();
           } else if (progress.kind === "question") {
             onProgress({ ...progress, respond: (answers: UserAnswers) => {
@@ -611,7 +616,10 @@ export class Orchestrator {
         usage: execution.usage,
         estimatedCostUsd: costForUsage(route, execution.usage),
       });
-      if (execution.threadId) session.threadId = execution.threadId;
+      if (execution.threadId) {
+        session.threadId = execution.threadId;
+        if (intent !== "verify_plan" && !planningTurn && session.autoLaunchSkills?.length) session.autoLaunchThreadId = execution.threadId;
+      }
       let planChanged = false;
       if (intent === "verify_plan") {
         session.plan = execution.result;

@@ -2,7 +2,7 @@ import { readFile, readdir, realpath } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, sep } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
-import type { Config } from "../../shared/types.js";
+import type { Config, Session } from "../../shared/types.js";
 import { existingFolder } from "./folders.js";
 
 export type Skill = { name: string; description: string; path: string };
@@ -25,9 +25,25 @@ export async function configuredSkills(config: Config): Promise<Skill[]> {
 export const enabledSkills = (skills: Skill[], config: Config) =>
   skills.filter(skill => !config.disabledSkills?.includes(skill.name));
 
+export const validSkillName = (name: string): boolean => /^[a-z0-9][a-z0-9_-]*$/i.test(name);
+
+export function updateAutoLaunchSkills(session: Session, name?: string, toggle = false): string[] {
+  const current = session.autoLaunchSkills ?? [];
+  session.autoLaunchSkills = name === undefined ? []
+    : current.includes(name) ? (toggle ? current.filter(item => item !== name) : current)
+    : [...current, name];
+  if (session.threadId) session.autoLaunchThreadId = session.threadId;
+  return session.autoLaunchSkills;
+}
+
+export function autoLaunchPrompt(prompt: string, selected: Skill[]): string {
+  if (!selected.length) return prompt;
+  return `ON-LAUNCH skills for this new Codex thread: ${selected.map(skill => `${skill.name} (${skill.path})`).join(", ")}. Read each SKILL.md and follow its instructions for this thread.\n\n${prompt}`;
+}
+
 export function skillCommand(prompt: string, skills: Skill[]): Skill | undefined {
   const command = /^\/([^\s]+)(?:\s|$)/.exec(prompt)?.[1]?.toLowerCase();
-  return skills.find(skill => skill.name.toLowerCase() === command && /^[a-z0-9][a-z0-9_-]*$/i.test(skill.name));
+  return skills.find(skill => skill.name.toLowerCase() === command && validSkillName(skill.name));
 }
 
 export function skillMention(prompt: string, skills: Skill[]): Skill | undefined {

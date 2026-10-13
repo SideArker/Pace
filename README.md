@@ -46,7 +46,7 @@ The Windows PowerShell smoke workflow installs, builds, links, and checks the CL
 | `/compact` | Compact the selected idle Codex thread while keeping its thread ID |
 | `/context` | Show the current Codex thread, last measured context occupancy, and checkpoint status |
 | `/route` | Show the latest recorded Vex choices and route used |
-| `/usage` | Refresh Codex account usage percentages |
+| `/usage` | Refresh Codex account usage percentages and local reset times |
 | `/retry` | Retry the latest failed request without undoing existing changes |
 | `/cancelretry` | Cancel an automatic retry and clear its queued prompts |
 | `/artifacts` | List Markdown artifacts for this conversation, plus older project artifacts |
@@ -56,6 +56,7 @@ The Windows PowerShell smoke workflow installs, builds, links, and checks the CL
 | `/trust remove <folder>` | Remove an additional folder; `/trust list` shows current entries |
 | `/skills [folder]` | Discover skills in the default or selected folder; `/skills` refreshes the list |
 | `/skills enable <name>` / `/skills disable <name>` | Enable or disable a discovered skill command |
+| `/skills auto <name>` / `/skills auto off` | Add an enabled skill to ON-LAUNCH, or clear all ON-LAUNCH skills in this conversation |
 | `/skills default` / `/skills off` | Use the default skill folder or turn skill discovery off |
 | `/<skill> [request]` | Invoke an enabled skill, such as `/caveman` or `/caveman explain this` |
 | `/stats` | Show observed time, tokens, and failures for the last 20 turns, plus compactions and checkpoints |
@@ -83,6 +84,8 @@ The interactive transcript renders Markdown emphasis, inline and fenced code, li
 Run `pace exec "your request"` from a project directory to continue its active conversation without Ink. Pass the whole request as one quoted argument. PowerShell can use `$prompt = @'` followed by text and a closing `'@`, then `pace exec $prompt`. Bash and Zsh can use `pace exec $'first line\nsecond line'`. Pace preserves embedded newlines, writes only the final response to stdout, and writes progress errors and approval denials to stderr. It returns 0 on success, 1 on provider, configuration, or execution failure, 2 for a missing prompt, and 130 after Ctrl+C. It declines every noninteractive approval, keeps the saved session ID and turn metadata, and uses the same routing, trusted folders, and skill settings as interactive turns.
 
 ## Trusted folders and skills
+
+In the slash popup, use ↑/↓ to highlight an enabled skill, Tab to complete it, and Alt+A to toggle its **ON-LAUNCH** marker. Plain `a` still filters matches. `/skills auto <name>` adds a discovered, enabled skill; `/skills auto off` clears all selections. These selections belong to the current Pace conversation and persist when it is resumed. Pace prepends their SKILL.md instructions to the first prompt of each new main Codex thread, including a thread started from a checkpoint. Later turns in that thread use its history. Changing selections while a thread is running or already exists takes effect when the next new thread starts. Ordinary slash skill activation keeps its conversation-wide behavior.
 
 Use `/trust add C:\path\to\folder` to give Codex workspace-write access to an existing folder outside the project. Pace resolves and checks each folder before every coding turn. Remove access with `/trust remove <folder>`. Trusted folders are stored in `~/.pace/config.json` as `trustedFolders`. Side questions stay read-only and do not receive trusted folders.
 

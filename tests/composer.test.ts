@@ -1,7 +1,7 @@
 import React from "react";
 import { PassThrough, Writable } from "node:stream";
 import { render, renderToString, Text } from "ink";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { Composer, commandRanges, commandToken, deleteDraftRange, deleteWordBackward, deleteWordForward, displayPastedBlocks, inputColumns, insertDraftText, insertPastedBlock, isAltBackspaceKey, isAltDeleteKey, isNewlineKey, markdownDraftRanges, paceGradient, skipPastedBlock, verticalCursor, visibleInputRows } from "../src/components/Composer.js";
 import { ComposerFrame } from "../src/components/ComposerFrame.js";
 import { newSession } from "../src/core/sessions.js";
@@ -57,6 +57,42 @@ it("recognizes Alt+Delete and Alt+Backspace combinations across formats", () => 
   expect(isAltBackspaceKey("\x1b\x7f", { backspace: false, meta: false, ctrl: false })).toBe(true);
   expect(isAltBackspaceKey("w", { backspace: false, meta: false, ctrl: true })).toBe(true);
   expect(isAltBackspaceKey("", { backspace: true, meta: false, ctrl: false })).toBe(false);
+});
+
+it("toggles ON-LAUNCH with Alt+A while plain a remains editable", async () => {
+  class Output extends Writable {
+    isTTY = true;
+    columns = 80;
+    rows = 24;
+    override _write(_chunk: Buffer, _encoding: BufferEncoding, done: (error?: Error | null) => void) { done(); }
+  }
+  const stdin = new PassThrough() as PassThrough & { isTTY: boolean; setRawMode: (enabled: boolean) => void; ref: () => void; unref: () => void };
+  stdin.isTTY = true;
+  stdin.setRawMode = () => {};
+  stdin.ref = () => {};
+  stdin.unref = () => {};
+  const onChange = vi.fn();
+  const onAutoLaunchToggle = vi.fn();
+  function Harness() {
+    const [value, setValue] = React.useState("");
+    return React.createElement(Composer, {
+      value, onChange: next => { onChange(next); setValue(next); }, onSubmit: () => {}, history: [], disabled: false, shellMode: false,
+      placeholder: "Ask Pace", onComplete: () => {}, onAutoLaunchToggle, width: 80,
+    });
+  }
+  const instance = render(React.createElement(Harness), { stdin, stdout: new Output(), stderr: new PassThrough(), interactive: true, patchConsole: false, alternateScreen: false });
+  try {
+    await instance.waitUntilRenderFlush();
+    stdin.write("/");
+    await instance.waitUntilRenderFlush();
+    stdin.write("\x1ba");
+    await instance.waitUntilRenderFlush();
+    expect(onAutoLaunchToggle).toHaveBeenCalledOnce();
+    expect(onChange).toHaveBeenCalledTimes(1);
+    stdin.write("a");
+    await instance.waitUntilRenderFlush();
+    expect(onChange).toHaveBeenCalledWith("/a");
+  } finally { instance.unmount(); }
 });
 
 it("maps the PACE gradient across terminal columns", () => {

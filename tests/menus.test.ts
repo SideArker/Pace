@@ -123,6 +123,15 @@ it("shows separate categories for commands and skills in CommandMenu", () => {
   expect(onlySkills).not.toContain("◈ Commands");
 });
 
+it("marks every selected ON-LAUNCH skill and shows the Alt+A hint", () => {
+  const rendered = renderToString(React.createElement(CommandMenu, {
+    matches: ["/review", "/format", "/usage"], skillNames: new Set(["review", "format"]),
+    autoLaunchSkills: ["review", "format"], selectedIndex: 0, width: 80,
+  }));
+  expect(rendered.match(/ON-LAUNCH/g)).toHaveLength(2);
+  expect(rendered).toContain("Alt+A toggle skill");
+});
+
 it("clamps column widths safely without overflowing narrow terminals", () => {
   const matches = ["/a-very-long-command-name-with-arguments"];
   const args = { "/a-very-long-command-name-with-arguments": "<huge-parameter-list-that-should-not-wrap>" };
