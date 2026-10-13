@@ -134,6 +134,11 @@ export function parseConfig(value: unknown): Config {
       (!Array.isArray(value.disabledSkills) || !value.disabledSkills.every((name: unknown) =>
         typeof name === "string" && /^[a-z0-9][a-z0-9_-]*$/i.test(name))))
     throw new Error("disabledSkills must be a list of skill names");
+  if (value.autoLaunchSkills !== undefined &&
+      (!Array.isArray(value.autoLaunchSkills) || value.autoLaunchSkills.length > 32 ||
+        !value.autoLaunchSkills.every((name: unknown) =>
+          typeof name === "string" && /^[a-z0-9][a-z0-9_-]*$/i.test(name))))
+    throw new Error("autoLaunchSkills must be a list of up to 32 skill names");
   return {
     models,
     defaultRoute,
@@ -142,5 +147,6 @@ export function parseConfig(value: unknown): Config {
     trustedFolders: value.trustedFolders as string[] | undefined,
     skillFolder: value.skillFolder as string | null | undefined,
     disabledSkills: value.disabledSkills as string[] | undefined,
+    autoLaunchSkills: value.autoLaunchSkills as string[] | undefined,
   };
 }

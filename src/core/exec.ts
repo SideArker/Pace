@@ -16,7 +16,7 @@ export async function execTurn(prompt: string, project = process.cwd()): Promise
   process.on("SIGINT", cancel);
   try {
     const config = await store.loadConfig();
-    const session = await store.latest(project) ?? newSession(project, config.routingMode);
+    const session = await store.latest(project) ?? newSession(project, config.routingMode, undefined, config.autoLaunchSkills);
     const outcome = await new Orchestrator(store, new AppServerRunner(), vex).turn(prompt, session, config, progress => {
       if (progress.kind === "error") {
         lastProgressError = progress.text;

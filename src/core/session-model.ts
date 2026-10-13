@@ -13,6 +13,7 @@ export function newSession(
   projectPath: string,
   mode: Session["routingMode"],
   kind?: Session["kind"],
+  autoLaunchSkills?: readonly string[],
 ): Session {
   const now = new Date().toISOString();
   return {
@@ -24,6 +25,7 @@ export function newSession(
     routingMode: mode,
     route: {},
     activeSkills: [],
+    ...(autoLaunchSkills ? { autoLaunchSkills: [...autoLaunchSkills] } : {}),
     skillOptions: {},
     turns: [],
   };

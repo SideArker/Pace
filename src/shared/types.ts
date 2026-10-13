@@ -35,6 +35,7 @@ export type Config = {
   trustedFolders?: string[];
   skillFolder?: string | null;
   disabledSkills?: string[];
+  autoLaunchSkills?: string[];
 };
 export type TurnSummary = {
   prompt: string;

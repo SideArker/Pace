@@ -455,7 +455,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const commandDescriptionsWithSkills = Object.fromEntries([
     ...Object.entries(commandDescriptions),
     ...skills.map(skill => [`/skills auto ${skill.name}`, skill.description]),
-    ["/skills auto off", "Clear all ON-LAUNCH skills in this conversation"],
+    ["/skills auto off", "Clear ON-LAUNCH skills for this and future conversations"],
     ...(config ? enabledSkills(skills, config).flatMap(skill => [
       [`/${skill.name}`, skill.description],
       [`@${skill.name}`, skill.description],
@@ -482,13 +482,17 @@ export default function App({ onClear }: { onClear: () => void }) {
     return selectableAutoSkills.find(skill => skill.name === name);
   };
   const changeAutoLaunch = async (name?: string, toggle = false) => {
-    if (!session) return;
-    const selected = updateAutoLaunchSkills(session, name, toggle);
-    session.updatedAt = new Date().toISOString();
+    if (!session || !config) return;
+    const updatedSession = { ...session };
+    const selected = updateAutoLaunchSkills(updatedSession, name, toggle);
+    const updatedConfig = { ...latestConfig.current ?? config, autoLaunchSkills: [...selected] };
     try {
-      await store.save(session);
-      rememberSession(session);
-      setSession({ ...session });
+      await store.saveConfig(updatedConfig);
+      latestConfig.current = updatedConfig;
+      setConfig(updatedConfig);
+      await store.save(updatedSession);
+      rememberSession(updatedSession);
+      setSession(updatedSession);
       add("info", selected.length ? `ON-LAUNCH skills: ${selected.join(", ")}.` : "ON-LAUNCH skills cleared.");
     } catch (error) { add("error", `Could not save ON-LAUNCH skills: ${String(error)}`); }
   };
@@ -621,7 +625,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       latestConfig.current = loaded;
       try { setSkills(await configuredSkills(loaded)); }
       catch (error) { add("error", `Could not discover skills: ${String(error)}`); }
-      const fresh = newSession(project, loaded.routingMode);
+      const fresh = newSession(project, loaded.routingMode, undefined, loaded.autoLaunchSkills);
       sessionRecords.current.set(fresh.id, fresh);
       thisPaceIds.current.add(fresh.id);
       activeSessionId.current = fresh.id;
@@ -1015,7 +1019,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       }
       return;
     }
-    const fresh = newSession(project, session.routingMode, "planning");
+    const fresh = newSession(project, session.routingMode, "planning", config?.autoLaunchSkills);
     if (loadedPlan) {
       fresh.plan = loadedPlan;
       if (planTitle) fresh.title = planTitle;
@@ -1101,7 +1105,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       add("info", `◈ Loaded plan from ${basename(loadedFromPath)} (${targetPlan.split("\n").length} lines).`);
     }
     add("info", "◈ Dispatching plan to fresh execution session via Vex (Explore → Implement)...");
-    const fresh = newSession(project, "auto", "normal");
+    const fresh = newSession(project, "auto", "normal", config?.autoLaunchSkills);
     fresh.title = loadedFromPath
       ? `Exec: ${basename(loadedFromPath)}`
       : session.title ? `Exec: ${session.title.replace(/^Exec:\s*/i, "")}` : "Plan Execution";
@@ -1341,7 +1345,7 @@ export default function App({ onClear }: { onClear: () => void }) {
           add("error", `Type ${command} without arguments.`);
           return;
         }
-        const fresh = newSession(project, session.routingMode);
+        const fresh = newSession(project, session.routingMode, undefined, config.autoLaunchSkills);
         thisPaceIds.current.add(fresh.id);
         if (session.routingMode === "manual") { fresh.route = session.route; fresh.manualWorkflow = session.manualWorkflow; }
         switchingSession.current = true;

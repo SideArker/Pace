@@ -55,6 +55,8 @@ it('rejects invalid folder settings', () => {
   expect(() => parseConfig({ ...DEFAULT_CONFIG, trustedFolders: 'all' })).toThrow('trustedFolders');
   expect(() => parseConfig({ ...DEFAULT_CONFIG, skillFolder: 42 })).toThrow('skillFolder');
   expect(() => parseConfig({ ...DEFAULT_CONFIG, disabledSkills: ['/bad'] })).toThrow('disabledSkills');
+  expect(() => parseConfig({ ...DEFAULT_CONFIG, autoLaunchSkills: ['/bad'] })).toThrow('autoLaunchSkills');
+  expect(() => parseConfig({ ...DEFAULT_CONFIG, autoLaunchSkills: Array(33).fill('review') })).toThrow('autoLaunchSkills');
 });
 
 it('uses the home skills folder by default and allows disabling it', async () => {
@@ -200,6 +202,30 @@ it('selects multiple ON-LAUNCH skills and applies them once per new main thread'
   expect(updateAutoLaunchSkills(resumed, 'review', true)).toEqual(['format', 'test']);
   expect(updateAutoLaunchSkills(resumed, 'format', true)).toEqual(['test']);
   expect(updateAutoLaunchSkills(resumed)).toEqual([]);
+});
+
+it('loads saved ON-LAUNCH defaults into new conversations without changing existing ones', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-auto-defaults-'));
+  await mkdir(join(dir, 'review'));
+  await writeFile(join(dir, 'review', 'SKILL.md'), '---\nname: review\ndescription: Review work.\n---\nInstructions');
+  const store = new PaceStore(join(dir, 'store'));
+  const oldSession = newSession(dir, 'manual');
+  await store.save(oldSession);
+  await store.saveConfig({ ...DEFAULT_CONFIG, skillFolder: dir, autoLaunchSkills: ['review'] });
+  const loaded = await new PaceStore(join(dir, 'store')).loadConfig();
+  expect(loaded.autoLaunchSkills).toEqual(['review']);
+  const fresh = newSession(dir, loaded.routingMode, undefined, loaded.autoLaunchSkills);
+  expect(fresh.autoLaunchSkills).toEqual(['review']);
+  expect((await store.load(dir, oldSession.id))?.autoLaunchSkills).toBeUndefined();
+  loaded.autoLaunchSkills!.length = 0;
+  expect(fresh.autoLaunchSkills).toEqual(['review']);
+  const prompts: string[] = [];
+  const runner: CodexRunner = { async run(prompt) {
+    prompts.push(prompt);
+    return { threadId: 'new-thread', result: 'done', completed: true };
+  } };
+  await new Orchestrator(store, runner, singleVex('0:medium')).turn('Start', fresh, await store.loadConfig(), () => {});
+  expect(prompts[0]).toMatch(/^ON-LAUNCH skills for this new Codex thread: review /);
 });
 
 it('keeps ON-LAUNCH pending before thread start and records a thread returned without progress', async () => {
