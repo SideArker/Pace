@@ -22,17 +22,14 @@ export function resolveRepoTitle(
   allProjectPaths: string[] = [],
 ): { title: string; isRepo: boolean } {
   const isGit = existsSync(join(projectPath, ".git"));
-  if (!isGit) {
-    return { title: projectPath, isRepo: false };
-  }
   const base = basename(projectPath);
   const duplicates = allProjectPaths.filter(
     (p) => p !== projectPath && basename(p) === base,
   );
   if (duplicates.length > 0) {
-    return { title: projectPath, isRepo: true };
+    return { title: projectPath, isRepo: isGit };
   }
-  return { title: base, isRepo: true };
+  return { title: base, isRepo: isGit };
 }
 
 export function sortConversations<T extends { state: "ready" | "running" | "approval" | "question" | "done"; updatedAt?: string }>(
@@ -219,8 +216,8 @@ export function ConversationPicker({
                   {isFirstInSavedSection ? (
                     <Text color="#64748B" bold>{sectionTitle} ({count})</Text>
                   ) : null}
-                  {choice.projectPath && (position === 0 || visible[position - 1]?.choice.projectPath !== choice.projectPath)
-                    ? <Text color={missingProjectPaths.includes(choice.projectPath) ? "#F87171" : "#94A3B8"} wrap="truncate">{choice.projectPath}{missingProjectPaths.includes(choice.projectPath) ? " (missing; use pace reconnect)" : ""}</Text>
+                  {isFirstInSavedSection && choice.projectPath && missingProjectPaths.includes(choice.projectPath)
+                    ? <Text color="#F87171">(missing; use pace reconnect)</Text>
                     : null}
                   <Box gap={1}>
                     <Box flexShrink={0}><Text color={selected ? (choice.kind === "planning" ? "#C084FC" : "#38BDF8") : "#64748B"}>{selected ? "▶" : " "}</Text></Box>

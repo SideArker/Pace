@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { createShellRunner, displayCommand, formatCommandActivity, oneOffShellCommand } from "../src/components/shell-runner.js";
+import { createShellRunner, displayCommand, formatCommandActivity, oneOffShellCommand, previewLines, summarizeCommand } from "../src/components/shell-runner.js";
 import { commandRisk } from "../src/core/command-protection.js";
 
 it.each([
@@ -74,4 +74,18 @@ it("uses shell aliases and short executable names while keeping command details"
   expect(formatCommandActivity('Running: /usr/bin/python3 manage.py test')).toEqual({
     title: 'Running: python3 manage.py test', detail: 'Command line: /usr/bin/python3 manage.py test',
   });
+});
+
+it("shows ten command output lines and counts the rest", () => {
+  const output = Array.from({ length: 70 }, (_, index) => `line ${index + 1}`).join("\n");
+  expect(previewLines(output)).toBe(`${Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n")}\n... <60 more lines>`);
+  expect(formatCommandActivity("Ran: npm run dev", output).detail).toBe(previewLines(output));
+  expect(formatCommandActivity("Ran: /usr/bin/npm run dev", output).detail).toContain("Output:\n" + previewLines(output));
+  expect(formatCommandActivity("Ran: npm run dev", "a\nb\n").detail).toBe("a\nb");
+});
+
+it("keeps multiline commands on one summary line", () => {
+  const command = ["npm run dev", ...Array.from({ length: 10 }, (_, index) => `--flag-${index}`)].join("\n");
+  expect(summarizeCommand(command)).toBe("npm run dev ... <10 more lines>");
+  expect(summarizeCommand("x".repeat(100) + "\nsecond", 40)).toMatch(/^x+\.\.\. \.\.\. <1 more lines>$/);
 });

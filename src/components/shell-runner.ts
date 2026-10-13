@@ -63,14 +63,36 @@ export function formatCommandStatus(title: string): string {
   return `${shellName}(${short}) ...`;
 }
 
+export function previewLines(value: string, limit = 10): string {
+  const lines = value.replace(/\r\n/g, "\n").trimEnd().split("\n");
+  if (lines.length <= limit) return lines.join("\n");
+  return `${lines.slice(0, limit).join("\n")}\n... <${lines.length - limit} more lines>`;
+}
+
+export function previewCommandDetail(detail: string): string {
+  const marker = "\n\nOutput:\n";
+  const outputAt = detail.indexOf(marker);
+  if (outputAt < 0) return previewLines(detail);
+  return `${previewLines(detail.slice(0, outputAt))}${marker}${previewLines(detail.slice(outputAt + marker.length))}`;
+}
+
+export function summarizeCommand(command: string, maxLength = 80): string {
+  const lines = command.replace(/\r\n/g, "\n").trimEnd().split("\n");
+  const suffix = lines.length > 1 ? ` ... <${lines.length - 1} more lines>` : "";
+  const first = lines[0]?.trim() ?? "";
+  const available = Math.max(8, maxLength - suffix.length);
+  return `${first.length > available ? `${first.slice(0, available - 3)}...` : first}${suffix}`;
+}
+
 export function formatCommandActivity(title: string, detail?: string): { title: string; detail?: string } {
   const match = /^(Running|Ran|Failed): ([\s\S]*?)( \(exit [^)]+\))?$/.exec(title);
-  if (!match) return { title, detail };
+  if (!match) return { title, detail: detail === undefined ? undefined : previewLines(detail) };
   const display = displayCommand(match[2]!);
-  if (display === match[2]) return { title, detail };
+  const output = detail === undefined ? undefined : previewLines(detail);
+  if (display === match[2] && !match[2]!.includes("\n")) return { title, detail: output };
   return {
     title: `${match[1]}: ${display}${match[3] ?? ""}`,
-    detail: [`Command line: ${match[2]}`, detail ? `Output:\n${detail}` : undefined].filter(Boolean).join("\n\n"),
+    detail: [`Command line: ${previewLines(match[2]!)}`, output ? `Output:\n${output}` : undefined].filter(Boolean).join("\n\n"),
   };
 }
 

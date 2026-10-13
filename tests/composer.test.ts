@@ -5,7 +5,7 @@ import { expect, it } from "vitest";
 import { Composer, commandRanges, commandToken, deleteDraftRange, deleteWordBackward, deleteWordForward, displayPastedBlocks, inputColumns, insertDraftText, insertPastedBlock, isAltBackspaceKey, isAltDeleteKey, isNewlineKey, markdownDraftRanges, paceGradient, skipPastedBlock, verticalCursor, visibleInputRows } from "../src/components/Composer.js";
 import { ComposerFrame } from "../src/components/ComposerFrame.js";
 import { newSession } from "../src/core/sessions.js";
-import { normalizeNewCommand } from "../src/components/App.js";
+import { commands, isRegisteredCommand, normalizeNewCommand } from "../src/components/App.js";
 
 it("keeps ./clear as ordinary input while recognizing the supported command aliases", () => {
   expect(normalizeNewCommand("./new")).toBe("/new");
@@ -20,6 +20,7 @@ it("keeps ./clear as ordinary input while recognizing the supported command alia
   expect(normalizeNewCommand("./clear now")).toBe("./clear now");
   expect(normalizeNewCommand("/.new")).toBe("/new");
   expect(normalizeNewCommand("./approval")).toBe("/approval");
+  expect(commands.filter(command => command.includes("clear"))).toEqual(["/clear"]);
 });
 
 it("shows pasted text directly below ten lines and a marker from ten lines", () => {
@@ -300,11 +301,17 @@ it("renders Markdown emphasis in the live editor without removing its syntax", a
   } finally { instance.unmount(); chalk.level = previousLevel; }
 });
 
-it("marks every slash command in multiline input", () => {
-  expect(commandRanges("/usage and /models\nnext /help")).toEqual([
+it("marks only registered commands in multiline input", () => {
+  const registered = ["/usage", "/models", "/help", "@review"];
+  expect(commandRanges("/usage and /models\nnext /help", registered)).toEqual([
     { start: 0, end: 6 }, { start: 11, end: 18 }, { start: 24, end: 29 },
   ]);
-  expect(commandRanges("@review and /help")).toEqual([{ start: 0, end: 7 }, { start: 12, end: 17 }]);
+  expect(commandRanges("@review and /help", registered)).toEqual([{ start: 0, end: 7 }, { start: 12, end: 17 }]);
+  expect(commandRanges("/unknown and /usr/bin/python", registered)).toEqual([]);
+  expect(isRegisteredCommand("/clear")).toBe(true);
+  expect(isRegisteredCommand("/help")).toBe(true);
+  expect(isRegisteredCommand("/caveman full", ["/caveman"])).toBe(true);
+  expect(isRegisteredCommand("/unknown and /clear")).toBe(false);
 });
 
 it("frames input with command help and compact routing mode below it", () => {

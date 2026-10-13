@@ -1,6 +1,7 @@
 import React from "react";
 import { Box, Text } from "ink";
 import { MarkdownText } from "./TranscriptMarkdown.js";
+import { previewCommandDetail, summarizeCommand } from "./shell-runner.js";
 export { Header } from "./Header.js";
 export { letterGradients } from "./Header.js";
 
@@ -57,7 +58,7 @@ const activityColors = {
   plan: "magenta",
 } as const;
 
-function activityTitle(line: Line): string {
+function activityTitle(line: Line, width: number): string {
   const activity = line.activity!;
   const text = line.text.replace(/^(?:Running|Ran|Failed): /, "");
   if (activity.category === "thinking") {
@@ -69,7 +70,8 @@ function activityTitle(line: Line): string {
     const shell = /^(?:PS \(PowerShell\)|PS): ([\s\S]*)$/.exec(command);
     const bash = /^Bash: ([\s\S]*)$/.exec(command);
     const body = shell?.[1] ?? bash?.[1] ?? command;
-    const read = /^(?:cat|head|tail)\s+([^|;&]+)$/.exec(body);
+    const read = /^(?:cat|head|tail)[ \t]+([^\n|;&]+)$/.exec(body);
+    if (body.includes("\n")) return `${shell ? "PS" : "Bash"}(${summarizeCommand(body, Math.max(24, Math.min(45, width - 12)))}) ...`;
     const maxCmdLen = 45;
     const trimmed = (read && !read[1]!.trim().startsWith("-") ? read[1]! : body).trim().replace(/\s+/g, " ");
     const shortBody = trimmed.length > maxCmdLen ? `${trimmed.slice(0, maxCmdLen).trimEnd()}…` : trimmed;
@@ -176,7 +178,7 @@ export function Transcript({
                 </Box>
                 <Box flexShrink={1}>
                   <Text wrap={line.activity.category === "command" ? "truncate" : undefined} color={activityColors[line.activity.category]} bold={line.activity.category === "command"}>
-                    ◆ {activityTitle(line)}
+                    ◆ {activityTitle(line, width)}
                   </Text>
                 </Box>
                 {line.activity.detail ? (
@@ -202,7 +204,9 @@ export function Transcript({
                 >
                   {line.activity.category === "files"
                     ? <DiffDetail detail={line.activity.detail} livePreview={preview} />
-                    : <Text color="gray" wrap={preview ? "truncate" : "wrap"}>{preview ? line.activity.detail.slice(-500).split("\n").slice(-2).join("\n") : line.activity.detail.slice(-12000)}</Text>}
+                    : <Text color="gray" wrap={preview || line.activity.category === "command" ? "truncate" : "wrap"}>{preview
+                      ? line.activity.detail.slice(-500).split("\n").slice(-2).join("\n")
+                      : line.activity.category === "command" ? previewCommandDetail(line.activity.detail) : line.activity.detail.slice(-12000)}</Text>}
                 </Box>
               ) : null}
             </Box>

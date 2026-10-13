@@ -1,7 +1,7 @@
 import React from "react";
 import { Box, Text } from "ink";
 import type { Session } from "../shared/types.js";
-import { menuWindow } from "./ConversationMenus.js";
+import { menuWindow, resolveRepoTitle } from "./ConversationMenus.js";
 
 export function ResumeMenu({
   choices,
@@ -45,7 +45,7 @@ export function ResumeMenu({
     return [...groups].map(([path, sessions]) => (
       <React.Fragment key={path}>
         <Text color={missingProjectPaths.includes(path) ? "#F87171" : "#94A3B8"}>
-          {path} {missingProjectPaths.includes(path) ? "(missing; use pace reconnect)" : ""}
+          {resolveRepoTitle(path, choices.map(choice => choice.projectPath)).title} {missingProjectPaths.includes(path) ? "(missing; use pace reconnect)" : ""}
         </Text>
         {sessions.map(renderChoice)}
       </React.Fragment>

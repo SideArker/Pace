@@ -40,23 +40,26 @@ describe("Conversation editing and undo logic", () => {
     const output = renderToString(React.createElement(ResumeMenu, {
       choices: [available, missing], selectedIndex: 1, missingProjectPaths: [missing.projectPath],
     }), { columns: 100 });
-    expect(output).toContain(available.projectPath);
-    expect(output).toContain(missing.projectPath);
+    expect(output).toContain("available");
+    expect(output).toContain("missing");
+    expect(output).not.toContain(available.projectPath);
+    expect(output).not.toContain(missing.projectPath);
     expect(output).toContain('(missing; use pace reconnect)');
     expect(output).toContain('(unavailable)');
   });
 
-  it("labels saved conversations with their directories in the active picker", () => {
+  it("labels saved conversations once with their repo names in the active picker", () => {
     const output = renderToString(React.createElement(ConversationPicker, {
-      choices: [
+      choices: sectionConversations([
         { id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", projectPath: "/workspace/alpha", prompt: "Alpha task", state: "done", section: "saved" },
         { id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", projectPath: "/workspace/beta", prompt: "Beta task", state: "done", section: "saved" },
-      ], selectedIndex: 1, focused: true, maxItems: 4, width: 100,
+      ], new Set()), selectedIndex: 1, focused: true, maxItems: 4, width: 100,
     }), { columns: 100 });
-    expect(output).toContain("/workspace/alpha");
-    expect(output).toContain("/workspace/beta");
-    expect(output.indexOf("/workspace/alpha")).toBeLessThan(output.indexOf("Alpha task"));
-    expect(output.indexOf("/workspace/beta")).toBeLessThan(output.indexOf("Beta task"));
+    expect(output).toContain("alpha (1)");
+    expect(output).toContain("beta (1)");
+    expect(output).not.toContain("/workspace/alpha");
+    expect(output).not.toContain("/workspace/beta");
+    expect(output.indexOf("alpha (1)")).toBeLessThan(output.indexOf("Alpha task"));
   });
 
   it("loads resume choices from every saved project and tracks missing directories", async () => {
@@ -251,7 +254,7 @@ describe("Conversation editing and undo logic", () => {
     expect(controller.signal.aborted).toBe(true);
   });
 
-  it("disambiguates duplicate repo basenames and displays full path for non-git dirs", () => {
+  it("disambiguates duplicate names and displays short names for non-git dirs", () => {
     // Current working directory is a git repo
     const currentRepo = process.cwd();
     expect(resolveRepoTitle(currentRepo, [currentRepo]).isRepo).toBe(true);
@@ -263,7 +266,7 @@ describe("Conversation editing and undo logic", () => {
 
     // Non-git folder
     const nonGit = resolveRepoTitle("/tmp/scratch", ["/tmp/scratch"]);
-    expect(nonGit.title).toBe("/tmp/scratch");
+    expect(nonGit.title).toBe("scratch");
     expect(nonGit.isRepo).toBe(false);
   });
 

@@ -42,7 +42,7 @@ import { formatLatestRoute } from "./route-format.js";
 import { contextPercent, measuredContext } from "../core/context.js";
 import { loadResumeChoices } from "./resume-choices.js";
 import { executePlanPrompt, tryReadPlanFile, verifyPlanPrompt } from "../core/orchestrator-helpers.js";
-const commands = [
+export const commands = [
   "/plan",
   "/execute",
   "/verify",
@@ -68,9 +68,13 @@ const commands = [
   "/compact",
   "/context",
   "/clear",
-  "/.clear",
   "/exit",
 ];
+const hiddenCommands = ["/help", "/run-plan", "/turns"];
+export const isRegisteredCommand = (input: string, skillNames: readonly string[] = []): boolean => {
+  const command = input.trim().split(/\s+/, 1)[0];
+  return commands.includes(command) || hiddenCommands.includes(command) || skillNames.includes(command);
+};
 const workflowChoices = [
   { shape: "single", label: "Single agent" },
   { shape: "scout", label: "Scout → Completion" },
@@ -121,7 +125,6 @@ const commandDescriptions: Record<string, string> = {
   "/compact": "Compact conversation context to save tokens",
   "/context": "Show context window usage breakdown",
   "/clear": "Clear screen and conversation",
-  "/.clear": "Clear screen and conversation",
   "/exit": "Quit Pace",
 };
 export const normalizeNewCommand = (input: string) => input.trim().replace(/^(?:\.\/(?!clear(?=\s|$))|\/\.)(new|clear|approval)(?=\s|$)/, "/$1");
@@ -424,6 +427,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const skillCommands = (config ? enabledSkills(skills, config) : [])
     .flatMap(skill => [`/${skill.name}`, `@${skill.name}`])
     .filter(command => !commands.includes(command));
+  const registeredCommands = [...commands, ...hiddenCommands, ...skillCommands];
   const commandDescriptionsWithSkills = Object.fromEntries([
     ...Object.entries(commandDescriptions),
     ...(config ? enabledSkills(skills, config).flatMap(skill => [
@@ -1255,8 +1259,8 @@ export default function App({ onClear }: { onClear: () => void }) {
       void askBtw(text.slice(4).trim());
       return;
     }
-    if (jobs.current.has(session.id) && !/^\/(?:new|clear|\.clear|resume|help|exit|usage|stats|compact|context|route|artifacts|models|trust|skills|approval|tasks)(?:\s|$)/.test(text)) {
-      if (text.startsWith("/") && !skillCommand(text, enabledSkills(skills, config))) {
+    if (jobs.current.has(session.id) && !/^\/(?:new|clear|resume|help|exit|usage|stats|compact|context|route|artifacts|models|trust|skills|approval|tasks)(?:\s|$)/.test(text)) {
+      if (isRegisteredCommand(text, registeredCommands) && !skillCommand(text, enabledSkills(skills, config))) {
         add("info", "This conversation is working. Use /new or /resume to switch conversations.");
         return;
       }
@@ -1268,7 +1272,7 @@ export default function App({ onClear }: { onClear: () => void }) {
     }
     setDraft("");
     setSelection(0);
-    if (text.startsWith("/")) {
+    if (text.startsWith("/") && isRegisteredCommand(text, registeredCommands)) {
       const [command, ...parts] = text.split(/\s+/);
       if (command === "/clear" || command === "/new") {
         if (parts.length) {
@@ -1875,7 +1879,7 @@ export default function App({ onClear }: { onClear: () => void }) {
               return undefined;
             }
           }}
-          disabled={!session || !config || !!approval || !!question || !!modelMenu || approvalMenu || resumeMenu || convoMenu || queueMenu || manualMenu || pickerFocused} shellMode={shellMode}
+          disabled={!session || !config || !!approval || !!question || !!modelMenu || approvalMenu || resumeMenu || convoMenu || queueMenu || manualMenu || pickerFocused} shellMode={shellMode} registeredCommands={registeredCommands}
           completion={matches[selection] ? (commandArgsWithSkills[matches[selection]!] ? `${matches[selection]} ` : matches[selection]) : matches[0] ? (commandArgsWithSkills[matches[0]!] ? `${matches[0]} ` : matches[0]) : undefined} completionStart={token?.start}
           onComplete={() => {
             const chosen = matches[selection] ?? matches[0];

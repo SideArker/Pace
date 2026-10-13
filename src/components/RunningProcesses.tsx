@@ -1,6 +1,6 @@
 import React from "react";
 import { Box, Text } from "ink";
-import { displayCommand } from "./shell-runner.js";
+import { displayCommand, summarizeCommand } from "./shell-runner.js";
 import type { Progress } from "../integrations/codex.js";
 
 export type RunningProcess = { id: string; sessionId: string; command: string; startedAt: number };
@@ -17,7 +17,7 @@ export function RunningProcesses({ processes, now }: { processes: RunningProcess
   return <Box flexDirection="column" marginTop={1}>
     <Text color="#FBBF24">Running processes ({processes.length})</Text>
     {processes.slice(-4).map(process => <Text key={process.id} color="#94A3B8" wrap="truncate">
-      {`  ${displayCommand(process.command)} · ${Math.floor((now - process.startedAt) / 1000)}s`}
+      {`  ${summarizeCommand(displayCommand(process.command))} · ${Math.floor((now - process.startedAt) / 1000)}s`}
     </Text>)}
     {processes.length > 4 ? <Text dimColor>{`  +${processes.length - 4} more`}</Text> : null}
   </Box>;

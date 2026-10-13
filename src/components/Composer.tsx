@@ -150,8 +150,8 @@ export function commandToken(value: string): { start: number; prefix: string } |
   return match ? { start: value.length - match[1]!.length, prefix: match[1]! } : undefined;
 }
 
-export function commandRanges(value: string): { start: number; end: number }[] {
-  return [...value.matchAll(/(?:^|\s)([\/@][^\s]*)/g)].map(match => {
+export function commandRanges(value: string, registeredCommands: readonly string[] = []): { start: number; end: number }[] {
+  return [...value.matchAll(/(?:^|\s)([\/@][^\s]*)/g)].filter(match => registeredCommands.includes(match[1]!)).map(match => {
     const start = match.index + match[0].length - match[1]!.length;
     return { start, end: start + match[1]!.length };
   });
@@ -211,6 +211,7 @@ type Props = {
   history: string[];
   disabled: boolean;
   shellMode: boolean;
+  registeredCommands?: readonly string[];
   placeholder: string;
   completion?: string;
   completionStart?: number;
@@ -223,7 +224,7 @@ type Props = {
   maxRows?: number;
 };
 
-export function Composer({ value, onChange, onSubmit, onImagePaste, history, disabled, shellMode, placeholder, completion, completionStart, onComplete, onHistory, onMoveDown, onQueueEdit, onDeleteQueued, width, maxRows = 4 }: Props) {
+export function Composer({ value, onChange, onSubmit, onImagePaste, history, disabled, shellMode, registeredCommands = [], placeholder, completion, completionStart, onComplete, onHistory, onMoveDown, onQueueEdit, onDeleteQueued, width, maxRows = 4 }: Props) {
   const { stdout } = useStdout();
   const [terminalWidth, setTerminalWidth] = useState(width ?? stdout?.columns ?? 80);
 
@@ -353,7 +354,7 @@ export function Composer({ value, onChange, onSubmit, onImagePaste, history, dis
     if (!key.escape && !key.ctrl && !key.meta && input) insert(input);
   }, { isActive: !disabled });
   const display = displayPastedBlocks(value, cursor, pastedBlocks);
-  const ranges = shellMode ? [] : commandRanges(display.value);
+  const ranges = shellMode ? [] : commandRanges(display.value, registeredCommands);
   const markdownRanges = shellMode ? [] : markdownDraftRanges(display.value);
   const styleAt = (index: number) => markdownRanges.find(range => index >= range.start && index < range.end)?.style;
   const isMarker = (index: number) => display.markers.some(marker => index >= marker.start && index < marker.end);

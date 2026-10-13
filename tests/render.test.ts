@@ -71,6 +71,28 @@ describe("activity transcript", () => {
     expect(output).toContain("Run as single agent");
   });
 
+  it("renders multiline command text on one row", () => {
+    const output = renderToString(React.createElement(Transcript, {
+      lines: [{ id: 3, role: "activity", text: "Running: Bash: npm run dev\n--watch\n--verbose", spaceBefore: false,
+        activity: { category: "command", completed: false } }],
+      outputsExpanded: false, detailsExpanded: false, width: 80,
+    }), { columns: 80 });
+    expect(output.trim().split("\n")).toHaveLength(1);
+    expect(output).toContain("npm run dev ... <2 more lines>");
+  });
+
+  it("limits expanded command output to ten lines without wrapping", () => {
+    const detail = Array.from({ length: 70 }, (_, index) => `output ${index + 1}`).join("\n");
+    const output = renderToString(React.createElement(Transcript, {
+      lines: [{ id: 4, role: "activity", text: "Ran: npm run dev", spaceBefore: false,
+        activity: { category: "command", completed: true, detail } }],
+      outputsExpanded: true, detailsExpanded: true, width: 80,
+    }), { columns: 80 });
+    expect(output).toContain("output 10");
+    expect(output).not.toContain("output 11");
+    expect(output).toContain("... <60 more lines>");
+  });
+
   it("groups adjacent thoughts while keeping every summary available", () => {
     const output = renderToString(React.createElement(Transcript, {
       lines: [
