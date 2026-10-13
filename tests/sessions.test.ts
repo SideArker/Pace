@@ -16,6 +16,16 @@ it('stores a session atomically under a hashed project key and reloads it', asyn
   expect((await readFile(join(store.sessionDir('/example/project'), `${session.id}.json`), 'utf8'))).toContain('thread-123');
   expect(store.conversationDir('/example/project', session.id)).toBe(join(store.sessionDir('/example/project'), session.id));
 });
+it('restores queued prompts from full sessions and startup summaries', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  const store = new PaceStore(dir);
+  const session = newSession('/example/project', 'auto');
+  session.queuedPrompts = ['first', 'second'];
+  await store.save(session);
+  const restarted = new PaceStore(dir);
+  expect((await restarted.load(session.projectPath, session.id))?.queuedPrompts).toEqual(['first', 'second']);
+  expect((await restarted.listSummaries(session.projectPath))[0]?.queuedPrompts).toEqual(['first', 'second']);
+});
 it('reloads a manual planning and verification workflow', async () => {
   dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
   const store = new PaceStore(dir);

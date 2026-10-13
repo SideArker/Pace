@@ -118,6 +118,7 @@ export type Session = {
   tasks?: Task[];
   activeTask?: { originalRequest: string; instructions: string[]; latestOutcome?: string; failed?: boolean };
   deferredTurn?: { prompt: string; retryAt: string; attempt: number; reason?: "usage" | "network" | "capacity"; intent?: "verify_plan" | "execute_plan"; displayPrompt?: string };
+  queuedPrompts?: string[];
   skillOptions?: Record<string, string>;
   turns: TurnSummary[];
   compactions?: CompactionRecord[];

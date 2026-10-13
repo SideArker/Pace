@@ -143,6 +143,8 @@ export function parseSession(value: unknown, project: string): Session | undefin
       (value.deferredTurn.reason !== undefined && !["usage", "network", "capacity"].includes(String(value.deferredTurn.reason))) ||
       (value.deferredTurn.intent !== undefined && value.deferredTurn.intent !== "verify_plan" && value.deferredTurn.intent !== "execute_plan") ||
       (value.deferredTurn.displayPrompt !== undefined && typeof value.deferredTurn.displayPrompt !== "string"))) ||
+    (value.queuedPrompts !== undefined && (!Array.isArray(value.queuedPrompts) ||
+      !value.queuedPrompts.every((prompt: unknown) => typeof prompt === "string"))) ||
     (value.kind !== undefined && value.kind !== "normal" && value.kind !== "planning") ||
     (value.plan !== undefined && (typeof value.plan !== "string" || value.plan.length > 50000)) ||
     (value.planArtifact !== undefined && (typeof value.planArtifact !== "string" || !/^(?:\.pace\/)?artifacts\/[^/\\]+\.pace-plan\.md$/.test(value.planArtifact))) ||
@@ -203,6 +205,9 @@ export function parseSessionSummary(value: unknown, project: string): Session | 
     routingMode: value.routingMode === "manual" ? "manual" : "auto",
     route,
     deferredTurn,
+    queuedPrompts: Array.isArray(value.queuedPrompts)
+      ? value.queuedPrompts.filter((prompt: unknown): prompt is string => typeof prompt === "string")
+      : [],
     turns: firstTurnPrompt ? [{ prompt: firstTurnPrompt, result: "", at: value.createdAt }] : [],
   };
 }

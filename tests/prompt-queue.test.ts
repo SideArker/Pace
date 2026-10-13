@@ -42,4 +42,16 @@ describe("PromptQueue", () => {
     expect(queue.remove("sess", 5)).toBeUndefined();
     expect(queue.set("sess", 5, "nope")).toBe(false);
   });
+
+  it("reports each queue change and restores saved prompts without rewriting them", () => {
+    const changes: string[][] = [];
+    const queue = new PromptQueue((_id, prompts) => changes.push([...prompts]));
+    queue.restore("sess", ["one"]);
+    expect(changes).toEqual([]);
+    queue.add("sess", "two");
+    queue.set("sess", 0, "edited");
+    queue.take("sess");
+    queue.clear("sess");
+    expect(changes).toEqual([["one", "two"], ["edited", "two"], ["two"], []]);
+  });
 });

@@ -188,6 +188,9 @@ export default function App({ onClear }: { onClear: () => void }) {
   if (config) latestConfig.current = config;
   const [skills, setSkills] = useState<Skill[]>([]);
   const [session, setSession] = useState<Session>();
+  const sessionRef = useRef<Session | undefined>(undefined);
+  sessionRef.current = session;
+  const sessionRecords = useRef(new Map<string, Session>());
   const [openSessions, setOpenSessions] = useState<Session[]>([]);
   const thisPaceIds = useRef(new Set<string>());
   const [pickerFocused, setPickerFocused] = useState(false);
@@ -245,7 +248,24 @@ export default function App({ onClear }: { onClear: () => void }) {
   const nextId = useRef(0);
   const turnSequence = useRef(0);
   const jobs = useRef(new Map<string, TurnJob>());
-  const promptQueue = useRef(new PromptQueue());
+  const queueSaves = useRef(new Map<string, Promise<void>>());
+  const promptQueue = useRef(new PromptQueue((sessionId, prompts) => {
+    const running = jobs.current.get(sessionId)?.session;
+    const active = sessionRef.current?.id === sessionId ? sessionRef.current : undefined;
+    const remembered = sessionRecords.current.get(sessionId);
+    const target = running ?? active ?? remembered;
+    if (!target) return;
+    const queuedPrompts = [...prompts];
+    for (const record of [running, active, remembered]) {
+      if (record) record.queuedPrompts = queuedPrompts;
+    }
+    const previous = queueSaves.current.get(sessionId) ?? Promise.resolve();
+    const saving = previous.catch(() => {}).then(() => store.save(target, () => activeSessionId.current === sessionId));
+    queueSaves.current.set(sessionId, saving);
+    void saving.catch(error => addFor(sessionId, "error", `Could not save queued prompts: ${String(error)}`)).finally(() => {
+      if (queueSaves.current.get(sessionId) === saving) queueSaves.current.delete(sessionId);
+    });
+  }));
   const [, setQueueVersion] = useState(0);
   const activeSessionId = useRef<string | undefined>(undefined);
   const sessionLines = useRef(new Map<string, Line[]>());
@@ -279,11 +299,14 @@ export default function App({ onClear }: { onClear: () => void }) {
   }, [busy, session?.id]);
   const queued = session ? promptQueue.current.list(session.id) : [];
   const [showConversationsTab, setShowConversationsTab] = useState(false);
-  const rememberSession = (target: Session) => setOpenSessions(old => {
-    const index = old.findIndex(item => item.id === target.id);
-    if (index < 0) return [target, ...old];
-    return old.map((item, at) => at === index ? target : item);
-  });
+  const rememberSession = (target: Session) => {
+    sessionRecords.current.set(target.id, target);
+    setOpenSessions(old => {
+      const index = old.findIndex(item => item.id === target.id);
+      if (index < 0) return [target, ...old];
+      return old.map((item, at) => at === index ? target : item);
+    });
+  };
   const getSessionState = (sessionId: string): "running" | "approval" | "question" | "done" => {
     return conversationState(
       runningIds.includes(sessionId) || jobs.current.has(sessionId),
@@ -519,7 +542,6 @@ export default function App({ onClear }: { onClear: () => void }) {
       for (const pending of pendingApprovals.current.values()) pending.respond("decline");
       for (const pending of pendingQuestions.current.values()) pending.respond({});
       for (const [sessionId, job] of jobs.current) {
-        promptQueue.current.clear(sessionId);
         job.controller.abort();
       }
       for (const controller of titleAborts.current.values()) controller.abort();
@@ -582,11 +604,13 @@ export default function App({ onClear }: { onClear: () => void }) {
       try { setSkills(await configuredSkills(loaded)); }
       catch (error) { add("error", `Could not discover skills: ${String(error)}`); }
       const fresh = newSession(project, loaded.routingMode);
+      sessionRecords.current.set(fresh.id, fresh);
       thisPaceIds.current.add(fresh.id);
       activeSessionId.current = fresh.id;
       sessionLines.current.set(fresh.id, preSessionLines.current);
       setSession(fresh);
       const loadedChoices = await loadResumeChoices(localStore, [fresh], []);
+      for (const saved of loadedChoices.sessions) promptQueue.current.restore(saved.id, saved.queuedPrompts ?? []);
       setOpenSessions(loadedChoices.sessions);
       setMissingProjectPaths(loadedChoices.missingProjectPaths);
       const waiting = loadedChoices.sessions.filter(item => item.deferredTurn);
@@ -794,6 +818,8 @@ export default function App({ onClear }: { onClear: () => void }) {
         const full = await store.load(target.projectPath, target.id);
         if (full) target = full;
       }
+      promptQueue.current.restore(target.id, target.queuedPrompts ?? []);
+      sessionRecords.current.set(target.id, target);
       thisPaceIds.current.add(target.id);
       await store.activate(target);
       stopSideQuestion();

@@ -34,6 +34,7 @@ export async function atomicJson(path: string, value: unknown): Promise<void> {
 }
 export class PaceStore {
   private activationQueue: Promise<void> = Promise.resolve();
+  private readonly sessionSaveQueues = new Map<string, Promise<void>>();
   constructor(
     readonly baseDir = join(homedir(), ".pace"),
     readonly notice: Notice = () => {},
@@ -256,10 +257,16 @@ export class PaceStore {
     if (!/^[0-9a-f-]{36}$/.test(session.id))
       throw new Error("Invalid Pace session ID");
     session.updatedAt = new Date().toISOString();
-    await atomicJson(
-      join(this.sessionDir(session.projectPath), `${session.id}.json`),
-      session,
-    );
-    if (typeof activate === "function" ? activate() : activate) await this.activate(session);
+    const key = `${this.sessionDir(session.projectPath)}/${session.id}`;
+    const previous = this.sessionSaveQueues.get(key) ?? Promise.resolve();
+    const saving = previous.catch(() => {}).then(async () => {
+      await atomicJson(join(this.sessionDir(session.projectPath), `${session.id}.json`), session);
+      if (typeof activate === "function" ? activate() : activate) await this.activate(session);
+    });
+    this.sessionSaveQueues.set(key, saving);
+    try { await saving; }
+    finally {
+      if (this.sessionSaveQueues.get(key) === saving) this.sessionSaveQueues.delete(key);
+    }
   }
 }
