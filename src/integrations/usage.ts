@@ -30,19 +30,23 @@ type RateLimitResponse = {
   rateLimits?: { primary?: UsageWindow | null; secondary?: UsageWindow | null };
 };
 
-function validWindow(value: unknown): value is UsageWindow {
-  if (!value || typeof value !== "object") return false;
+function parseWindow(value: unknown): UsageWindow | undefined {
+  if (!value || typeof value !== "object") return undefined;
   const window = value as Partial<UsageWindow>;
-  return typeof window.usedPercent === "number" && Number.isFinite(window.usedPercent)
-    && (window.windowDurationMins === null || typeof window.windowDurationMins === "number")
-    && (window.resetsAt === undefined || (typeof window.resetsAt === "number" && Number.isFinite(window.resetsAt)));
+  if (typeof window.usedPercent !== "number" || !Number.isFinite(window.usedPercent) ||
+    (window.windowDurationMins !== null && typeof window.windowDurationMins !== "number")) return undefined;
+  return {
+    usedPercent: window.usedPercent,
+    windowDurationMins: window.windowDurationMins,
+    ...(typeof window.resetsAt === "number" && Number.isFinite(window.resetsAt) ? { resetsAt: window.resetsAt } : {}),
+  };
 }
 
 export function parseUsageLimits(value: unknown): UsageLimits | undefined {
   const limits = (value as RateLimitResponse | null)?.rateLimits;
   if (!limits || typeof limits !== "object") return undefined;
-  const primary = validWindow(limits.primary) ? limits.primary : undefined;
-  const secondary = validWindow(limits.secondary) ? limits.secondary : undefined;
+  const primary = parseWindow(limits.primary);
+  const secondary = parseWindow(limits.secondary);
   return primary || secondary ? { primary, secondary } : undefined;
 }
 

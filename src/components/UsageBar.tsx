@@ -7,6 +7,12 @@ function windowLabel(window: UsageWindow): string {
   return minutes === null ? "Window" : minutes % 1440 === 0 ? `${minutes / 1440}d` : minutes % 60 === 0 ? `${minutes / 60}h` : `${minutes}m`;
 }
 
+function resetLabel(seconds?: number): string | undefined {
+  if (seconds === undefined || !Number.isFinite(seconds)) return undefined;
+  const date = new Date(seconds * 1000);
+  return Number.isFinite(date.getTime()) ? `Resets ${date.toLocaleString()}` : undefined;
+}
+
 function Meter({
   label,
   window,
@@ -23,24 +29,28 @@ function Meter({
   const blocks = Math.round(left / (compact ? 10 : 5));
   const empty = Math.max(0, (compact ? 10 : 20) - blocks);
   const barColor = left < 10 ? "#F87171" : left < 25 ? "#FBBF24" : "#34D399";
+  const reset = resetLabel(window.resetsAt);
 
   return (
-    <Box gap={1}>
-      <Box flexShrink={0}><Text color="#94A3B8" bold>
-        [{label}]
-      </Text></Box>
-      <Box flexShrink={0}><Text>
-        <Text color={barColor}>{"█".repeat(blocks)}</Text>
-        <Text color="#334155">{"█".repeat(empty)}</Text>
-      </Text></Box>
-      <Box flexShrink={0}><Text color={barColor} bold>
-        {left.toFixed(0)}% left
-      </Text></Box>
-      {showUsed ? (
-        <Box flexShrink={0}><Text color="#64748B">
-          ({used.toFixed(0)}% used)
+    <Box flexDirection="column">
+      <Box gap={1}>
+        <Box flexShrink={0}><Text color="#94A3B8" bold>
+          [{label}]
         </Text></Box>
-      ) : null}
+        <Box flexShrink={0}><Text>
+          <Text color={barColor}>{"█".repeat(blocks)}</Text>
+          <Text color="#334155">{"█".repeat(empty)}</Text>
+        </Text></Box>
+        <Box flexShrink={0}><Text color={barColor} bold>
+          {left.toFixed(0)}% left
+        </Text></Box>
+        {showUsed ? (
+          <Box flexShrink={0}><Text color="#64748B">
+            ({used.toFixed(0)}% used)
+          </Text></Box>
+        ) : null}
+      </Box>
+      {reset ? <Text color="#94A3B8" wrap="wrap">{reset}</Text> : null}
     </Box>
   );
 }

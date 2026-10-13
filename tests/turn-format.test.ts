@@ -42,6 +42,24 @@ it("shows remaining Codex usage as the primary meter value", () => {
   expect(output).toContain("88% used");
 });
 
+it("shows local reset times for valid windows and omits invalid or absent times", () => {
+  const resetsAt = 1_800_000_000;
+  const output = renderToString(React.createElement(UsageBar, {
+    limits: { primary: { usedPercent: 12, windowDurationMins: 300, resetsAt },
+      secondary: { usedPercent: 34, windowDurationMins: 10080 } }, width: 42,
+  }), { columns: 42 });
+  expect(output).toContain(`Resets ${new Date(resetsAt * 1000).toLocaleString()}`);
+  expect(output.match(/Resets/g)).toHaveLength(1);
+  expect(output).toContain('88% left');
+  const invalid = renderToString(React.createElement(UsageBar, {
+    limits: { primary: { usedPercent: 25, windowDurationMins: 300, resetsAt: Number.POSITIVE_INFINITY } },
+  }), { columns: 80 });
+  expect(invalid).toContain('75% left');
+  expect(invalid).not.toContain('Resets');
+  const parsed = parseUsageLimits({ rateLimits: { primary: { usedPercent: 25, windowDurationMins: 300, resetsAt: 'invalid' } } });
+  expect(parsed?.primary).toEqual({ usedPercent: 25, windowDurationMins: 300 });
+});
+
 it("keeps the last usage reading visible after a refresh failure", () => {
   const output = renderToString(React.createElement(UsageBar, {
     limits: { primary: { usedPercent: 60, windowDurationMins: 300 } },
