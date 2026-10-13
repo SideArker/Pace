@@ -231,7 +231,8 @@ it('passes scout findings to a terminal artifact plan', async () => {
   expect(session.kind).toBe('planning');
   expect(session.threadId).toBe('plan-thread');
   expect(session.plan).toContain('Scout found parser');
-  expect(outcome.result).toContain('.pace-plan.md');
+  expect(outcome.result).toBe('# Plan parser migration\n\nScout found parser.\n');
+  expect(session.turns.at(-1)?.systemMessages?.some(message => message.startsWith('Plan saved: '))).toBe(true);
 });
 
 it('starts a fresh main thread from a valid checkpoint and counts turns per thread', async () => {
@@ -424,7 +425,8 @@ it('stops after a Vex-selected artifact plan', async () => {
   expect(outcome.stages.map(stage => stage.route)).toEqual([{ model: 'gpt-6-sol', effort: 'high' }]);
   expect(session.kind).toBe('planning');
   expect(session.plan).toContain('Update src/parser.ts');
-  expect(outcome.result).toContain('.pace-plan.md');
+  expect(outcome.result).toBe('# Parser plan\n\n1. Update src/parser.ts.\n');
+  expect(session.turns.at(-1)?.systemMessages?.some(message => message.startsWith('Plan saved: '))).toBe(true);
   expect((await new PaceStore(dir).latest(session.projectPath))?.kind).toBe('planning');
 });
 
@@ -471,7 +473,8 @@ it('loads an older manual plan-verify workflow as plan only', async () => {
   } };
   const outcome = await new Orchestrator(new PaceStore(dir), runner, { choose: async () => { throw new Error('Vex should not choose explicit routes'); } }).turn('Plan parser', session, config, () => {});
   expect(calls.map(call => call.mode)).toEqual(['planning']);
-  expect(outcome.result).toContain('.pace-plan.md');
+  expect(outcome.result).toBe('# Legacy plan\n\nUpdate parser.\n');
+  expect(session.turns.at(-1)?.systemMessages?.some(message => message.startsWith('Plan saved: '))).toBe(true);
   expect(outcome.session.plan).toContain('Legacy plan');
   expect(outcome.stages.map(stage => stage.route)).toEqual([{ model: 'gpt-6-sol', effort: 'high' }]);
 });
@@ -499,7 +502,8 @@ it('verifies an existing plan in a fresh read-only thread with a stronger route'
   expect(calls[0]?.prompt).toContain('Independently verify the plan');
   expect(session.threadId).toBe('review-thread');
   expect(session.plan).toContain('Verified plan');
-  expect(outcome.result).toContain('.pace-plan.md');
+  expect(outcome.result).toBe('# Verified plan\n\nUpdate parser and test it.\n');
+  expect(session.turns.at(-1)?.systemMessages?.some(message => message.startsWith('Plan saved: '))).toBe(true);
 });
 
 it('lets Vex choose effort within a manually selected model', async () => {

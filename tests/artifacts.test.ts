@@ -64,8 +64,8 @@ it("uses one editable plan file while questions remain in chat", async () => {
   const orchestrator = new Orchestrator(store, runner, vex);
   const first = await orchestrator.turn("Improve plans", session, config, () => {});
   expect(first.session.plan).toBe(fullPlan);
-  expect(first.result).toContain(".pace-plan.md");
-  expect(first.result).not.toContain("## Implementation steps");
+  expect(first.result).toBe("Updated the plan summary.");
+  expect(first.session.turns.at(-1)?.systemMessages).toContain(`Plan saved: ${calls[0]!.path}`);
   expect(first.artifacts).toEqual([first.session.planArtifact]);
   const initialPath = first.session.planArtifact;
   const question = await orchestrator.turn("What check does the plan list?", session, config, () => {});
@@ -73,18 +73,89 @@ it("uses one editable plan file while questions remain in chat", async () => {
   expect(question.artifacts).toEqual([]);
   expect(session.plan).toBe(fullPlan);
   const revision = await orchestrator.turn("Revise the plan to make it shorter", session, config, () => {});
-  expect(revision.result).toContain("Updated the plan summary.");
-  expect(revision.result).toContain(calls[0]!.path!);
+  expect(revision.result).toBe("Updated the plan summary.");
+  expect(revision.session.turns.at(-1)?.systemMessages).toContain(`Plan saved: ${calls[0]!.path}`);
   expect(session.planArtifact).toBe(initialPath);
   expect(session.plan).toBe(revisedPlan);
   expect(revision.artifacts).toEqual([initialPath]);
   expect(calls.map(call => call.path)).toEqual([calls[0]!.path, calls[0]!.path, calls[0]!.path]);
   expect(await readFile(artifactPath(store, session, session.planArtifact!), "utf8")).toBe(revisedPlan);
   const unchanged = await orchestrator.turn("Revise the plan again", session, config, () => {});
-  expect(unchanged.result).toContain("The plan file was not changed");
+  expect(unchanged.result).toBe("Updated the plan summary.");
+  expect(unchanged.session.turns.at(-1)?.systemMessages).not.toContain(`Plan saved: ${calls[0]!.path}`);
   expect(unchanged.artifacts).toEqual([]);
   expect(session.plan).toBe(revisedPlan);
   expect((await store.latest(project))?.planArtifact).toBe(initialPath);
+});
+
+it("keeps an unsaved plan path through questions and a session reload without hiding replies", async () => {
+  root = await mkdtemp(join(tmpdir(), "pace-pending-plan-"));
+  const project = join(root, "project");
+  await mkdir(project);
+  const store = new PaceStore(join(root, "store"));
+  const config: Config = { routingMode: "auto", models: [{ model: "gpt-6-sol", efforts: ["medium"] }], defaultRoute: { model: "gpt-6-sol", effort: "medium" } };
+  const paths: string[] = [];
+  const runner = { async run(runPrompt: string) {
+    const path = runPrompt.match(/The saved plan path is (\/[^\n]+?\.pace-plan\.md)/)?.[1];
+    expect(path).toBeTruthy();
+    paths.push(path!);
+    if (paths.length === 3) await writeFile(path!, "# Saved plan\n");
+    return { result: ["I have not saved a plan yet.", "I meant that no plan exists yet.", "I wrote the plan."][paths.length - 1]!, completed: true };
+  } };
+  const vex = { choose: async (request: VexRequest) => decision(request, request.options.some(option => option.id === "continue") ? "continue" : request.options.some(option => option.id === "plan") ? "plan" : "0:medium") };
+  let session = newSession(project, "auto", "planning");
+  const orchestrator = new Orchestrator(store, runner, vex);
+  const first = await orchestrator.turn("Plan this if useful", session, config, () => {});
+  expect(first.result).toBe("I have not saved a plan yet.");
+  expect(session.planArtifact).toBeUndefined();
+  expect(session.pendingPlanArtifact).toBeTruthy();
+  const pendingPath = session.pendingPlanArtifact;
+  session = (await store.load(project, session.id))!;
+  const question = await orchestrator.turn("What do you mean by not saved?", session, config, () => {});
+  expect(question.result).toBe("I meant that no plan exists yet.");
+  expect(question.artifacts).toEqual([]);
+  const saved = await orchestrator.turn("Write the plan", session, config, () => {});
+  expect(saved.result).toBe("I wrote the plan.");
+  expect(paths).toEqual([paths[0], paths[0], paths[0]]);
+  expect(session.planArtifact).toBe(pendingPath);
+  expect(session.pendingPlanArtifact).toBeUndefined();
+  expect(await readFile(paths[0]!, "utf8")).toBe("# Saved plan\n");
+});
+
+it("does not copy the old plan into an unwritten separate plan during a question", async () => {
+  root = await mkdtemp(join(tmpdir(), "pace-separate-plan-"));
+  const project = join(root, "project");
+  await mkdir(project);
+  const store = new PaceStore(join(root, "store"));
+  const session = newSession(project, "auto", "planning");
+  const config: Config = { routingMode: "auto", models: [{ model: "gpt-6-sol", efforts: ["medium"] }], defaultRoute: { model: "gpt-6-sol", effort: "medium" } };
+  session.plan = "# Original\n";
+  session.planArtifact = "artifacts/original.pace-plan.md";
+  const originalPath = artifactPath(store, session, session.planArtifact);
+  await mkdir(artifactDirectory(store, session), { recursive: true });
+  await writeFile(originalPath, session.plan);
+  const paths: string[] = [];
+  const runner = { async run(runPrompt: string) {
+    const path = runPrompt.match(/The saved plan path is (\/[^\n]+?\.pace-plan\.md)/)?.[1]!;
+    paths.push(path);
+    if (paths.length === 3) await writeFile(path, "# Separate\n");
+    return { result: ["I have not written it.", "The original plan is still saved.", "I wrote the new plan."][paths.length - 1]!, completed: true };
+  } };
+  const vex = { choose: async (request: VexRequest) => decision(request, request.options.some(option => option.id === "continue") ? "continue" : request.options.some(option => option.id === "plan") ? "plan" : "0:medium") };
+  const orchestrator = new Orchestrator(store, runner, vex);
+  await orchestrator.turn("Create a separate plan", session, config, () => {});
+  const pendingPath = session.pendingPlanArtifact;
+  expect(pendingPath).toBeTruthy();
+  expect(session.planArtifact).toBe("artifacts/original.pace-plan.md");
+  const question = await orchestrator.turn("What does the original plan say?", session, config, () => {});
+  expect(question.result).toBe("The original plan is still saved.");
+  await expect(readFile(paths[0]!, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  const saved = await orchestrator.turn("Write the new plan", session, config, () => {});
+  expect(saved.result).toBe("I wrote the new plan.");
+  expect(paths).toEqual([paths[0], paths[0], paths[0]]);
+  expect(session.planArtifact).toBe(pendingPath);
+  expect(await readFile(originalPath, "utf8")).toBe("# Original\n");
+  expect(await readFile(paths[0]!, "utf8")).toBe("# Separate\n");
 });
 
 it("continues to resolve old project artifact references without moving files", async () => {

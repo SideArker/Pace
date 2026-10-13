@@ -464,14 +464,19 @@ export class Orchestrator {
       const conversationArtifacts = artifactDirectory(this.store, session);
       await mkdir(conversationArtifacts, { recursive: true });
       const planningTurn = session.kind === "planning" && intent !== "verify_plan";
-      const separatePlan = planningTurn && /\b(?:separate|another|new) plan\b/i.test(prompt) && !!session.planArtifact;
-      const planReference = planningTurn ? planArtifactReference(session.id, prompt, session.planArtifact, separatePlan) : undefined;
+      const pendingPlanBeforeTurn = session.pendingPlanArtifact;
+      const separatePlan = planningTurn && /\b(?:separate|another|new) plan\b/i.test(prompt) && !!session.planArtifact && !pendingPlanBeforeTurn;
+      const planReference = planningTurn ? planArtifactReference(session.id, prompt, session.pendingPlanArtifact ?? session.planArtifact, separatePlan) : undefined;
       const planPath = planReference ? artifactPath(this.store, session, planReference) : undefined;
+      if (planReference && planReference !== session.planArtifact && session.pendingPlanArtifact !== planReference) {
+        session.pendingPlanArtifact = planReference;
+        await save();
+      }
       let planBefore: string | undefined;
       if (planPath) {
         try { planBefore = await readFile(planPath, "utf8"); }
         catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-        if (planBefore === undefined && session.plan && !separatePlan) {
+        if (planBefore === undefined && session.plan && !separatePlan && (!pendingPlanBeforeTurn || planReference === session.planArtifact)) {
           planBefore = session.plan;
           await writeFile(planPath, planBefore, "utf8");
         }
@@ -607,12 +612,12 @@ export class Orchestrator {
         estimatedCostUsd: costForUsage(route, execution.usage),
       });
       if (execution.threadId) session.threadId = execution.threadId;
-      let displayedResult = execution.result;
       let planChanged = false;
       if (intent === "verify_plan") {
         session.plan = execution.result;
         session.planArtifact = await savePlanArtifact(conversationArtifacts, session.id, prompt, execution.result, session.planArtifact);
-        displayedResult = `Plan saved: ${artifactPath(this.store, session, session.planArtifact)}\n\nOpen it with the Pace VS Code extension. The full plan remains available to /verify and /execute.`;
+        delete session.pendingPlanArtifact;
+        systemMessage(`Plan saved: ${artifactPath(this.store, session, session.planArtifact)}`);
       } else if (planningTurn) {
         let planAfter: string | undefined;
         try { planAfter = await readFile(planPath!, "utf8"); }
@@ -625,10 +630,8 @@ export class Orchestrator {
           planChanged = true;
           session.plan = planAfter;
           session.planArtifact = planReference;
-          const summary = execution.result.trim().split(/\r?\n/, 1)[0] ?? "";
-          displayedResult = `${summary.length > 240 || /^\s*#/.test(summary) ? "Plan updated." : summary || "Plan updated."}\n\nPlan: ${planPath}`;
-        } else if (!planAfter?.trim() || /\b(?:revise|update|edit|change|modify|rewrite|amend|add|remove|include|expand|fix|adjust|create|draft|write)\b/i.test(prompt) && !/^\s*(?:how|what|why|where|when|which)\b/i.test(prompt)) {
-          displayedResult = `The plan file was not changed: ${planPath}`;
+          delete session.pendingPlanArtifact;
+          systemMessage(`Plan saved: ${planPath}`);
         }
       }
       if (checkpoint && session.threadId === checkpoint.threadId) {
@@ -661,7 +664,7 @@ export class Orchestrator {
         {
           prompt,
           ...(displayPrompt ? { displayPrompt } : {}),
-          result: displayedResult,
+          result: execution.result,
           at: new Date().toISOString(),
           route,
           routeNote: note,
@@ -676,12 +679,12 @@ export class Orchestrator {
         },
       ].slice(-20);
       if (relationResolved && (priorTask || taskRelation === "replace"))
-        session.activeTask = advanceTask(priorTask, taskRelation, prompt, displayedResult, false);
+        session.activeTask = advanceTask(priorTask, taskRelation, prompt, execution.result, false);
       if (resumingDeferred) session.deferredTurn = undefined;
       await save();
       return {
         session,
-        result: displayedResult,
+        result: execution.result,
         note,
         route,
         durationMs,

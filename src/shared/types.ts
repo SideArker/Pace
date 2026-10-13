@@ -104,6 +104,7 @@ export type Session = {
   kind?: SessionKind;
   plan?: string;
   planArtifact?: string;
+  pendingPlanArtifact?: string;
   title?: string;
   projectPath: string;
   threadId?: string;

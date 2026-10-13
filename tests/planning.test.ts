@@ -29,6 +29,8 @@ describe("Planning helpers and theme", () => {
     expect(prompt).toContain("# Existing plan");
     expect(prompt).toContain("custom guidance");
     expect(prompt).toContain("Answer questions directly in chat");
+    expect(prompt).toContain("use a filesystem tool to create or edit that exact Markdown file");
+    expect(prompt).toContain("Pace shows your reply unchanged");
   });
 
   it("seeds instructions once and reloads user edits", async () => {
@@ -59,7 +61,6 @@ describe("Planning helpers and theme", () => {
     expect(prompt).toContain("Draft plan");
     expect(prompt).toContain("Work read-only; do not implement or edit code");
   });
-
   it("reads an existing plan file or returns undefined", async () => {
     const { tryReadPlanFile } = await import("../src/core/orchestrator-helpers.js");
     const result = tryReadPlanFile("package.json", process.cwd());
