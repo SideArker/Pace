@@ -140,3 +140,45 @@ it("restores completed conversation when a connection fails before a thread star
   expect(calls[1]).not.toContain("internet connection down");
   expect(reloaded.threadId).toBe("new-thread");
 });
+
+it("adds intermediate and final agent messages to the transcript in chronological order", async () => {
+  dir = await mkdtemp(join(tmpdir(), "pace-turn-messages-"));
+  const session = newSession(dir, "manual");
+  session.route = { model: "gpt-6-sol", effort: "high" };
+  const config: Config = { routingMode: "manual", defaultRoute: session.route, models: [{ model: "gpt-6-sol", efforts: ["high"] }] };
+  const runner: CodexRunner = { async run(_prompt, _project, _route, _threadId, onProgress) {
+    await onProgress({ kind: "message", text: "Checking directory first." });
+    await onProgress({ kind: "activity", id: "cmd-1", category: "command", title: "Ran: ls", completed: true });
+    await onProgress({ kind: "message", text: "Finished analysis." });
+    return { threadId: "thread-1", result: "Finished analysis.", completed: true };
+  } };
+  const store = new PaceStore(dir);
+  const transcript: { role: string; text: string }[] = [];
+  const runTurn = createTurnRunner({
+    turnSequence: { current: 0 }, activeSessionId: { current: session.id }, jobs: { current: new Map() },
+    promptQueue: { current: new PromptQueue() }, titleAborts: { current: new Map() }, pendingApprovals: { current: new Map() },
+    pendingQuestions: { current: new Map() }, unreadCompletions: { current: new Set() }, runner,
+    orchestrator: new Orchestrator(store, runner), store, rememberSession: () => {}, onTurnStart: () => {},
+    setRunningIds: () => {}, addFor: (_id, role, text) => transcript.push({ role, text }),
+    activityFor: (_id, event) => transcript.push({ role: "activity", text: event.title }),
+    recordThoughtUsage: () => {}, resetThoughtUsage: () => {}, getTurnActivities: () => [], setStatusFor: () => {},
+    showApproval: () => {}, showQuestion: () => {}, dismissQuestion: () => {}, setSession: () => {},
+    setVexState: () => {}, refreshUsage: () => {}, setQueueVersion: () => {}, setProcesses: () => {},
+    setLiveUsage: () => {}, getConfig: () => config,
+  });
+
+  await runTurn("Inspect and fix", session, config);
+  const codexMessages = transcript.filter(t => t.role === "codex");
+  expect(codexMessages).toEqual([
+    { role: "codex", text: "Checking directory first." },
+    { role: "codex", text: "Finished analysis." },
+  ]);
+  const sequence = transcript.map(t => `${t.role}:${t.text}`);
+  const msg1Idx = sequence.indexOf("codex:Checking directory first.");
+  const actIdx = sequence.indexOf("activity:Ran: ls");
+  const msg2Idx = sequence.indexOf("codex:Finished analysis.");
+  expect(msg1Idx).toBeGreaterThanOrEqual(0);
+  expect(actIdx).toBeGreaterThan(msg1Idx);
+  expect(msg2Idx).toBeGreaterThan(actIdx);
+});
+

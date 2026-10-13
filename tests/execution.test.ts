@@ -965,3 +965,43 @@ it('delivers every streamed SDK event to benchmark observer', async () => {
   await runner.run('work', process.cwd(), { model: 'gpt-6-sol', effort: 'high' }, undefined, () => {});
   expect(seen).toEqual(['item.completed', 'turn.completed']);
 });
+
+it('preserves all completed agent messages across multiple turn steps in AppServerRunner', async () => {
+  const progress: Progress[] = [];
+  const runner = new AppServerRunner(onMessage => ({
+    setRequestHandler() {}, notify() {}, respond() {}, kill() {},
+    async request(method: string) {
+      if (method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (method === 'turn/start') queueMicrotask(() => {
+        onMessage({ method: 'item/completed', params: { item: { type: 'agentMessage', id: 'msg-1', text: 'Step 1 starting' } } });
+        onMessage({ method: 'item/completed', params: { item: { type: 'agentMessage', id: 'msg-2', text: 'Step 2 done' } } });
+        onMessage({ method: 'turn/completed', params: { turn: { status: 'completed' } } });
+      });
+      return {};
+    },
+  }));
+  const execution = await runner.run('work', process.cwd(), { model: 'gpt-6-sol', effort: 'high' }, undefined, event => { progress.push(event); });
+  expect(progress.filter(event => event.kind === 'message')).toEqual([
+    { kind: 'message', text: 'Step 1 starting' },
+    { kind: 'message', text: 'Step 2 done' },
+  ]);
+  expect(execution.result).toBe('Step 2 done');
+});
+
+it('preserves all completed agent messages across multiple turn steps in SdkRunner', async () => {
+  const progress: Progress[] = [];
+  const runner = new SdkRunner({});
+  const thread = { id: 'thread-1', async runStreamed() { return { events: (async function* () {
+    yield { type: 'item.completed', item: { type: 'agent_message', id: 'msg-1', text: 'Step 1 starting' } };
+    yield { type: 'item.completed', item: { type: 'agent_message', id: 'msg-2', text: 'Step 2 done' } };
+    yield { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 } };
+  })() }; } };
+  (runner as unknown as { codex: { startThread: () => typeof thread } }).codex = { startThread: () => thread };
+  const execution = await runner.run('work', process.cwd(), { model: 'gpt-6-sol', effort: 'high' }, undefined, event => { progress.push(event); });
+  expect(progress.filter(event => event.kind === 'message')).toEqual([
+    { kind: 'message', text: 'Step 1 starting' },
+    { kind: 'message', text: 'Step 2 done' },
+  ]);
+  expect(execution.result).toBe('Step 2 done');
+});
+

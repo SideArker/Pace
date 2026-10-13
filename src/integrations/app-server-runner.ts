@@ -202,7 +202,9 @@ export class AppServerRunner implements CodexRunner {
       }
       const item = isRecord(params.item) ? params.item : undefined;
       if (!item) return;
-      if (item.type === "agentMessage" && message.method === "item/completed" && typeof item.text === "string") result = item.text;
+      if (item.type === "agentMessage" && message.method === "item/completed" && typeof item.text === "string") {
+        result = item.text;
+      }
       const progress = appItemProgress(item, message.method ?? "", cwd);
       if (progress) {
         void onProgress(progress);

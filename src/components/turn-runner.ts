@@ -65,6 +65,7 @@ export function createTurnRunner({
     let deferredForRetry = false;
     let failedForRetry = false;
     let activeRoute: Route = turnSession.route;
+    let emittedMessages = 0;
     const controller = new AbortController();
     const turnId = ++turnSequence.current;
     const sessionId = turnSession.id;
@@ -136,6 +137,10 @@ export function createTurnRunner({
           if (progress.kind === "error") addFor(sessionId, "error", progress.text);
           if (progress.kind === "message") {
             setStatusFor(sessionId, "Finishing response…");
+            if (progress.text.trim()) {
+              addFor(sessionId, "codex", progress.text);
+              emittedMessages++;
+            }
           }
         },
         { interactive: true },
@@ -155,7 +160,9 @@ export function createTurnRunner({
         await store.save(turnSession, () => activeSessionId.current === sessionId);
       }
       if (activeSessionId.current === sessionId) setSession({ ...outcome.session });
-      addFor(sessionId, "codex", outcome.result);
+      if (emittedMessages === 0 && outcome.result.trim()) {
+        addFor(sessionId, "codex", outcome.result);
+      }
       if (outcome.stages.length) addFor(sessionId,
         "meta",
         formatTurnFooter(
