@@ -73,6 +73,25 @@ it("preserves a dirty Git baseline and the index, and ignores ignored files", as
   expect(await text("ignored")).toBe("after");
 });
 
+it.each(["reveal", "hide"])("does not misidentify existing files when ignore rules change (%s)", async mode => {
+  execFileSync("git", ["init", "-q", project]);
+  await mkdir(file("cache"));
+  await writeFile(file("cache/existing"), "user cache");
+  await writeFile(file("user.txt"), "user file");
+  await writeFile(file(".gitignore"), mode === "reveal" ? "user.txt\ncache/\n" : "");
+  const capture = await beginFileEdits(store, session);
+  await writeFile(file(".gitignore"), mode === "reveal" ? "" : "user.txt\ncache/\n");
+  if (mode === "hide") await writeFile(file("user.txt"), "agent edit");
+  const { id } = await capture.finish();
+  const paths = (await edits.load(id!)).changes.map(edit => edit.path);
+  expect(paths).toEqual(mode === "hide" ? [".gitignore", "user.txt"] : [".gitignore"]);
+  await edits.restore(id!, "undo");
+  expect(await text("user.txt")).toBe("user file");
+  expect(await text("cache/existing")).toBe("user cache");
+  await edits.restore(id!, "redo");
+  expect(await text("user.txt")).toBe(mode === "hide" ? "agent edit" : "user file");
+});
+
 it("refuses the entire restore when one file was manually edited", async () => {
   await writeFile(file("a"), "old"); await writeFile(file("b"), "old");
   const before = await edits.capture();
@@ -207,4 +226,19 @@ it.each([false, true])("records completed and failed Codex edits (failure: %s) a
   await expect(text("agent.txt")).rejects.toMatchObject({ code: "ENOENT" });
   await changeConversationHistory(store, loaded, "redo");
   expect(await text("agent.txt")).toBe("changed by runner");
+});
+
+it("retains each failed retry that made file edits so all attempts can be undone", async () => {
+  session.route = { model: "gpt-6-sol", effort: "high" };
+  let attempt = 0;
+  const orchestrator = new Orchestrator(store, { async run() {
+    await writeFile(file("partial"), `attempt ${++attempt}`);
+    throw new Error("failed after editing");
+  } });
+  for (let i = 0; i < 2; i++) await expect(orchestrator.turn("edit", session, { ...DEFAULT_CONFIG, skillFolder: null }, () => {})).rejects.toThrow("failed after editing");
+  expect(session.turns).toHaveLength(2);
+  await changeConversationHistory(store, session, "undo");
+  expect(await text("partial")).toBe("attempt 1");
+  await changeConversationHistory(store, session, "undo");
+  await expect(text("partial")).rejects.toMatchObject({ code: "ENOENT" });
 });

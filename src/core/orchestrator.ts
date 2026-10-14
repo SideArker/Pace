@@ -726,7 +726,11 @@ export class Orchestrator {
       await finishFileEdits();
       const cancelled = !!signal?.aborted;
       const previousFailure = session.turns.at(-1);
-      const retainedTurns = previousFailure?.failed && !previousFailure.cancelled && previousFailure.prompt === prompt
+      const repeatedFailure = previousFailure?.failed && !previousFailure.cancelled && previousFailure.prompt === prompt;
+      // A retry with no new edits can reuse the previous snapshot. Changed retries keep separate history.
+      if (repeatedFailure && fileEdits === "none" && previousFailure.fileEdits) fileEdits = previousFailure.fileEdits;
+      const retainedTurns = repeatedFailure &&
+        (!previousFailure.fileEdits || previousFailure.fileEdits === "none" || fileEdits === previousFailure.fileEdits)
         ? session.turns.slice(0, -1) : session.turns;
       session.turns = [
         ...retainedTurns,

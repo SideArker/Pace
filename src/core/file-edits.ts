@@ -13,7 +13,7 @@ const excluded = new Set([".git", ".pace", "node_modules", "dist", "build", ".ne
 const active = new Map<string, Set<{ overlapped: boolean }>>();
 const restoring = new Map<string, Promise<void>>();
 type FileState = { hash: string; mode: number; kind: "file" | "symlink" };
-type Snapshot = Map<string, FileState>;
+type Snapshot = { files: Map<string, FileState>; ignored: string[] };
 export type FileEdit = { path: string; before?: FileState; after?: FileState; undone: boolean };
 export type FileEditRecord = { version: 1; project: string; changes: FileEdit[] };
 const same = (a?: FileState, b?: FileState) => a?.hash === b?.hash && a?.mode === b?.mode && a?.kind === b?.kind;
@@ -38,7 +38,7 @@ export async function beginFileEdits(store: PaceStore, session: Session) {
       async finish(): Promise<{ id?: string; skipped?: string }> {
         try {
           if (token.overlapped) return { skipped: "File undo unavailable: conversations overlapped in this project." };
-          const after = await edits.capture();
+          const after = await edits.capture(before);
           if (token.overlapped) return { skipped: "File undo unavailable: conversations overlapped in this project." };
           return { id: await edits.record(before, after) };
         } finally { close(); }
@@ -100,10 +100,13 @@ export class FileEdits {
     if (hash(data) !== state.hash) throw new Error("Saved edit content is corrupt; no files restored.");
     return data;
   }
-  private async files(): Promise<string[]> {
+  private async files(): Promise<{ files: string[]; ignored: string[] }> {
     try {
-      const { stdout } = await exec("git", ["-C", this.project, "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "."], { maxBuffer: 8 * 1024 * 1024 });
-      return [...new Set(stdout.split("\0").filter(Boolean))];
+      const [included, ignored] = await Promise.all([
+        exec("git", ["-C", this.project, "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "."], { maxBuffer: 8 * 1024 * 1024 }),
+        exec("git", ["-C", this.project, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory", "--no-empty-directory", "--", "."], { maxBuffer: 8 * 1024 * 1024 }),
+      ]);
+      return { files: [...new Set(included.stdout.split("\0").filter(Boolean))], ignored: ignored.stdout.split("\0").filter(Boolean) };
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code !== "ENOENT" && !String((error as { stderr?: string }).stderr).includes("not a git repository")) throw error;
@@ -119,13 +122,17 @@ export class FileEdits {
         }
       };
       await visit(this.project);
-      return files;
+      return { files, ignored: [] };
     }
   }
-  async capture(): Promise<Snapshot> {
-    const files = await this.files();
+  async capture(baseline?: Snapshot): Promise<Snapshot> {
+    const listed = await this.files();
+    const ignored = baseline?.ignored ?? listed.ignored;
+    const wasIgnored = (path: string) => ignored.some(item => item.endsWith("/") ? path.startsWith(item) : path === item);
+    const files = [...new Set([...listed.files, ...(baseline?.files.keys() ?? [])])]
+      .filter(path => baseline?.files.has(path) || !wasIgnored(path));
     if (files.length > 10_000) throw new Error("Project exceeds 10,000 snapshot files.");
-    const snapshot: Snapshot = new Map();
+    const snapshot = new Map<string, FileState>();
     let size = 0;
     for (const path of files) {
       const target = this.path(path);
@@ -139,12 +146,19 @@ export class FileEdits {
       await this.blob(file.data);
       snapshot.set(path, file.state);
     }
-    return snapshot;
+    return { files: snapshot, ignored };
   }
   async record(before: Snapshot, after: Snapshot): Promise<string | undefined> {
-    const changes = [...new Set([...before.keys(), ...after.keys()])].sort()
-      .filter(path => !same(before.get(path), after.get(path)))
-      .map(path => ({ path, before: before.get(path), after: after.get(path), undone: false }));
+    // Ignore rules can change mid-turn. A missing listing entry is not necessarily a deletion.
+    for (const path of before.files.keys()) {
+      if (after.files.has(path)) continue;
+      const current = await this.state(path);
+      if (current) { await this.blob(current.data); after.files.set(path, current.state); }
+    }
+    const changes = [...new Set([...before.files.keys(), ...after.files.keys()])].sort()
+      .filter(path => before.files.has(path) || !before.ignored.some(item => item.endsWith("/") ? path.startsWith(item) : path === item))
+      .filter(path => !same(before.files.get(path), after.files.get(path)))
+      .map(path => ({ path, before: before.files.get(path), after: after.files.get(path), undone: false }));
     if (!changes.length) return undefined;
     const id = randomUUID();
     await atomicJson(join(this.directory, `${id}.json`), { version: 1, project: this.project, changes });
