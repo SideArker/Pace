@@ -1,12 +1,40 @@
 # Pace
 
-Pace is an independent terminal coding client powered by Codex App Server, with optional Vex model routing and a VS Code reader for plans and artifacts. The official [Codex App Server](https://developers.openai.com/codex/app-server) runs coding turns; the [Vex MCP server](https://github.com/SideArker/Vex) can recommend a configured model and effort for each automatic turn. Pace is not an OpenAI product.
+<p align="center">
+  <strong>Stay in flow. Ship from your terminal.</strong><br />
+  An independent coding client built around Codex App Server, with optional Vex routing and a VS Code plan reader.
+</p>
 
-## Install and run
+<p align="center">
+  <a href="https://www.npmjs.com/package/@sidearker/pace"><img src="https://img.shields.io/npm/v/@sidearker/pace?label=npm" alt="npm version" /></a>
+  <a href="https://github.com/SideArker/Pace/actions/workflows/windows-smoke.yml"><img src="https://img.shields.io/github/actions/workflow/status/SideArker/Pace/windows-smoke.yml?label=build" alt="Build status" /></a>
+  <a href="https://github.com/SideArker/Pace/releases"><img src="https://img.shields.io/github/v/release/SideArker/Pace?label=VS%20Code%20extension" alt="Latest extension release" /></a>
+</p>
 
-Requires Node.js 20+, a terminal, and working Codex authentication. Sign in with the [Codex CLI](https://developers.openai.com/codex/cli) (`codex login`) or use a supported Codex SDK/CLI environment credential. Pace never reads or stores a token itself. A Git project is expected by Codex.
+Pace gives Codex a focused terminal workspace for coding, planning, and saved conversations. The official [Codex App Server](https://developers.openai.com/codex/app-server) runs coding turns. Optional [Vex](https://github.com/SideArker/Vex) routing recommends a model and effort for each automatic turn. Pace is an independent project, not an OpenAI product.
 
-Install the published CLI with `npm install --global @sidearker/pace`, then run `pace setup` to configure optional Vex routing. Run `pace doctor` to check your setup. Pace no longer asks for a key during installation or startup.
+```sh
+npm install --global @sidearker/pace
+pace setup
+pace
+```
+
+## What you get
+
+- **A terminal-first coding flow.** Work with Codex, inspect plans, approve actions, and run project commands without leaving your terminal.
+- **Conversations that stay useful.** Resume saved work across projects, queue prompts during active turns, and reconnect sessions after moving a project.
+- **Routing when you want it.** Use a manual model or enable optional Vex recommendations. Manual mode works without Vex.
+- **Plans and artifacts you can revisit.** Save Markdown with conversations and open it in the separate [Pace VS Code extension](https://github.com/SideArker/Pace/releases).
+- **Clear local control.** Pace stores its settings and conversation index under `~/.pace`; Codex manages its own authentication and thread history.
+
+## Get started
+
+Requires Node.js 20+, a terminal, and working Codex authentication. Sign in with the [Codex CLI](https://developers.openai.com/codex/cli) (`codex login`) or use a supported Codex SDK/CLI environment credential. Pace never reads or stores a token itself. Codex expects a Git project.
+
+Run `pace doctor` to check your setup. Run `pace setup` to configure optional Vex routing. Pace does not ask for an API key during installation or startup.
+
+<details>
+<summary>Build and run from a checkout</summary>
 
 On Windows PowerShell, including the PowerShell profile in Windows Terminal:
 
@@ -28,7 +56,13 @@ pace doctor
 pace
 ```
 
-For development, use `npm run dev` instead of linking. Interactive `pace` opens a fresh conversation; use `/resume` to continue a saved one. `pace --help` and `pace --version` work without authentication. `pace doctor` checks Node, local storage, Git presence, SDK installation, Vex server installation, and configuration; only a live coding turn verifies authentication and runtime access.
+For development, use `npm run dev` instead of linking.
+
+</details>
+
+Interactive `pace` opens a fresh conversation; use `/resume` to continue saved work. `pace --help` and `pace --version` work without authentication. `pace doctor` checks Node, local storage, Git, SDK, Vex installation, and configuration; only a live coding turn checks authentication and runtime access.
+
+## Explore Pace
 
 `pace sessions` lists saved conversations across projects. It marks moved or deleted project folders as missing. `/resume` groups conversations by project and blocks missing paths. To reconnect conversations after a folder move, run `pace reconnect "old path" "new path"` with the old path shown by `pace sessions` and the existing new project directory, then reopen `/resume`. The command preserves conversation IDs, turns, Codex thread IDs, and the active conversation. It refuses a destination that already has saved conversations and retains the original session files under `~/.pace/reconnected` as a rollback copy. You can also restore the folder at its original path. `pace doctor` connects to Vex MCP and checks for `vex_choose`; it exits with status 1 when Vex is unavailable. Its error names discovery, startup, connection, or tool validation. Manual routes remain available when Vex is down.
 
