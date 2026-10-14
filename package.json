@@ -10,11 +10,12 @@
     "string-width": "^8.3.0"
   },
   "name": "@sidearker/pace",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": false,
   "files": [
     "dist/",
     "bin/",
+    "routing-prompts.default.json",
     "versions.json",
     "skills/"
   ],
