@@ -37,6 +37,7 @@ function fixture(overrides: Partial<Options> = {}) {
     setSession: vi.fn(), setDraft: vi.fn(), setHistory: vi.fn(),
     setQueueMenu: vi.fn(), setQueueVersion: vi.fn(),
     setPickerSearch: vi.fn(),
+    onUndo: vi.fn(), onRedo: vi.fn(),
   };
   const options = {
     ...events, pickerFocused: false, pickerIndex: 0, openSessions: [session, second],
@@ -308,14 +309,13 @@ describe("application keyboard input", () => {
     expect(events.setQueueMenu).toHaveBeenCalledWith(false);
   });
 
-  it("Ctrl+Z restores the latest completed prompt to the composer", async () => {
+  it("Ctrl+Z routes through file-aware history restoration", async () => {
     const { options, events, session } = fixture();
     session.turns.push({ prompt: "original", result: "done", at: new Date().toISOString() });
     const ui = await mount(options);
     await ui.key("z", { ctrl: true });
-    expect(session.turns).toHaveLength(0);
-    expect(events.setDraft).toHaveBeenCalledWith("original");
-    expect(events.renderSessionTurns).toHaveBeenCalledWith(session);
+    expect(events.onUndo).toHaveBeenCalledOnce();
+    expect(session.turns).toHaveLength(1);
   });
 
   it("Ctrl+Z leaves history alone during an active job", async () => {
@@ -326,6 +326,20 @@ describe("application keyboard input", () => {
     await ui.key("z", { ctrl: true });
     expect(session.turns).toHaveLength(1);
     expect(events.setDraft).not.toHaveBeenCalled();
+    expect(events.onUndo).not.toHaveBeenCalled();
+  });
+
+  it("Ctrl+Y restores an undone turn and the diff view owns its input", async () => {
+    const { options, events, session } = fixture();
+    session.undoneTurns = [{ prompt: "original", result: "done", at: new Date().toISOString() }];
+    const ui = await mount(options);
+    await ui.key("y", { ctrl: true });
+    expect(events.onRedo).toHaveBeenCalledOnce();
+    ui.instance.unmount();
+    options.diffOpen = true;
+    const diff = await mount(options);
+    await diff.key("y", { ctrl: true });
+    expect(events.onRedo).toHaveBeenCalledOnce();
   });
 
   it("conversation menu rewinds to the selected turn and restores its prompt", async () => {

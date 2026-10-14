@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type Dispatch, type MutableRefObject, type
 import type { ApprovalDecision, Progress } from "../integrations/codex.js";
 import { EFFORTS } from "../shared/config.js";
 import type { ApprovalMode, Route, Session } from "../shared/types.js";
-import { PaceStore, rewindConversation, deleteConversationTurn, undoConversationTurn } from "../core/sessions.js";
+import { PaceStore, rewindConversation, deleteConversationTurn } from "../core/sessions.js";
 import type { PromptQueue } from "../core/prompt-queue.js";
 import { isAltDeleteKey } from "./Composer.js";
 import type { Line } from "./Transcript.js";
@@ -72,6 +72,9 @@ export function useAppInput(options: {
   setQueueVersion?: Dispatch<SetStateAction<number>>;
   onTogglePlan?: () => void;
   onExecutePlan?: () => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
+  diffOpen?: boolean;
   pickerSearch?: string;
   setPickerSearch?: Dispatch<SetStateAction<string>>;
 }) {
@@ -86,7 +89,7 @@ export function useAppInput(options: {
     setResumeMenu, resumeChoices, missingProjectPaths, add, convoMenu,
     setConvoMenu, session, store, setSession, renderSessionTurns, draft, setDraft,
     setHistory, queueMenu, setQueueMenu, promptQueue, setQueueVersion,
-    onTogglePlan, onExecutePlan, pickerSearch, setPickerSearch,
+    onTogglePlan, onExecutePlan, onUndo, onRedo, diffOpen, pickerSearch, setPickerSearch,
   } = options;
   const lastEscape = useRef<{ sessionId: string; at: number } | undefined>(undefined);
   const escapeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -123,6 +126,7 @@ export function useAppInput(options: {
     return true;
   };
   useInput((input, key) => {
+    if (diffOpen) return;
     if (!key.escape) clearEscape();
     else if (pickerFocused || modelMenu || approvalMenu || resumeMenu || convoMenu || queueMenu || manualMenu) clearEscape();
     if (key.ctrl && input === "c") {
@@ -330,16 +334,11 @@ export function useAppInput(options: {
       return;
     }
     if (key.ctrl && input === "z") {
-      if (!jobs.current.has(session?.id ?? "") && session?.turns.length) {
-        const popped = undoConversationTurn(session)!;
-        session.updatedAt = new Date().toISOString();
-        void store.save(session);
-        setSession({ ...session });
-        renderSessionTurns(session);
-        setDraft(popped.prompt);
-        setHistory(session.turns.map((t) => t.prompt));
-        add("info", "Undid last turn. Prompt restored to composer.");
-      }
+      if (!jobs.current.has(session?.id ?? "") && session?.turns.length) onUndo?.();
+      return;
+    }
+    if (key.ctrl && input === "y") {
+      if (!jobs.current.has(session?.id ?? "") && session?.undoneTurns?.length) onRedo?.();
       return;
     }
     if ((key.ctrl && (input === "p" || input === "\x10")) || (key.meta && (input === "p" || input === "P"))) {

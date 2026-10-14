@@ -3,7 +3,9 @@ import { Box, Static, Text, useApp, useStdout } from "ink";
 import type { ApprovalDecision, Progress } from "../integrations/codex.js";
 import type { UserAnswers } from "../integrations/codex-types.js";
 import type { ApprovalMode, Config, ManualWorkflow, Route, Session } from "../shared/types.js";
-import { PaceStore, newSession, rewindConversation, deleteConversationTurn, undoConversationTurn, retryableTurn } from "../core/sessions.js";
+import { PaceStore, newSession, rewindConversation, deleteConversationTurn, retryableTurn } from "../core/sessions.js";
+import { changeConversationHistory } from "../core/file-history.js";
+import { FileDiffPanel } from "./FileDiffPanel.js";
 import { Orchestrator, VexUnavailableError } from "../core/orchestrator.js";
 import { PromptQueue } from "../core/prompt-queue.js";
 import { AppServerRunner } from "../integrations/codex.js";
@@ -57,6 +59,8 @@ export const commands = [
   "/resume",
   "/convo",
   "/undo",
+  "/redo",
+  "/diff",
   "/usage",
   "/retry",
   "/cancelretry",
@@ -115,6 +119,8 @@ const commandDescriptions: Record<string, string> = {
   "/resume": "Switch to a saved conversation",
   "/convo": "Browse and manage conversation turns",
   "/undo": "Revert latest turn and file changes",
+  "/redo": "Restore the last undone turn and file changes",
+  "/diff": "Browse agent file changes and undo or redo individual files",
   "/usage": "Show Codex account usage and rate limits",
   "/retry": "Retry the latest failed request in this conversation",
   "/cancelretry": "Cancel automatic retry and clear its queue",
@@ -204,6 +210,9 @@ export default function App({ onClear }: { onClear: () => void }) {
   const [draft, setDraft] = useState("");
   const [history, setHistory] = useState<string[]>([]);
   const [outputsExpanded, setOutputsExpanded] = useState(false);
+  const [diffOpen, setDiffOpen] = useState(false);
+  const [historyChanging, setHistoryChanging] = useState(false);
+  const historyBusy = useRef(false);
   const [transcriptRevision, setTranscriptRevision] = useState(0);
   const [usageLimits, setUsageLimits] = useState<UsageLimits>();
   const [usageError, setUsageError] = useState<string>();
@@ -1176,6 +1185,23 @@ export default function App({ onClear }: { onClear: () => void }) {
     add("info", "◈ Verifying plan in read-only mode with a fresh agent...");
     if (config) void runTurnRef.current?.(verifyPlanPrompt(targetPlan, goal), session, config, "verify_plan");
   };
+  const changeHistory = async (direction: "undo" | "redo") => {
+    if (!session || historyBusy.current) return;
+    if (jobs.current.has(session.id) || shellJobs) { add("info", "Wait for running work before changing history."); return; }
+    historyBusy.current = true;
+    setHistoryChanging(true);
+    try {
+      const result = await changeConversationHistory(store, session, direction);
+      if (!result) { add("info", `No turn to ${direction}.`); return; }
+      setSession({ ...session });
+      rememberSession(session);
+      renderSessionTurns(session);
+      setDraft(direction === "undo" ? result.turn.prompt : "");
+      setHistory(session.turns.map(turn => turn.prompt));
+      add("info", `${direction === "undo" ? "Undid" : "Restored"} last turn and ${result.files} file change${result.files === 1 ? "" : "s"}.${!result.turn.fileEdits ? " Conversation only: no file snapshot was saved for this turn." : ""}${direction === "undo" ? " Prompt restored to composer. Use /redo to restore the turn." : ""}`);
+    } catch (error) { add("error", String(error)); }
+    finally { historyBusy.current = false; setHistoryChanging(false); }
+  };
   const cancelArmed = useAppInput({
     interrupt, cancelRetry, pickerFocused, setPickerFocused, pickerIndex, setPickerIndex,
     pickerSearch, setPickerSearch,
@@ -1200,6 +1226,9 @@ export default function App({ onClear }: { onClear: () => void }) {
     draft, setDraft, setHistory, queueMenu, setQueueMenu, promptQueue, setQueueVersion,
     onTogglePlan: () => { void startOrTogglePlanning(); },
     onExecutePlan: () => { void handleExecutePlan(); },
+    onUndo: () => { void changeHistory("undo"); },
+    onRedo: () => { void changeHistory("redo"); },
+    diffOpen,
   });
   const focusQueuedOrPicker = () => {
     if (queued.length && !modelMenu && !convoMenu && !queueMenu && !approvalMenu && !manualMenu) {
@@ -1300,6 +1329,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   };
 
   const submit = async (raw: string) => {
+    if (historyBusy.current) { add("info", "Wait for file history to finish saving."); return; }
     if (switchingSession.current) return;
     const text = shellMode ? raw.trim() : normalizeNewCommand(raw);
     if (!text || !session || !config) return;
@@ -1778,23 +1808,14 @@ export default function App({ onClear }: { onClear: () => void }) {
         setPickerIndex(0);
         return;
       }
-      if (command === "/undo") {
-        if (!session.turns.length) {
-          add("info", "No messages in conversation to undo.");
-          return;
-        }
-        const popped = undoConversationTurn(session)!;
-        session.updatedAt = new Date().toISOString();
-        try {
-          await store.save(session);
-        } catch (error) {
-          add("error", `Could not save session: ${String(error)}`);
-        }
-        setSession({ ...session });
-        renderSessionTurns(session);
-        setDraft(popped.prompt);
-        setHistory(session.turns.map((t) => t.prompt));
-        add("info", "Undid last turn. Prompt restored to composer.");
+      if (command === "/diff") {
+        if (parts.length) { add("error", "Type /diff without arguments."); return; }
+        setDiffOpen(true);
+        return;
+      }
+      if (command === "/undo" || command === "/redo") {
+        if (parts.length) { add("error", `Type ${command} without arguments.`); return; }
+        await changeHistory(command === "/undo" ? "undo" : "redo");
         return;
       }
       if (command === "/retry") {
@@ -1931,6 +1952,10 @@ export default function App({ onClear }: { onClear: () => void }) {
   const extraWorkingRows = (busy && session && liveUsage[session.id] ? 1 : 0) + (busy && workingTip ? 1 : 0);
   const maxComposerRows = Math.max(1, terminalRows - composerChromeRows - extraWorkingRows - 1);
 
+  if (diffOpen && session) return <FileDiffPanel store={store} session={session} width={terminalColumns} height={Math.max(1, terminalRows - 1)}
+    onClose={() => { setDiffOpen(false); onClear(); setTranscriptRevision(value => value + 1); }}
+    onChange={updated => { setSession({ ...updated }); rememberSession(updated); }} />;
+
   return (
     // Ink clears the terminal on every update when the live frame exceeds the viewport.
     <Box flexDirection="column" paddingX={1} width={terminalColumns} maxHeight={Math.max(1, terminalRows - 1)} overflowY="hidden">
@@ -1982,7 +2007,7 @@ export default function App({ onClear }: { onClear: () => void }) {
               return undefined;
             }
           }}
-          disabled={!session || !config || !!approval || !!question || !!modelMenu || approvalMenu || resumeMenu || convoMenu || queueMenu || manualMenu || pickerFocused} shellMode={shellMode} registeredCommands={registeredCommands}
+          disabled={!session || !config || historyChanging || !!approval || !!question || !!modelMenu || approvalMenu || resumeMenu || convoMenu || queueMenu || manualMenu || pickerFocused} shellMode={shellMode} registeredCommands={registeredCommands}
           completion={matches[selection] ? (commandArgsWithSkills[matches[selection]!] ? `${matches[selection]} ` : matches[selection]) : matches[0] ? (commandArgsWithSkills[matches[0]!] ? `${matches[0]} ` : matches[0]) : undefined} completionStart={token?.start}
           onComplete={() => {
             const chosen = matches[selection] ?? matches[0];
