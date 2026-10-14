@@ -38,6 +38,8 @@ export type Config = {
   autoLaunchSkills?: string[];
 };
 export type TurnSummary = {
+  /** A saved file edit record, or "none" when a snapshot found no changes. */
+  fileEdits?: string;
   prompt: string;
   displayPrompt?: string;
   intent?: "verify_plan" | "execute_plan";
@@ -125,6 +127,7 @@ export type Session = {
   queuedPrompts?: string[];
   skillOptions?: Record<string, string>;
   turns: TurnSummary[];
+  undoneTurns?: TurnSummary[];
   compactions?: CompactionRecord[];
   checkpoint?: CheckpointRecord;
   checkpointGenerations?: CheckpointGeneration[];
