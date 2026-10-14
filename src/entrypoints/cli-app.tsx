@@ -116,9 +116,6 @@ else if (args[0] === "doctor") {
   console.error(`Unknown command: ${args.join(" ")}. Run pace --help.`);
   process.exitCode = 2;
 } else {
-  if (!hasConfiguredKey() && process.stdin.isTTY) {
-    await promptForKey();
-  }
   let instance: ReturnType<typeof render>;
   instance = render(<App onClear={() => {
     instance?.clear();
