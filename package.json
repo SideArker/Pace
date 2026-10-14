@@ -11,13 +11,14 @@
   },
   "name": "@sidearker/pace",
   "version": "0.1.0",
+  "private": false,
   "files": [
     "dist/",
     "bin/",
     "versions.json",
     "skills/"
   ],
-  "description": "Terminal coding client using Codex App Server and Vex MCP routing",
+  "description": "Independent terminal coding client powered by Codex App Server, with optional Vex model routing and a VS Code plan reader.",
   "bin": {
     "pace": "dist/entrypoints/cli.js",
     "vex": "bin/vex.js",
