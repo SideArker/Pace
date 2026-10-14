@@ -43,6 +43,7 @@ import { contextPercent, measuredContext } from "../core/context.js";
 import { networkReachable, transientRetryAt } from "../core/usage-retry.js";
 import { loadResumeChoices } from "./resume-choices.js";
 import { executePlanPrompt, tryReadPlanFile, verifyPlanPrompt } from "../core/orchestrator-helpers.js";
+import { latestNpmVersion } from "../core/npm-version.js";
 export const commands = [
   "/plan",
   "/execute",
@@ -549,8 +550,14 @@ export default function App({ onClear }: { onClear: () => void }) {
     void refreshVersionManifest().then(manifest => {
       if (!active) return;
       setKnownModels(Object.keys(manifest.pricing.rates));
-      if (newerPaceVersion(installedVersion, manifest.pace.latest))
-        add("info", `Pace ${manifest.pace.latest} is available: ${manifest.pace.releaseUrl}`);
+    });
+    return () => { active = false; };
+  }, []);
+  useEffect(() => {
+    let active = true;
+    void latestNpmVersion().then(latest => {
+      if (active && latest && newerPaceVersion(installedVersion, latest))
+        add("meta", `Pace ${latest} is available on npm. Run npm install -g @sidearker/pace to update.`);
     });
     return () => { active = false; };
   }, []);

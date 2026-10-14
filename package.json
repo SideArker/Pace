@@ -9,7 +9,7 @@
     "react": "^19.3.0",
     "string-width": "^8.3.0"
   },
-  "name": "pace",
+  "name": "@sidearker/pace",
   "version": "0.1.0",
   "description": "Terminal coding client using Codex App Server and Vex MCP routing",
   "bin": {
