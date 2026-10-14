@@ -8,5 +8,6 @@ For a reader test, open `.pace/artifacts/sample-plans-view-auto-refresh.pace-pla
 
 ## Local install
 
-From `extensions/vscode`, run `npm ci --include=dev && npm run package`, then run `code --install-extension pace-plan-reader-0.1.7.vsix`. The Pace artifacts view shows plan and file icons with any VS Code file icon theme.
+Install the latest packaged extension from the [GitHub Releases](https://github.com/SideArker/Pace/releases) page, or run `gh release download ext-0.1.7 --repo SideArker/Pace --pattern '*.vsix'` and `code --install-extension pace-plan-reader-0.1.7.vsix`. Replace `0.1.7` with release version. Releases use tags such as `ext-1.0.0`; the tag must match extension version in `package.json`.
 
+To build locally, run `npm ci --include=dev && npm run package` from `extensions/vscode`, then install the generated VSIX with `code --install-extension pace-plan-reader-<version>.vsix`. The Pace artifacts view shows plan and file icons with any VS Code file icon theme.

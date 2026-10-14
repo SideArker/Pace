@@ -1,0 +1,42 @@
+name: VS Code extension release
+
+on:
+  push:
+    tags:
+      - 'ext-*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: extensions/vscode/package-lock.json
+      - name: Check tag matches extension version
+        working-directory: extensions/vscode
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          expected="ext-$(node -p "require('./package.json').version")"
+          test "$RELEASE_TAG" = "$expected" || { echo "Tag $RELEASE_TAG does not match $expected" >&2; exit 1; }
+      - name: Build VSIX
+        working-directory: extensions/vscode
+        run: |
+          npm ci --include=dev
+          npm run package
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version="${RELEASE_TAG#ext-}"
+          gh release create "$RELEASE_TAG" \
+            "extensions/vscode/pace-plan-reader-${version}.vsix" \
+            --title "Pace VS Code Extension ${version}" \
+            --generate-notes
