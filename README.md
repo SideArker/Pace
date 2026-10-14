@@ -6,6 +6,8 @@ Pace is an independent, terminal-only coding client. The official [Codex App Ser
 
 Requires Node.js 20+, a terminal, and working Codex authentication. Sign in with the [Codex CLI](https://developers.openai.com/codex/cli) (`codex login`) or use a supported Codex SDK/CLI environment credential. Pace never reads or stores a token itself. A Git project is expected by Codex.
 
+Install the published CLI with `npm install --global @sidearker/pace`, then run `pace setup` to configure optional Vex routing. Run `pace doctor` to check your setup. Pace no longer asks for a key during installation or startup.
+
 On Windows PowerShell, including the PowerShell profile in Windows Terminal:
 
 ```powershell

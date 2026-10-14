@@ -11,6 +11,12 @@
   },
   "name": "@sidearker/pace",
   "version": "0.1.0",
+  "files": [
+    "dist/",
+    "bin/",
+    "versions.json",
+    "skills/pace-planning/SKILL.md"
+  ],
   "description": "Terminal coding client using Codex App Server and Vex MCP routing",
   "bin": {
     "pace": "dist/entrypoints/cli.js",
@@ -29,8 +35,7 @@
     "benchmark:routing": "npm run build && node dist/entrypoints/routing-benchmark.js",
     "benchmark:grade": "tsx benchmark/grading/grade.ts",
     "benchmark:check": "tsc -p benchmark/tsconfig.json",
-    "prepare": "npm run build",
-    "postinstall": "node bin/setup.js"
+    "prepare": "npm run build"
   },
   "repository": {
     "type": "git",
