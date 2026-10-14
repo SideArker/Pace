@@ -27,5 +27,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "pace --help failed: $LASTEXITCODE" }
           pace sessions
           if ($LASTEXITCODE -ne 0) { throw "pace sessions failed: $LASTEXITCODE" }
+          $PSNativeCommandUseErrorActionPreference = $false
           pace exec
           if ($LASTEXITCODE -ne 2) { throw "pace exec expected exit 2, got $LASTEXITCODE" }
