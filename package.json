@@ -10,7 +10,7 @@
     "string-width": "^8.3.0"
   },
   "name": "@sidearker/pace",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": false,
   "files": [
     "dist/",
@@ -45,7 +45,7 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "type": "module",
   "bugs": {
     "url": "https://github.com/SideArker/Pace/issues"
