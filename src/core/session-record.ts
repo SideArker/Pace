@@ -72,27 +72,9 @@ function isCheckpointGeneration(value: unknown): boolean {
     (value.error === undefined || typeof value.error === "string");
 }
 
-export function parseSession(value: unknown, project: string): Session | undefined {
-  if (
-    !isRecord(value) ||
-    typeof value.id !== "string" ||
-    !/^[0-9a-f-]{36}$/.test(value.id) ||
-    (value.title !== undefined && (typeof value.title !== "string" || value.title.length > 120)) ||
-    value.projectPath !== project ||
-    typeof value.createdAt !== "string" ||
-    typeof value.updatedAt !== "string" ||
-    (value.threadId !== undefined && typeof value.threadId !== "string") ||
-    (value.threadTurnCount !== undefined && (!Number.isInteger(value.threadTurnCount) || (value.threadTurnCount as number) < 0)) ||
-    (value.contextByThread !== undefined && (!isRecord(value.contextByThread) ||
-      !Object.entries(value.contextByThread).every(([id, reading]) => !!id && isContextMeasurement(reading)))) ||
-    (value.compactions !== undefined && (!Array.isArray(value.compactions) || !value.compactions.every(isCompaction))) ||
-    (value.checkpoint !== undefined && !isCheckpoint(value.checkpoint)) ||
-    (value.checkpointGenerations !== undefined && (!Array.isArray(value.checkpointGenerations) ||
-      !value.checkpointGenerations.every(isCheckpointGeneration))) ||
-    !Array.isArray(value.turns) ||
-    !value.turns.every(
-      (turn: unknown) =>
-        isRecord(turn) &&
+function isTurn(turn: unknown): boolean {
+  return isRecord(turn) &&
+        (turn.fileEdits === undefined || turn.fileEdits === "none" || (typeof turn.fileEdits === "string" && /^[0-9a-f-]{36}$/.test(turn.fileEdits))) &&
         typeof turn.prompt === "string" &&
         (turn.displayPrompt === undefined || typeof turn.displayPrompt === "string") &&
         (turn.intent === undefined || turn.intent === "verify_plan" || turn.intent === "execute_plan") &&
@@ -114,8 +96,29 @@ export function parseSession(value: unknown, project: string): Session | undefin
         (turn.routing === undefined || (Array.isArray(turn.routing) && turn.routing.every(isRouting))) &&
         (turn.artifacts === undefined || (Array.isArray(turn.artifacts) && turn.artifacts.every((artifact: unknown) => typeof artifact === "string" && /^(?:\.pace\/)?artifacts\/[^/\\]+\.md$/.test(artifact)))) &&
         (turn.failed === undefined || typeof turn.failed === "boolean") &&
-        (turn.cancelled === undefined || typeof turn.cancelled === "boolean"),
-    ) ||
+        (turn.cancelled === undefined || typeof turn.cancelled === "boolean");
+}
+
+export function parseSession(value: unknown, project: string): Session | undefined {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== "string" ||
+    !/^[0-9a-f-]{36}$/.test(value.id) ||
+    (value.title !== undefined && (typeof value.title !== "string" || value.title.length > 120)) ||
+    value.projectPath !== project ||
+    typeof value.createdAt !== "string" ||
+    typeof value.updatedAt !== "string" ||
+    (value.threadId !== undefined && typeof value.threadId !== "string") ||
+    (value.threadTurnCount !== undefined && (!Number.isInteger(value.threadTurnCount) || (value.threadTurnCount as number) < 0)) ||
+    (value.contextByThread !== undefined && (!isRecord(value.contextByThread) ||
+      !Object.entries(value.contextByThread).every(([id, reading]) => !!id && isContextMeasurement(reading)))) ||
+    (value.compactions !== undefined && (!Array.isArray(value.compactions) || !value.compactions.every(isCompaction))) ||
+    (value.checkpoint !== undefined && !isCheckpoint(value.checkpoint)) ||
+    (value.checkpointGenerations !== undefined && (!Array.isArray(value.checkpointGenerations) ||
+      !value.checkpointGenerations.every(isCheckpointGeneration))) ||
+    !Array.isArray(value.turns) ||
+    !value.turns.every(isTurn) ||
+    (value.undoneTurns !== undefined && (!Array.isArray(value.undoneTurns) || value.undoneTurns.length > 20 || !value.undoneTurns.every(isTurn))) ||
     !isRecord(value.route) ||
     (value.route.model !== undefined &&
       typeof value.route.model !== "string") ||

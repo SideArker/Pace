@@ -22,6 +22,7 @@ import { retryableTurn } from "./session-model.js";
 import { addUsage, awaitRouting, loadPlanningInstructions, planningPrompt, readablePlanInstruction, retainedConversationPrompt } from "./orchestrator-helpers.js";
 import { runPlanningStage } from "./workflow-stages.js";
 import { checkpointHandoff } from "./checkpoint.js";
+import { beginFileEdits } from "./file-edits.js";
 import { artifactDirectory, artifactPath, artifactSnapshot, changedArtifacts, planArtifactReference, savePlanArtifact } from "./system/artifacts.js";
 import { validRoute } from "../shared/config.js";
 import { existingFolder } from "./system/folders.js";
@@ -224,6 +225,18 @@ export class Orchestrator {
     let usedThreadForClarification = false;
     let handoff: string | undefined;
     let userClarification: string | undefined;
+    let fileEdits: string | undefined;
+    let editCapture: Awaited<ReturnType<typeof beginFileEdits>> | undefined;
+    const finishFileEdits = async () => {
+      const capture = editCapture;
+      editCapture = undefined;
+      if (!capture) return;
+      try {
+        const recorded = await capture.finish();
+        if (recorded.skipped) systemMessage(recorded.skipped);
+        else fileEdits = recorded.id ?? "none";
+      } catch (error) { systemMessage(`File undo unavailable: ${String(error)}`); }
+    };
     let auto = session.routingMode === "auto" || intent === "verify_plan";
     const manualWorkflow = !auto && intent !== "verify_plan" ? session.manualWorkflow : undefined;
     const delegated = !!manualWorkflow && Object.values(manualWorkflow.routes).some(value => value === "vex" || (value !== undefined && !value.effort));
@@ -581,6 +594,11 @@ export class Orchestrator {
       const runnerPrompt = autoLaunchPrompt(promptWithHistory, selectedAutoSkills);
       if (checkpoint) onProgress({ kind: "status", text: "Starting fresh thread from checkpoint…" });
       const stageStart = performance.now();
+      session.undoneTurns = undefined;
+      if (!planningTurn && intent !== "verify_plan") {
+        try { editCapture = await beginFileEdits(this.store, session); }
+        catch (error) { systemMessage(`File undo unavailable: ${String(error)}`); }
+      }
       const execution = await this.runner.run(
         runnerPrompt,
         session.projectPath,
@@ -608,6 +626,7 @@ export class Orchestrator {
         config.approvalMode,
         conversationArtifacts,
       );
+      await finishFileEdits();
       signal?.throwIfAborted();
       stages.push({
         objective: intent === "verify_plan" ? "Verify plan" : session.kind === "planning" ? "Draft plan" : "Complete request",
@@ -671,6 +690,7 @@ export class Orchestrator {
         ...session.turns,
         {
           prompt,
+          ...(fileEdits ? { fileEdits } : {}),
           ...(displayPrompt ? { displayPrompt } : {}),
           result: execution.result,
           at: new Date().toISOString(),
@@ -703,6 +723,7 @@ export class Orchestrator {
         estimatedCostUsd,
       };
     } catch (error) {
+      await finishFileEdits();
       const cancelled = !!signal?.aborted;
       const previousFailure = session.turns.at(-1);
       const retainedTurns = previousFailure?.failed && !previousFailure.cancelled && previousFailure.prompt === prompt
@@ -711,6 +732,7 @@ export class Orchestrator {
         ...retainedTurns,
         {
           prompt,
+          ...(fileEdits ? { fileEdits } : {}),
           ...(displayPrompt ? { displayPrompt } : {}),
           ...(intent ? { intent } : {}),
           result: cancelled ? "Turn cancelled by user" : String(error),

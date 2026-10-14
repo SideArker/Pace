@@ -170,7 +170,7 @@ it('runs a read-only scout, reroutes after handoff, and sums stage costs', async
     requests.push(request);
     return decision(request, request.options[0]?.id === 'continue' ? 'replace' : request.options[0]?.id === 'single' ? 'scout' : request.context.stageObjective === 'Read-only repository scout' ? '0:low' : '1:high');
   } };
-  const session = newSession('/example/project', 'auto');
+  const session = newSession(dir, 'auto');
   session.threadId = 'existing-main-thread';
   session.turns.push({ prompt: 'We discussed the parser in src/a.ts', result: 'The parser needs an update.', at: new Date().toISOString() });
   const notices: string[] = [];
@@ -195,7 +195,7 @@ it('runs a read-only scout, reroutes after handoff, and sums stage costs', async
   expect(requests[3]?.context.priorStageHandoff).toContain('src/a.ts');
   expect(requests[3]?.context.priorStageHandoff).not.toContain('unshared scout history');
   expect(outcome.stages[0]?.handoff).toContain('Parser is defined here');
-  expect((await new PaceStore(dir).latest('/example/project'))?.turns.at(-1)?.stages?.[0]?.handoff).toContain('Parser is defined here');
+  expect((await new PaceStore(dir).latest(dir))?.turns.at(-1)?.stages?.[0]?.handoff).toContain('Parser is defined here');
   expect(outcome.usage).toMatchObject({ input_tokens: 300, output_tokens: 25 });
   expect(outcome.estimatedCostUsd).toBeCloseTo(outcome.stages[0]!.estimatedCostUsd! + outcome.stages[1]!.estimatedCostUsd!, 12);
   expect(outcome.routing).toHaveLength(4);

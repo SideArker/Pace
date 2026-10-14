@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { beginFileEdits, FileEdits, fileTurnActive } from "../src/core/file-edits.js";
 import { changeConversationHistory, changeFileHistory } from "../src/core/file-history.js";
 import { newSession, PaceStore } from "../src/core/sessions.js";
+import { Orchestrator } from "../src/core/orchestrator.js";
+import { DEFAULT_CONFIG } from "../src/shared/config.js";
 
 let dir: string, project: string, store: PaceStore, session: ReturnType<typeof newSession>, edits: FileEdits;
 beforeEach(async () => {
@@ -105,10 +107,12 @@ it("undoes and redoes conversation turns together with their files", async () =>
   expect((await changeConversationHistory(store, session, "undo"))?.files).toBe(1);
   expect(session.turns).toHaveLength(0);
   expect(session.undoneTurns).toHaveLength(1);
+  const reloaded = (await store.load(project, session.id))!;
+  expect(reloaded.undoneTurns?.[0]?.fileEdits).toBe(id);
   expect(session.threadId).toBeUndefined();
   expect(await text("a")).toBe("user baseline");
-  expect((await changeConversationHistory(store, session, "redo"))?.files).toBe(1);
-  expect(session.turns.at(-1)?.fileEdits).toBe(id);
+  expect((await changeConversationHistory(store, reloaded, "redo"))?.files).toBe(1);
+  expect(reloaded.turns.at(-1)?.fileEdits).toBe(id);
   expect(await text("a")).toBe("agent");
 });
 
@@ -150,4 +154,25 @@ it("keeps concurrent conversations running but skips ambiguous file undo", async
   expect((await first.finish()).skipped).toContain("overlapped");
   expect((await second.finish()).skipped).toContain("overlapped");
   expect(fileTurnActive(project)).toBe(false);
+});
+
+it.each([false, true])("records completed and failed Codex edits (failure: %s) and invalidates redo on new work", async failure => {
+  session.route = { model: "gpt-6-sol", effort: "high" };
+  const config = { ...DEFAULT_CONFIG, skillFolder: null };
+  const orchestrator = new Orchestrator(store, { async run() {
+    await writeFile(file("agent.txt"), "changed by runner");
+    if (failure) throw new Error("runner failed after editing");
+    return { result: "done", completed: true, threadId: "thread" };
+  } });
+  session.undoneTurns = [{ prompt: "old redo", result: "old", at: new Date().toISOString() }];
+  const turn = orchestrator.turn("edit", session, config, () => {});
+  if (failure) await expect(turn).rejects.toThrow("runner failed");
+  else await turn;
+  expect(session.turns.at(-1)?.fileEdits).toMatch(/^[0-9a-f-]{36}$/);
+  expect(session.undoneTurns).toBeUndefined();
+  const loaded = (await store.load(project, session.id))!;
+  await changeConversationHistory(store, loaded, "undo");
+  await expect(text("agent.txt")).rejects.toMatchObject({ code: "ENOENT" });
+  await changeConversationHistory(store, loaded, "redo");
+  expect(await text("agent.txt")).toBe("changed by runner");
 });
