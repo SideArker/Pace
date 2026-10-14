@@ -15,7 +15,7 @@
     "dist/",
     "bin/",
     "versions.json",
-    "skills/pace-planning/SKILL.md"
+    "skills/"
   ],
   "description": "Terminal coding client using Codex App Server and Vex MCP routing",
   "bin": {
