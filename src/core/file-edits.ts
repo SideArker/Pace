@@ -51,10 +51,13 @@ export class FileEdits {
   readonly project: string;
   private readonly directory: string;
   private readonly blobs: string;
+  private readonly excludedStorage: string;
   constructor(private readonly store: PaceStore, session: Pick<Session, "projectPath" | "id">) {
     this.project = resolve(session.projectPath);
     this.directory = join(store.conversationDir(this.project, session.id), "edits");
     this.blobs = join(store.sessionDir(this.project), "edit-blobs");
+    const base = resolve(store.baseDir);
+    this.excludedStorage = this.project === base || this.project.startsWith(base + sep) ? join(base, "sessions") : base;
   }
   private path(path: string): string {
     if (!path || isAbsolute(path) || path.split(/[\\/]/).some(part => !part || part === ".." || part === "." || part === ".git"))
@@ -109,7 +112,7 @@ export class FileEdits {
         for (const entry of await readdir(folder, { withFileTypes: true })) {
           if (excluded.has(entry.name)) continue;
           const path = join(folder, entry.name);
-          if (resolve(path) === resolve(this.store.baseDir)) continue;
+          if (resolve(path) === this.excludedStorage) continue;
           if (entry.isDirectory()) await visit(path);
           else if (entry.isFile() || entry.isSymbolicLink()) files.push(relative(this.project, path));
           if (files.length > 10_000) throw new Error("Project exceeds 10,000 snapshot files.");
@@ -126,7 +129,7 @@ export class FileEdits {
     let size = 0;
     for (const path of files) {
       const target = this.path(path);
-      if (target === resolve(this.store.baseDir) || target.startsWith(resolve(this.store.baseDir) + sep)) continue;
+      if (target === this.excludedStorage || target.startsWith(this.excludedStorage + sep)) continue;
       // Git lists submodules as directories. Their contents belong to a different repository.
       try { if ((await lstat(target)).isDirectory()) continue; } catch (error) { if (!missing(error)) throw error; }
       const file = await this.state(path);
@@ -222,7 +225,7 @@ export class FileEdits {
     if (before.includes(0) || after.includes(0)) return `${header}\nBinary file changed`;
     const old = await this.blob(before), next = await this.blob(after);
     let output: string;
-    try { output = (await exec("git", ["diff", "--no-index", "--no-ext-diff", "--no-textconv", "--no-color", "--unified=3", "--", join(this.blobs, old), join(this.blobs, next)], { maxBuffer: 2 * 1024 * 1024 })).stdout; }
+    try { output = (await exec("git", ["diff", "--no-index", "--no-ext-diff", "--no-textconv", "--no-color", "--unified=3", "--", join(this.blobs, old), join(this.blobs, next)], { maxBuffer: 20 * 1024 * 1024 })).stdout; }
     catch (error) {
       if ((error as { code?: number }).code === 1) output = String((error as { stdout: string }).stdout);
       else if ((error as NodeJS.ErrnoException).code === "ENOENT") output = `@@ -1,${before.toString().split("\n").length} +1,${after.toString().split("\n").length} @@\n${before.toString().split("\n").map(line => `-${line}`).join("\n")}\n${after.toString().split("\n").map(line => `+${line}`).join("\n")}`;
@@ -230,6 +233,7 @@ export class FileEdits {
     }
     const hunk = output.indexOf("@@");
     const mode = edit.before?.mode !== edit.after?.mode ? `\nmode ${edit.before?.mode.toString(8) ?? "absent"} → ${edit.after?.mode.toString(8) ?? "absent"}` : "";
-    return `${header}${mode}\n${hunk < 0 ? "No text changes" : output.slice(hunk).trimEnd()}`;
+    const kind = edit.before && edit.after && edit.before.kind !== edit.after.kind ? `\ntype ${edit.before.kind} → ${edit.after.kind}` : "";
+    return `${header}${mode}${kind}\n${hunk < 0 ? "No text changes" : output.slice(hunk).trimEnd()}`;
   }
 }

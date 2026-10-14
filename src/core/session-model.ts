@@ -34,6 +34,7 @@ export function rewindConversation(session: Session, index: number): TurnSummary
   const turn = session.turns[index];
   if (!turn) return undefined;
   session.turns = session.turns.slice(0, index);
+  session.undoneTurns = undefined;
   session.threadId = undefined;
   session.threadTurnCount = undefined;
   session.checkpoint = undefined;
@@ -44,6 +45,7 @@ export function rewindConversation(session: Session, index: number): TurnSummary
 export function deleteConversationTurn(session: Session, index: number): void {
   if (index < 0 || index >= session.turns.length) return;
   session.turns.splice(index, 1);
+  session.undoneTurns = undefined;
   session.threadId = undefined;
   session.threadTurnCount = undefined;
   session.checkpoint = undefined;

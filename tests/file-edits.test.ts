@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beginFileEdits, FileEdits, fileTurnActive } from "../src/core/file-edits.js";
 import { changeConversationHistory, changeFileHistory } from "../src/core/file-history.js";
-import { newSession, PaceStore } from "../src/core/sessions.js";
+import { deleteConversationTurn, newSession, PaceStore, rewindConversation } from "../src/core/sessions.js";
 import { Orchestrator } from "../src/core/orchestrator.js";
 import { DEFAULT_CONFIG } from "../src/shared/config.js";
 
@@ -126,6 +126,38 @@ it("rolls files and edit flags back when session persistence fails", async () =>
   expect(await text("a")).toBe("agent");
   expect((await edits.load(id)).changes[0]?.undone).toBe(false);
   expect(session.turns).toHaveLength(1);
+});
+
+it("validates every saved blob before changing any file", async () => {
+  await writeFile(file("a"), "old a"); await writeFile(file("b"), "old b");
+  const before = await edits.capture();
+  await writeFile(file("a"), "new a"); await writeFile(file("b"), "new b");
+  const id = (await edits.record(before, await edits.capture()))!;
+  const record = await edits.load(id);
+  await writeFile(join(store.sessionDir(project), "edit-blobs", record.changes[1]!.before!.hash), "corrupt");
+  await expect(edits.restore(id, "undo")).rejects.toThrow("corrupt");
+  expect(await text("a")).toBe("new a"); expect(await text("b")).toBe("new b");
+});
+
+it("invalidates redo when the conversation is rewound or a turn is deleted", () => {
+  const turn = { prompt: "old", result: "done", at: new Date().toISOString() };
+  session.turns.push(turn); session.undoneTurns = [turn];
+  rewindConversation(session, 0);
+  expect(session.undoneTurns).toBeUndefined();
+  session.turns.push(turn); session.undoneTurns = [turn];
+  deleteConversationTurn(session, 0);
+  expect(session.undoneTurns).toBeUndefined();
+});
+
+it("captures project files even if the store directory is an ancestor of the project", async () => {
+  const nestedStore = new PaceStore(dir);
+  const nested = new FileEdits(nestedStore, session);
+  await writeFile(file("a"), "before");
+  const before = await nested.capture();
+  await writeFile(file("a"), "after");
+  const id = (await nested.record(before, await nested.capture()))!;
+  await nested.restore(id, "undo");
+  expect(await text("a")).toBe("before");
 });
 
 it("restores symlinks without touching their targets and rejects a symlinked parent", async () => {
