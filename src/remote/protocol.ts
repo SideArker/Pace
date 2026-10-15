@@ -7,7 +7,7 @@ export const MAX_TEXT_BYTES = 256 * 1024;
 export const id = z.uuid();
 const text = z.string().min(1).max(32000);
 const target = { projectId: z.string().regex(/^[a-f0-9]{64}$/), sessionId: id };
-export const routeSchema = z.object({ model: z.string().min(1).max(120).optional(), effort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']).optional() }).strict();
+export const routeSchema = z.object({ model: z.string().min(1).max(120).optional(), effort: z.enum(['minimal', 'low', 'medium', 'high', 'xhigh', 'ultra', 'persistent']).optional() }).strict();
 export const approvalModeSchema = z.enum(['full-access', 'request-approval', 'limited']);
 const methods = {
   'projects.list': z.object({}).strict(),
