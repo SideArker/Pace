@@ -150,8 +150,8 @@ export async function loadPlanningInstructions(file = join(homedir(), ".pace", "
   return (await readFile(file, "utf8")).trim();
 }
 
-export function planningPrompt(request: string, projectPath: string, planPath: string, currentPlan: string | undefined, instructions: string): string {
-  return `${request}\n\n[PLANNING MODE INSTRUCTION]\nThe project is at ${projectPath}. Read its files for source context. Only ${dirname(planPath)} is writable. Do not edit project files, request approval, or use the network.\nThe saved plan path is ${planPath}. ${currentPlan === undefined ? "Create the first plan there if the user requested a plan." : "For a requested revision, edit this same file unless the user explicitly requested a separate plan."}\nWhen the user requests a plan or a revision, use a filesystem tool to create or edit that exact Markdown file before replying. Do not paste a full plan into chat expecting Pace to save it. If writing fails, explain the failure in your reply. Answer questions directly in chat without changing the plan file. Pace shows your reply unchanged, so say what you actually did.\n${currentPlan === undefined ? "There is no saved plan yet." : `Complete saved plan text (the file is the source of truth):\n${currentPlan}`}\n\nPlanning instructions:\n${instructions}`;
+export function planningPrompt(request: string, projectPath: string, planPath: string, currentPlan: string | undefined, instructions: string, acceptedReview?: string): string {
+  return `${request}\n\n[PLANNING MODE INSTRUCTION]\nThe project is at ${projectPath}. Read its files for source context. Only ${dirname(planPath)} is writable. Do not edit project files, request approval, or use the network.\nThe saved plan path is ${planPath}. ${currentPlan === undefined ? "Create the first plan there if the user requested a plan." : "For a requested revision, edit this same file unless the user explicitly requested a separate plan."}\nWhen the user requests a plan or a revision, use a filesystem tool to create or edit that exact Markdown file before replying. Do not paste a full plan into chat expecting Pace to save it. If writing fails, explain the failure in your reply. Answer questions directly in chat without changing the plan file. Pace shows your reply unchanged, so say what you actually did.\n${currentPlan === undefined ? "There is no saved plan yet." : `Complete saved plan text (the file is the source of truth):\n${currentPlan}`}${acceptedReview ? `\n\nUser accepted these verification findings for plan revision. Apply them while preserving other correct content:\n${acceptedReview}` : ""}\n\nPlanning instructions:\n${instructions}`;
 }
 
 export const readablePlanInstruction = `Return the corrected plan as standalone Markdown, not a JSON handoff. Always start with a ## User Review section: use a > [!USER REVIEW] callout when a user decision is needed, or write None under the heading when nothing needs review. Follow it with Risk, Task description, Comparison when applicable, Implementation steps, and Verification last. Include the original goal, constraints, verified findings, relevant paths, assumptions, acceptance criteria, and commands. The executor will not have access to this review conversation.`;
@@ -165,15 +165,18 @@ Implementation Plan:
 ${plan}`;
 }
 
-export function verifyPlanPrompt(plan: string, goal?: string): string {
+export function verifyPlanPrompt(plan: string, goal?: string, reviewPrompt?: string): string {
   return `Review and verify the following implementation plan against the repository. Work read-only; do not implement or edit code.
 ${goal ? `Original User Goal: ${goal}\n\n` : ""}Plan under review:
 ${plan}
 
+${reviewPrompt ? `User's verification focus:\n${reviewPrompt}\n\n` : ""}
+
 Your verification task:
 1. Inspect the codebase to verify that file paths, methods, types, and assumptions in the plan are accurate.
 2. Identify missing edge cases, architectural risks, performance concerns, or breaking changes.
-3. Return a comprehensive, verified and corrected final plan ready for execution.`;
+3. Propose precise changes needed to fix each finding, with evidence and locations.
+4. Return findings and proposed plan changes in chat. Do not edit or save the plan. State when no changes are needed.`;
 }
 
 export function tryReadPlanFile(filePath: string, projectPath: string): { path: string; content: string } | undefined {

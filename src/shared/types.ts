@@ -42,7 +42,7 @@ export type TurnSummary = {
   fileEdits?: string;
   prompt: string;
   displayPrompt?: string;
-  intent?: "verify_plan" | "execute_plan";
+  intent?: "verify_plan" | "execute_plan" | "revise_plan" | "continue_verify";
   result: string;
   at: string;
   route?: Route;
@@ -108,6 +108,8 @@ export type Session = {
   plan?: string;
   planArtifact?: string;
   pendingPlanArtifact?: string;
+  planRoute?: Route;
+  verifierThreadId?: string;
   title?: string;
   projectPath: string;
   threadId?: string;
@@ -123,7 +125,7 @@ export type Session = {
   autoLaunchThreadId?: string;
   tasks?: Task[];
   activeTask?: { originalRequest: string; instructions: string[]; latestOutcome?: string; failed?: boolean };
-  deferredTurn?: { prompt: string; retryAt: string; attempt: number; reason?: "usage" | "network" | "capacity"; intent?: "verify_plan" | "execute_plan"; displayPrompt?: string };
+  deferredTurn?: { prompt: string; retryAt: string; attempt: number; reason?: "usage" | "network" | "capacity"; intent?: "verify_plan" | "execute_plan" | "revise_plan" | "continue_verify"; displayPrompt?: string };
   queuedPrompts?: string[];
   skillOptions?: Record<string, string>;
   turns: TurnSummary[];

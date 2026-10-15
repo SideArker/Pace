@@ -19,11 +19,11 @@ import { costForUsage, pricedModels, refreshVersionManifest } from "./routing/pr
 import { advanceTask, retainedTask, type TaskRelation } from "./active-task.js";
 import { PaceStore } from "./sessions.js";
 import { retryableTurn } from "./session-model.js";
-import { addUsage, awaitRouting, loadPlanningInstructions, planningPrompt, readablePlanInstruction, retainedConversationPrompt } from "./orchestrator-helpers.js";
+import { addUsage, awaitRouting, loadPlanningInstructions, planningPrompt, retainedConversationPrompt } from "./orchestrator-helpers.js";
 import { runPlanningStage } from "./workflow-stages.js";
 import { checkpointHandoff } from "./checkpoint.js";
 import { beginFileEdits } from "./file-edits.js";
-import { artifactDirectory, artifactPath, artifactSnapshot, changedArtifacts, planArtifactReference, savePlanArtifact } from "./system/artifacts.js";
+import { artifactDirectory, artifactPath, artifactSnapshot, changedArtifacts, planArtifactReference } from "./system/artifacts.js";
 import { validRoute } from "../shared/config.js";
 import { existingFolder } from "./system/folders.js";
 import {
@@ -92,7 +92,7 @@ export class Orchestrator {
     onProgress: (progress: Progress) => void,
     signal?: AbortSignal,
     activateOnSave: boolean | (() => boolean) = true,
-    intent?: "verify_plan" | "execute_plan",
+    intent?: "verify_plan" | "execute_plan" | "revise_plan" | "continue_verify",
     displayPrompt?: string,
   ): Promise<TurnOutcome> {
     const startedAt = performance.now();
@@ -219,7 +219,12 @@ export class Orchestrator {
       }
       throw new VexUnavailableError(failure, "decision");
     };
-    let route: Route = session.route;
+    const previousPlanRoute = intent === "verify_plan" && session.planRoute
+      ? { ...session.planRoute }
+      : intent === "continue_verify" && session.verifierThreadId
+        ? session.turns.find(turn => turn.intent === "verify_plan")?.route ?? { ...session.route }
+        : session.planRoute ? { ...session.planRoute } : { ...session.route };
+    let route: Route = intent === "revise_plan" || intent === "continue_verify" ? previousPlanRoute : session.route;
     let note = "Manual route";
     let shape = "single";
     let usedThreadForClarification = false;
@@ -237,8 +242,8 @@ export class Orchestrator {
         else fileEdits = recorded.id ?? "none";
       } catch (error) { systemMessage(`File undo unavailable: ${String(error)}`); }
     };
-    let auto = session.routingMode === "auto" || intent === "verify_plan";
-    const manualWorkflow = !auto && intent !== "verify_plan" ? session.manualWorkflow : undefined;
+    let auto = session.routingMode === "auto" || intent === "verify_plan" || intent === "revise_plan";
+    const manualWorkflow = !auto && intent !== "verify_plan" && intent !== "revise_plan" ? session.manualWorkflow : undefined;
     const delegated = !!manualWorkflow && Object.values(manualWorkflow.routes).some(value => value === "vex" || (value !== undefined && !value.effort));
     if (!auto) {
       taskRelation = priorTask ? "continue" : "replace";
@@ -291,12 +296,12 @@ export class Orchestrator {
           throw new Error(
             "Auto routing supports at most 12 model and effort pairs. Narrow /models.",
           );
-        if (intent !== "verify_plan" && (priorTask || session.turns.length)) {
+        if (intent !== "verify_plan" && intent !== "revise_plan" && (priorTask || session.turns.length)) {
           onProgress({ kind: "status", text: "Resolving conversation..." });
           taskRelation = (await choose(taskRelationRequest(request, routingTurns, routingState, prompts), "task relation")).choice as TaskRelation;
           relationResolved = true;
         }
-        if (intent !== "verify_plan") {
+        if (intent !== "verify_plan" && intent !== "revise_plan") {
           onProgress({ kind: "status", text: "Choosing workflow..." });
           const workflowRequest = shapeRequest(request, routingTurns, enabled, prompts, routingState);
           if (intent === "execute_plan") {
@@ -314,7 +319,7 @@ export class Orchestrator {
           shape = "single";
           usedThreadForClarification = true;
         }
-        if (shape !== "clarify" && intent !== "verify_plan") {
+        if (shape !== "clarify" && intent !== "verify_plan" && intent !== "revise_plan") {
           const desc = prompts.workflow.choices[shape as keyof typeof prompts.workflow.choices] ?? shape;
           systemMessage(`Vex chose ${shape}: ${desc}`);
         }
@@ -469,15 +474,15 @@ export class Orchestrator {
         }
       }
       signal?.throwIfAborted();
-      if (shape === "plan" || shape === "scout_plan" || intent === "verify_plan") {
+      if (shape === "plan" || shape === "scout_plan" || intent === "verify_plan" || intent === "revise_plan") {
         session.kind = "planning";
         await save();
-        if (intent !== "verify_plan")
+        if (intent !== "verify_plan" && intent !== "revise_plan")
           systemMessage("Pace switched to planning mode. Only conversation artifacts are writable; use /verify or /execute after the plan is saved.");
       }
       const conversationArtifacts = artifactDirectory(this.store, session);
       await mkdir(conversationArtifacts, { recursive: true });
-      const planningTurn = session.kind === "planning" && intent !== "verify_plan";
+      const planningTurn = session.kind === "planning" && (intent === "revise_plan" || !intent);
       const pendingPlanBeforeTurn = session.pendingPlanArtifact;
       const separatePlan = planningTurn && /\b(?:separate|another|new) plan\b/i.test(prompt) && !!session.planArtifact && !pendingPlanBeforeTurn;
       const planReference = planningTurn ? planArtifactReference(session.id, prompt, session.pendingPlanArtifact ?? session.planArtifact, separatePlan) : undefined;
@@ -517,14 +522,16 @@ export class Orchestrator {
       }
       if (auto || manualWorkflow) {
         const objective = intent === "verify_plan"
-          ? "Independently verify the saved implementation plan against the repository and return a corrected final plan"
+          ? "Independently verify the saved implementation plan against the repository. Identify concrete errors, missing steps, risks, and propose precise plan changes. Do not edit or save the plan."
+          : intent === "revise_plan"
+            ? "Revise the saved implementation plan using the user's accepted verification findings. Inspect the repository and save the complete revised plan."
           : session.kind === "planning" ? prompts.objectives.plan : completionObjective(shape, prompts);
         const selected = manualWorkflow?.routes.final ?? (shape === "plan" ? manualWorkflow?.routes.plan : undefined);
         if (!auto && selected && selected !== "vex" && selected.effort) route = selected;
         else {
-          const strong = intent === "verify_plan" ? enabled.filter(model => model.model !== "gpt-6-luna") : [];
+          const strong = intent === "verify_plan" || intent === "revise_plan" ? enabled.filter(model => model.model !== "gpt-6-luna") : [];
           const candidates = (strong.length ? strong : enabled).map(model => {
-            if (intent !== "verify_plan") return model;
+            if (intent !== "verify_plan" && intent !== "revise_plan") return model;
             const higherEfforts = model.efforts.filter(effort => ["high", "xhigh", "ultra"].includes(effort));
             return higherEfforts.length ? { ...model, efforts: higherEfforts } : model;
           });
@@ -546,7 +553,7 @@ export class Orchestrator {
         if (auto) note = usedThreadForClarification ? "Vex clarification delegated to existing Codex thread" : `Vex chose ${shape} workflow`;
       }
       signal?.throwIfAborted();
-      session.route = route;
+      if (intent !== "verify_plan" && intent !== "revise_plan" && intent !== "continue_verify") session.route = route;
       await save();
       onProgress({ kind: "route", route });
       onProgress({
@@ -561,7 +568,7 @@ export class Orchestrator {
       const retryingFailure = retryableTurn(session)?.prompt === prompt;
       const resolvedPrompt = taskRelation === "continue" && priorTask && !session.threadId
         ? `${basePrompt}\n\nPace's saved task brief (verify against conversation): ${priorTask.originalRequest}\nLater instructions: ${JSON.stringify(priorTask.instructions)}\nLast outcome: ${priorTask.latestOutcome ?? "Unknown"}\n${prompts.execution.savedTaskInstruction}`
-        : (taskRelation === "continue" || usedThreadForClarification) && session.threadId && intent !== "verify_plan"
+        : (taskRelation === "continue" || usedThreadForClarification) && session.threadId && intent !== "verify_plan" && intent !== "revise_plan"
           ? `${basePrompt}\n\n${prompts.execution.existingThreadInstruction}`
           : basePrompt;
       const safePrompt = resumedAfterLimit
@@ -578,24 +585,24 @@ export class Orchestrator {
       const promptWithHandoff = handoff
         ? `${baseExecutionPrompt}\n\n${prompts.handoff.reportInstruction}\n${handoff}`
         : baseExecutionPrompt;
-      const executionPrompt = intent === "verify_plan"
-        ? `${promptWithHandoff}\n\nWork read only. Independently verify the plan and return corrected Markdown.\n\n${readablePlanInstruction}`
-        : planningTurn ? planningPrompt(promptWithHandoff, session.projectPath, planPath!, planBefore ?? session.plan, await loadPlanningInstructions()) : promptWithHandoff;
-      const checkpoint = intent !== "verify_plan" && session.checkpoint?.threadId === session.threadId &&
+      const executionPrompt = intent === "verify_plan" || intent === "continue_verify"
+        ? `${promptWithHandoff}\n\nIndependently verify the plan. Propose precise changes for every finding. Work read-only; do not edit or save the plan.`
+        : planningTurn ? planningPrompt(promptWithHandoff, session.projectPath, planPath!, planBefore ?? session.plan, await loadPlanningInstructions(), intent === "revise_plan" ? session.turns.at(-1)?.result : undefined) : promptWithHandoff;
+      const checkpoint = intent !== "verify_plan" && intent !== "revise_plan" && session.checkpoint?.threadId === session.threadId &&
         session.turns.some(turn => turn.at === session.checkpoint?.sourceTurnAt)
         ? session.checkpoint : undefined;
-      const runThreadId = checkpoint || intent === "verify_plan" ? undefined : session.threadId;
+      const runThreadId = checkpoint || intent === "verify_plan" || intent === "revise_plan" ? undefined : session.threadId;
       const checkpointTurn = checkpoint ? session.turns.findIndex(turn => turn.at === checkpoint.sourceTurnAt) : -1;
       const promptWithHistory = checkpoint
         ? checkpointHandoff(checkpoint.note, session.turns.slice(checkpointTurn + 1).filter(turn => !turn.failed).slice(-3).map(turn => ({ user: turn.prompt.slice(0, 1000), assistant: turn.result.slice(0, 1000) })), executionPrompt)
-        : retainedConversationPrompt(executionPrompt, intent === "verify_plan" ? { ...session, threadId: undefined, turns: [] } : session);
-      const selectedAutoSkills = !runThreadId && intent !== "verify_plan" && !planningTurn
+        : retainedConversationPrompt(executionPrompt, intent === "verify_plan" || intent === "revise_plan" ? { ...session, threadId: undefined, turns: [] } : session);
+      const selectedAutoSkills = !runThreadId && intent !== "verify_plan" && intent !== "revise_plan" && !planningTurn
         ? skills.filter(skill => session.autoLaunchSkills?.includes(skill.name)) : [];
       const runnerPrompt = autoLaunchPrompt(promptWithHistory, selectedAutoSkills);
       if (checkpoint) onProgress({ kind: "status", text: "Starting fresh thread from checkpoint…" });
       const stageStart = performance.now();
       session.undoneTurns = undefined;
-      if (!planningTurn && intent !== "verify_plan") {
+      if (!planningTurn && intent !== "verify_plan" && intent !== "revise_plan") {
         try { editCapture = await beginFileEdits(this.store, session); }
         catch (error) { systemMessage(`File undo unavailable: ${String(error)}`); }
       }
@@ -606,9 +613,10 @@ export class Orchestrator {
         runThreadId,
         async (progress) => {
           if (progress.kind === "thread") {
-            session.threadId = progress.text;
+            if (intent === "verify_plan" || intent === "continue_verify") session.verifierThreadId = progress.text;
+            else session.threadId = progress.text;
             if (progress.text !== runThreadId) session.threadTurnCount = 0;
-            if (intent !== "verify_plan" && !planningTurn && session.autoLaunchSkills?.length) session.autoLaunchThreadId = progress.text;
+            if (intent !== "verify_plan" && intent !== "continue_verify" && !planningTurn && session.autoLaunchSkills?.length) session.autoLaunchThreadId = progress.text;
             await save();
           } else if (progress.kind === "question") {
             onProgress({ ...progress, respond: (answers: UserAnswers) => {
@@ -621,7 +629,7 @@ export class Orchestrator {
           } else onProgress(progress);
         },
         signal,
-        intent === "verify_plan" ? "side" : planningTurn ? "planning" : "main",
+        intent === "verify_plan" || intent === "continue_verify" ? "side" : planningTurn ? "planning" : "main",
         trustedFolders,
         config.approvalMode,
         conversationArtifacts,
@@ -629,23 +637,19 @@ export class Orchestrator {
       await finishFileEdits();
       signal?.throwIfAborted();
       stages.push({
-        objective: intent === "verify_plan" ? "Verify plan" : session.kind === "planning" ? "Draft plan" : "Complete request",
+        objective: intent === "verify_plan" ? "Verify plan" : intent === "continue_verify" ? "Continue plan verification" : intent === "revise_plan" ? "Revise plan" : session.kind === "planning" ? "Draft plan" : "Complete request",
         route,
         durationMs: Math.round(performance.now() - stageStart),
         usage: execution.usage,
         estimatedCostUsd: costForUsage(route, execution.usage),
       });
       if (execution.threadId) {
-        session.threadId = execution.threadId;
-        if (intent !== "verify_plan" && !planningTurn && session.autoLaunchSkills?.length) session.autoLaunchThreadId = execution.threadId;
+        if (intent === "verify_plan" || intent === "continue_verify") session.verifierThreadId = execution.threadId;
+        else session.threadId = execution.threadId;
+        if (intent !== "verify_plan" && intent !== "revise_plan" && !planningTurn && session.autoLaunchSkills?.length) session.autoLaunchThreadId = execution.threadId;
       }
       let planChanged = false;
-      if (intent === "verify_plan") {
-        session.plan = execution.result;
-        session.planArtifact = await savePlanArtifact(conversationArtifacts, session.id, prompt, execution.result, session.planArtifact);
-        delete session.pendingPlanArtifact;
-        systemMessage(`Plan saved: ${artifactPath(this.store, session, session.planArtifact)}`);
-      } else if (planningTurn) {
+      if (planningTurn) {
         let planAfter: string | undefined;
         try { planAfter = await readFile(planPath!, "utf8"); }
         catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
@@ -657,6 +661,7 @@ export class Orchestrator {
           planChanged = true;
           session.plan = planAfter;
           session.planArtifact = planReference;
+          session.planRoute = route;
           delete session.pendingPlanArtifact;
           systemMessage(`Plan saved: ${planPath}`);
         }
@@ -679,6 +684,15 @@ export class Orchestrator {
         ),
       );
       if (planChanged && planReference && !artifacts.includes(planReference)) artifacts.push(planReference);
+      if (intent === "revise_plan") {
+        session.threadId = undefined;
+        session.threadTurnCount = undefined;
+        session.route = previousPlanRoute;
+      }
+      if (intent === "verify_plan" || intent === "continue_verify") {
+        session.threadId = undefined;
+        session.threadTurnCount = undefined;
+      }
       const durationMs = Math.round(performance.now() - startedAt);
       const usage = addUsage(stages);
       const estimatedCostUsd = stages.every(
@@ -690,6 +704,7 @@ export class Orchestrator {
         ...session.turns,
         {
           prompt,
+          ...(intent ? { intent } : {}),
           ...(fileEdits ? { fileEdits } : {}),
           ...(displayPrompt ? { displayPrompt } : {}),
           result: execution.result,

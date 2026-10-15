@@ -77,7 +77,7 @@ function isTurn(turn: unknown): boolean {
         (turn.fileEdits === undefined || turn.fileEdits === "none" || (typeof turn.fileEdits === "string" && /^[0-9a-f-]{36}$/.test(turn.fileEdits))) &&
         typeof turn.prompt === "string" &&
         (turn.displayPrompt === undefined || typeof turn.displayPrompt === "string") &&
-        (turn.intent === undefined || turn.intent === "verify_plan" || turn.intent === "execute_plan") &&
+        (turn.intent === undefined || turn.intent === "verify_plan" || turn.intent === "execute_plan" || turn.intent === "revise_plan" || turn.intent === "continue_verify") &&
         typeof turn.result === "string" &&
         typeof turn.at === "string" &&
         (turn.route === undefined || (isRecord(turn.route) && (turn.route.model === undefined || typeof turn.route.model === "string") && (turn.route.effort === undefined || EFFORTS.includes(turn.route.effort as (typeof EFFORTS)[number])))) &&
@@ -124,6 +124,10 @@ export function parseSession(value: unknown, project: string): Session | undefin
       typeof value.route.model !== "string") ||
     (value.route.effort !== undefined &&
       !EFFORTS.includes(value.route.effort as (typeof EFFORTS)[number])) ||
+    (value.planRoute !== undefined && (!isRecord(value.planRoute) ||
+      (value.planRoute.model !== undefined && typeof value.planRoute.model !== "string") ||
+      (value.planRoute.effort !== undefined && !EFFORTS.includes(value.planRoute.effort as (typeof EFFORTS)[number])))) ||
+    (value.verifierThreadId !== undefined && (typeof value.verifierThreadId !== "string" || value.verifierThreadId.length > 200)) ||
     (value.activeSkills !== undefined && (!Array.isArray(value.activeSkills) ||
       !value.activeSkills.every((name: unknown) => typeof name === "string" && /^[a-z0-9][a-z0-9_-]*$/i.test(name)))) ||
     (value.autoLaunchSkills !== undefined && (!Array.isArray(value.autoLaunchSkills) || value.autoLaunchSkills.length > 32 ||
@@ -147,7 +151,7 @@ export function parseSession(value: unknown, project: string): Session | undefin
       typeof value.deferredTurn.retryAt !== "string" || !Number.isFinite(Date.parse(value.deferredTurn.retryAt)) ||
       !Number.isInteger(value.deferredTurn.attempt) || (value.deferredTurn.attempt as number) < 1 ||
       (value.deferredTurn.reason !== undefined && !["usage", "network", "capacity"].includes(String(value.deferredTurn.reason))) ||
-      (value.deferredTurn.intent !== undefined && value.deferredTurn.intent !== "verify_plan" && value.deferredTurn.intent !== "execute_plan") ||
+      (value.deferredTurn.intent !== undefined && value.deferredTurn.intent !== "verify_plan" && value.deferredTurn.intent !== "execute_plan" && value.deferredTurn.intent !== "revise_plan" && value.deferredTurn.intent !== "continue_verify") ||
       (value.deferredTurn.displayPrompt !== undefined && typeof value.deferredTurn.displayPrompt !== "string"))) ||
     (value.queuedPrompts !== undefined && (!Array.isArray(value.queuedPrompts) ||
       !value.queuedPrompts.every((prompt: unknown) => typeof prompt === "string"))) ||
@@ -197,7 +201,7 @@ export function parseSessionSummary(value: unknown, project: string): Session | 
           retryAt: value.deferredTurn.retryAt,
           attempt: value.deferredTurn.attempt,
           ...(value.deferredTurn.reason === "usage" || value.deferredTurn.reason === "network" || value.deferredTurn.reason === "capacity" ? { reason: value.deferredTurn.reason as "usage" | "network" | "capacity" } : {}),
-          ...(value.deferredTurn.intent === "verify_plan" || value.deferredTurn.intent === "execute_plan" ? { intent: value.deferredTurn.intent as "verify_plan" | "execute_plan" } : {}),
+          ...(value.deferredTurn.intent === "verify_plan" || value.deferredTurn.intent === "execute_plan" || value.deferredTurn.intent === "revise_plan" || value.deferredTurn.intent === "continue_verify" ? { intent: value.deferredTurn.intent as "verify_plan" | "execute_plan" | "revise_plan" | "continue_verify" } : {}),
           ...(typeof value.deferredTurn.displayPrompt === "string" ? { displayPrompt: value.deferredTurn.displayPrompt } : {}),
         }
       : undefined;
@@ -211,6 +215,11 @@ export function parseSessionSummary(value: unknown, project: string): Session | 
     updatedAt: value.updatedAt,
     routingMode: value.routingMode === "manual" ? "manual" : "auto",
     route,
+    ...(isRecord(value.planRoute) ? { planRoute: {
+      model: typeof value.planRoute.model === "string" ? value.planRoute.model : undefined,
+      effort: EFFORTS.includes(value.planRoute.effort as (typeof EFFORTS)[number]) ? value.planRoute.effort as (typeof EFFORTS)[number] : undefined,
+    } } : {}),
+    ...(typeof value.verifierThreadId === "string" ? { verifierThreadId: value.verifierThreadId } : {}),
     deferredTurn,
     queuedPrompts: Array.isArray(value.queuedPrompts)
       ? value.queuedPrompts.filter((prompt: unknown): prompt is string => typeof prompt === "string")
