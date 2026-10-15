@@ -13,6 +13,10 @@ import { execTurn } from "../core/exec.js";
 import { getGitBranch } from "../core/system/git.js";
 import { interactiveInkOptions } from "./terminal-options.js";
 import { hasConfiguredKey, promptForKey } from "../core/system/keys.js";
+import { RemoteDomain } from "../remote/domain.js";
+import { startRemoteHost } from "../remote/server.js";
+import { lanAddresses, remoteLock } from "../remote/security.js";
+import qrcode from "qrcode-terminal";
 
 export function runTerminalClear(): void {
   try {
@@ -32,7 +36,7 @@ const args = process.argv.slice(2);
 if (args.includes("--version")) console.log(`pace ${version}`);
 else if (args.includes("--help"))
   console.log(
-    `Pace ${version} · independent Codex SDK terminal client\n\nUsage: pace [doctor|setup|sessions|reconnect "old path" "new path"|exec "prompt"|--help|--version]\n\nInteractive commands: type / to browse; /help /models /version /auto /manual /workflow /approval /tasks /task /new /resume /convo /diff /undo /redo /compact /context /usage /cancelretry /btw <question> /artifacts /trust /skills /<skill> /stats /route /clear /exit\nSkills: bundled grill-me, tdd, diagnosing-bugs, code-review, prototype, pace-planning; /skills refreshes ~/.agents/skills; /skills enable|disable <name>; /skills <folder>|default|off\nBash: ! <command> or ! to toggle Bash mode\nInput: Shift/Ctrl/Alt+Enter or Ctrl+J for newline, arrows for history, Ctrl+Z undoes a turn and files, Ctrl+Y redoes, /diff browses saved edits, Ctrl+O toggles command, diff, and reasoning details`,
+    `Pace ${version} · independent Codex SDK terminal client\n\nUsage: pace [doctor|setup|sessions|remote start|remote status|reconnect "old path" "new path"|exec "prompt"|--help|--version]\n\nInteractive commands: type / to browse; /help /models /version /auto /manual /workflow /approval /remote /tasks /task /new /resume /convo /diff /undo /redo /compact /context /usage /cancelretry /btw <question> /artifacts /trust /skills /<skill> /stats /route /clear /exit\nSkills: bundled grill-me, tdd, diagnosing-bugs, code-review, prototype, pace-planning; /skills refreshes ~/.agents/skills; /skills enable|disable <name>; /skills <folder>|default|off\nBash: ! <command> or ! to toggle Bash mode\nInput: Shift/Ctrl/Alt+Enter or Ctrl+J for newline, arrows for history, Ctrl+Z undoes a turn and files, Ctrl+Y redoes, /diff browses saved edits, Ctrl+O toggles command, diff, and reasoning details`,
   );
 else if (args[0] === "setup" || args[0] === "set-key") {
   await promptForKey();
@@ -108,6 +112,30 @@ else if (args[0] === "doctor") {
     } catch (error) {
       console.error(`Could not reconnect project: ${String(error)}`);
       process.exitCode = 1;
+    }
+  }
+} else if (args[0] === "remote") {
+  const store = new PaceStore();
+  const action = args[1] ?? "start";
+  if (action === "status") {
+    try { const release = await remoteLock(store.baseDir); await release(); console.log("Remote host stopped."); }
+    catch (error) { console.log(String(error).includes("already owns") ? "Remote host lock exists; verify PID and inspect listener before use." : `Remote host unavailable: ${String(error)}`); }
+  } else if (action !== "start" || args.length > 2) {
+    console.error("Usage: pace remote [start|status]"); process.exitCode = 2;
+  } else {
+    const addresses = lanAddresses();
+    if (!addresses.length) { console.error("No private IPv4 LAN interface found."); process.exitCode = 1; }
+    else {
+      const roots = [process.cwd(), ...(await store.listProjects({ summariesOnly: true })).filter(item => item.exists).map(item => item.projectPath)];
+      const runner = new (await import("../integrations/app-server-runner.js")).AppServerRunner();
+      const orchestrator = new (await import("../core/orchestrator.js")).Orchestrator(store, runner, new VexRouter());
+      const domain = new RemoteDomain(store, orchestrator, [...new Set(roots)]);
+      const host = await startRemoteHost({ baseDir: store.baseDir, address: addresses[0]!, domain });
+      console.log(`Remote host listening on ${host.address}. Scan one-time pairing code within 2 minutes:`);
+      qrcode.generate(JSON.stringify(host.pairing), { small: true });
+      const shutdown = () => { void host.close().then(() => process.exit(0)); };
+      process.once("SIGINT", shutdown); process.once("SIGTERM", shutdown);
+      await new Promise<void>(resolve => { process.once("beforeExit", resolve); });
     }
   }
 } else if (args[0] === "exec") {
