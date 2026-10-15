@@ -56,10 +56,12 @@ describe("Planning helpers and theme", () => {
 
   it("formats verification prompt with review instructions", () => {
     const plan = "Draft plan";
-    const prompt = verifyPlanPrompt(plan, "User goal");
+    const prompt = verifyPlanPrompt(plan, "User goal", "Check migration risks");
     expect(prompt).toContain("User goal");
+    expect(prompt).toContain("Check migration risks");
     expect(prompt).toContain("Draft plan");
     expect(prompt).toContain("Work read-only; do not implement or edit code");
+    expect(prompt).toContain("Do not edit or save the plan");
   });
   it("reads an existing plan file or returns undefined", async () => {
     const { tryReadPlanFile } = await import("../src/core/orchestrator-helpers.js");

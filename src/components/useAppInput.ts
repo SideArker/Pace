@@ -72,6 +72,7 @@ export function useAppInput(options: {
   setQueueVersion?: Dispatch<SetStateAction<number>>;
   onTogglePlan?: () => void;
   onExecutePlan?: () => void;
+  onApplyVerification?: () => void;
   onUndo?: () => void;
   onRedo?: () => void;
   diffOpen?: boolean;
@@ -89,7 +90,7 @@ export function useAppInput(options: {
     setResumeMenu, resumeChoices, missingProjectPaths, add, convoMenu,
     setConvoMenu, session, store, setSession, renderSessionTurns, draft, setDraft,
     setHistory, queueMenu, setQueueMenu, promptQueue, setQueueVersion,
-    onTogglePlan, onExecutePlan, onUndo, onRedo, diffOpen, pickerSearch, setPickerSearch,
+    onTogglePlan, onExecutePlan, onApplyVerification, onUndo, onRedo, diffOpen, pickerSearch, setPickerSearch,
   } = options;
   const lastEscape = useRef<{ sessionId: string; at: number } | undefined>(undefined);
   const escapeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -191,6 +192,10 @@ export function useAppInput(options: {
     if (question) {
       if (key.shift && key.tab) focusPicker();
       else if (key.escape) handleCancelEscape();
+      return;
+    }
+    if (input.toLowerCase() === "a" && session?.turns.at(-1)?.intent === "verify_plan" && !jobs.current.has(session.id)) {
+      onApplyVerification?.();
       return;
     }
     if (key.escape && !modelMenu && !approvalMenu && !resumeMenu && !convoMenu && !queueMenu && !manualMenu && !pickerFocused) {

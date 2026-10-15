@@ -29,7 +29,7 @@ it("saves a usage-limited request, holds queued prompts, and resumes safely", as
   const store = new PaceStore(dir);
   const lines: string[] = [];
   const runTurn = createTurnRunner({
-    turnSequence: { current: 0 }, activeSessionId: { current: session.id }, jobs: { current: new Map() },
+    turnSequence: { current: 0 }, activeSessionId: { current: session.id }, jobs: { current: new Map() }, sessionLines: { current: new Map() },
     promptQueue: { current: queue }, titleAborts: { current: new Map() }, pendingApprovals: { current: new Map() },
     pendingQuestions: { current: new Map() }, unreadCompletions: { current: new Set() }, runner,
     orchestrator: new Orchestrator(store, runner), store, rememberSession: () => {}, onTurnStart: () => {},
@@ -77,7 +77,7 @@ it("retries a failed turn after reload without losing its thread, history, or fi
   const store = new PaceStore(dir);
   const lines: string[] = [];
   const makeTurnRunner = () => createTurnRunner({
-    turnSequence: { current: 0 }, activeSessionId: { current: session.id }, jobs: { current: new Map() },
+    turnSequence: { current: 0 }, activeSessionId: { current: session.id }, jobs: { current: new Map() }, sessionLines: { current: new Map() },
     promptQueue: { current: queue }, titleAborts: { current: new Map() }, pendingApprovals: { current: new Map() },
     pendingQuestions: { current: new Map() }, unreadCompletions: { current: new Set() }, runner,
     orchestrator: new Orchestrator(store, runner), store, rememberSession: () => {}, onTurnStart: () => {},
@@ -155,7 +155,7 @@ it("adds intermediate and final agent messages to the transcript in chronologica
   const store = new PaceStore(dir);
   const transcript: { role: string; text: string }[] = [];
   const runTurn = createTurnRunner({
-    turnSequence: { current: 0 }, activeSessionId: { current: session.id }, jobs: { current: new Map() },
+    turnSequence: { current: 0 }, activeSessionId: { current: session.id }, jobs: { current: new Map() }, sessionLines: { current: new Map() },
     promptQueue: { current: new PromptQueue() }, titleAborts: { current: new Map() }, pendingApprovals: { current: new Map() },
     pendingQuestions: { current: new Map() }, unreadCompletions: { current: new Set() }, runner,
     orchestrator: new Orchestrator(store, runner), store, rememberSession: () => {}, onTurnStart: () => {},
@@ -181,4 +181,3 @@ it("adds intermediate and final agent messages to the transcript in chronologica
   expect(actIdx).toBeGreaterThan(msg1Idx);
   expect(msg2Idx).toBeGreaterThan(actIdx);
 });
-

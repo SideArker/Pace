@@ -484,10 +484,11 @@ it('verifies an existing plan in a fresh read-only thread with a stronger route'
   const session = newSession('/example/project', 'auto', 'planning');
   session.threadId = 'draft-thread';
   session.plan = '# Draft plan\n\nUpdate parser.\n';
+  const originalPlan = session.plan;
   const calls: { prompt: string; route: Route; threadId?: string; mode?: string }[] = [];
   const runner: CodexRunner = { async run(prompt, _project, route, threadId, _progress, _signal, mode) {
     calls.push({ prompt, route, threadId, mode });
-    return { result: '# Verified plan\n\nUpdate parser and test it.\n', threadId: 'review-thread', completed: true };
+    return { result: 'Problem: parser path is wrong. See src/parser.ts:12.', threadId: 'review-thread', completed: true };
   } };
   const requests: VexRequest[] = [];
   const vex = { choose: async (request: VexRequest) => {
@@ -500,10 +501,11 @@ it('verifies an existing plan in a fresh read-only thread with a stronger route'
   expect(calls).toHaveLength(1);
   expect(calls[0]).toMatchObject({ route: { model: 'gpt-6-sol', effort: 'high' }, mode: 'side', threadId: undefined });
   expect(calls[0]?.prompt).toContain('Independently verify the plan');
-  expect(session.threadId).toBe('review-thread');
-  expect(session.plan).toContain('Verified plan');
-  expect(outcome.result).toBe('# Verified plan\n\nUpdate parser and test it.\n');
-  expect(session.turns.at(-1)?.systemMessages?.some(message => message.startsWith('Plan saved: '))).toBe(true);
+  expect(session.threadId).toBeUndefined();
+  expect(session.plan).toBe(originalPlan);
+  expect(session.route).toEqual({});
+  expect(outcome.result).toBe('Problem: parser path is wrong. See src/parser.ts:12.');
+  expect(session.turns.at(-1)?.systemMessages?.some(message => message.startsWith('Plan saved: '))).toBe(false);
 });
 
 it('lets Vex choose effort within a manually selected model', async () => {
@@ -1004,4 +1006,3 @@ it('preserves all completed agent messages across multiple turn steps in SdkRunn
   ]);
   expect(execution.result).toBe('Step 2 done');
 });
-
