@@ -46,6 +46,10 @@ import { networkReachable, transientRetryAt } from "../core/usage-retry.js";
 import { loadResumeChoices } from "./resume-choices.js";
 import { executePlanPrompt, tryReadPlanFile, verifyPlanPrompt } from "../core/orchestrator-helpers.js";
 import { latestNpmVersion } from "../core/npm-version.js";
+import { RemoteDomain } from "../remote/domain.js";
+import { startRemoteHost, type RemoteHost } from "../remote/server.js";
+import { lanAddresses } from "../remote/security.js";
+import qrcode from "qrcode-terminal";
 export const commands = [
   "/plan",
   "/execute",
@@ -71,6 +75,7 @@ export const commands = [
   "/stats",
   "/route",
   "/approval",
+  "/remote",
   "/tasks",
   "/compact",
   "/context",
@@ -131,6 +136,7 @@ const commandDescriptions: Record<string, string> = {
   "/stats": "Show conversation stats and token costs",
   "/route": "Show routing decisions and stage breakdown",
   "/approval": "Set command approval mode",
+  "/remote": "Pair and control this Pace session from a phone",
   "/tasks": "Show background agent tasks",
   "/compact": "Compact conversation context to save tokens",
   "/context": "Show context window usage breakdown",
@@ -231,6 +237,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const [question, setQuestion] = useState<PendingQuestion>();
   const [pendingRevision, setPendingRevision] = useState(0);
   const runTurnRef = useRef<((text: string, turnSession: Session, turnConfig: Config, intent?: "verify_plan" | "execute_plan" | "revise_plan" | "continue_verify", displayPrompt?: string, automaticRetry?: boolean) => Promise<void>) | undefined>(undefined);
+  const remoteHost = useRef<RemoteHost | undefined>(undefined);
   const [approvalMenu, setApprovalMenu] = useState(false);
   const [vexState, setVexState] = useState<
     "connecting" | "connected" | "failed"
@@ -577,6 +584,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   }, [runningIds.length, sideBusy, shellJobs, processes.length]);
   useEffect(
     () => () => {
+      void remoteHost.current?.close();
       for (const pending of pendingApprovals.current.values()) pending.respond("decline");
       for (const pending of pendingQuestions.current.values()) pending.respond({});
       for (const [sessionId, job] of jobs.current) {
@@ -1395,7 +1403,39 @@ export default function App({ onClear }: { onClear: () => void }) {
       void askBtw(text.slice(4).trim());
       return;
     }
-    if (jobs.current.has(session.id) && !/^\/(?:new|clear|resume|help|exit|usage|stats|compact|context|route|artifacts|models|trust|skills|approval|tasks)(?:\s|$)/.test(text)) {
+    if (text === "/remote" || text.startsWith("/remote ")) {
+      const [, action] = text.split(/\s+/);
+      if (action && action !== "stop") { add("error", "Use /remote or /remote stop."); return; }
+      if (remoteHost.current) {
+        await remoteHost.current.close(); remoteHost.current = undefined;
+        add("info", "Remote host stopped."); return;
+      }
+      if (action === "stop") { add("info", "Remote host is already stopped."); return; }
+      const addresses = lanAddresses();
+      if (!addresses.length) { add("error", "No private IPv4 LAN interface found."); return; }
+      try {
+        const sessions = await store.listProjects({ summariesOnly: true });
+        const roots = [...new Set([project, ...sessions.filter(item => item.exists).map(item => item.projectPath)])];
+        const bridge = {
+          session: (id: string) => jobs.current.get(id)?.session ?? sessionRecords.current.get(id) ?? (sessionRef.current?.id === id ? sessionRef.current : undefined),
+          busy: (id: string) => jobs.current.has(id),
+          queue: async (target: Session, prompt: string) => {
+            if (promptQueue.current.list(target.id).length >= 20) return false;
+            promptQueue.current.add(target.id, prompt); setQueueVersion(value => value + 1); return true;
+          },
+          cancel: (id: string) => { const job = jobs.current.get(id); if (!job) return false; job.controller.abort(); return true; },
+          submit: async (prompt: string, target: Session, intent?: "verify_plan" | "execute_plan") => { await runTurnRef.current?.(prompt, target, latestConfig.current ?? config!, intent); },
+          changed: (target: Session) => { rememberSession(target); if (activeSessionId.current === target.id) setSession({ ...target }); },
+        };
+        const domain = new RemoteDomain(store, orchestrator, roots, bridge);
+        const host = await startRemoteHost({ baseDir: store.baseDir, address: addresses[0]!, domain });
+        remoteHost.current = host;
+        add("info", `Remote host listening on ${host.address}. Scan this one-time pairing code within 2 minutes:`);
+        qrcode.generate(JSON.stringify(host.pairing), { small: true }, code => add("info", code));
+      } catch (error) { add("error", `Could not start remote host: ${String(error)}`); }
+      return;
+    }
+    if (jobs.current.has(session.id) && !/^\/(?:new|clear|resume|help|exit|usage|stats|compact|context|route|artifacts|models|trust|skills|approval|tasks|remote)(?:\s|$)/.test(text)) {
       if (isRegisteredCommand(text, registeredCommands) && !skillCommand(text, enabledSkills(skills, config))) {
         add("info", "This conversation is working. Use /new or /resume to switch conversations.");
         return;
@@ -1482,7 +1522,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       if (command === "/help") {
         add(
           "info",
-          "/plan [prompt] · /execute · /verify [file] [prompt] · /models · /auto · /manual [model] [effort] · /workflow [name|auto] · /approval [full-access|request-approval|limited] · /tasks · /new · /resume · /convo · /diff · /undo · /redo · /compact · /context · /usage · /retry · /cancelretry · /btw <q> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /stats · /route · /clear · /exit · Esc cancels automatic retry; Esc twice/Ctrl+C cancels other turns · Ctrl+Z undo · Ctrl+Y redo · Alt+P/Ctrl+P plan · Alt+E/Ctrl+E execute · ! Bash · Ctrl+O toggle command, diff, and reasoning details · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
+          "/plan [prompt] · /execute · /verify [file] [prompt] · /models · /auto · /manual [model] [effort] · /workflow [name|auto] · /approval [full-access|request-approval|limited] · /remote · /tasks · /new · /resume · /convo · /diff · /undo · /redo · /compact · /context · /usage · /retry · /cancelretry · /btw <q> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /stats · /route · /clear · /exit · Esc cancels automatic retry; Esc twice/Ctrl+C cancels other turns · Ctrl+Z undo · Ctrl+Y redo · Alt+P/Ctrl+P plan · Alt+E/Ctrl+E execute · ! Bash · Ctrl+O toggle command, diff, and reasoning details · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
         );
         add("info", "With multiple open conversations, press Down from the input to focus the picker. Use arrows and Enter to switch; Esc returns to input. Ctrl+C cancels the selected turn. /exit quits.");
         return;
