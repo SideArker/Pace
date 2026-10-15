@@ -66,7 +66,7 @@ Interactive `pace` opens a fresh conversation; use `/resume` to continue saved w
 
 `pace sessions` lists saved conversations across projects. It marks moved or deleted project folders as missing. `/resume` groups conversations by project and blocks missing paths. To reconnect conversations after a folder move, run `pace reconnect "old path" "new path"` with the old path shown by `pace sessions` and the existing new project directory, then reopen `/resume`. The command preserves conversation IDs, turns, Codex thread IDs, and the active conversation. It refuses a destination that already has saved conversations and retains the original session files under `~/.pace/reconnected` as a rollback copy. You can also restore the folder at its original path. `pace doctor` connects to Vex MCP and checks for `vex_choose`; it exits with status 1 when Vex is unavailable. Its error names discovery, startup, connection, or tool validation. Manual routes remain available when Vex is down.
 
-The Windows PowerShell smoke workflow installs, builds, links, and checks the CLI entrypoint and missing-prompt exit status. Run the same install commands above in a Windows Terminal PowerShell profile to check interactive rendering. To test the installed Vex MCP server without requesting a model decision, run `PACE_REAL_VEX=1 npx vitest run tests/vex-real.test.ts` in Bash, or `$env:PACE_REAL_VEX='1'; npx vitest run tests/vex-real.test.ts` in PowerShell.
+The Windows PowerShell smoke workflow installs, builds, links, and checks the CLI entrypoint and missing-prompt exit status. Run the same install commands above in a Windows Terminal PowerShell profile to check interactive rendering. The regular test suite includes a handshake with the installed Vex MCP server; it makes no model-provider request. To run that check alone, use `npx vitest run tests/vex-real.test.ts` in Bash or PowerShell.
 
 ## Chat commands
 
@@ -83,6 +83,7 @@ The Windows PowerShell smoke workflow installs, builds, links, and checks the CL
 | `/context` | Show the current Codex thread, last measured context occupancy, and checkpoint status |
 | `/route` | Show the latest recorded Vex choices and route used |
 | `/usage` | Refresh Codex account usage percentages and local reset times |
+| `/mcp` / `/mcp list` | Open the interactive MCP manager, or print configured external servers |
 | `/diff` | Browse saved file changes by turn; undo or redo individual files |
 | `/undo` | Undo the latest conversation turn and its saved file edits; restore the prompt to the composer |
 | `/redo` | Restore the last undone turn and its saved file edits |
@@ -176,6 +177,29 @@ When Vex chooses a split workflow, the scout runs in a fresh read-only thread an
 To check routing choices across repeated labeled requests and compare actual workflow costs, use the commands in [benchmark/README.md](benchmark/README.md).
 
 Codex receives Vex as a separate Codex-owned MCP stdio server, so Codex can call Vex tools during coding turns. Pace does not proxy those calls or make extra routing decisions for Codex. The app-server configuration forwards provider environment variable names, keeping their values out of command arguments. Pace resolves the project's actual filesystem path before starting Codex, including its original casing on Windows, while preserving case-insensitive session lookup. Request Approval is the default: main turns use a workspace-write sandbox with network access disabled and App Server `on-request` approvals. Full Access uses `danger-full-access` and no approval prompts. Limited uses a read-only sandbox and App Server `untrusted` approvals; Codex may run commands it considers trusted without prompting, while every typed Bash command needs approval. Scout and side turns remain read-only with approvals disabled in all modes. The mode selected when a turn starts stays with that turn.
+
+### External MCP servers
+
+Run `/mcp` inside Pace to open the interactive manager. Use arrows or Tab to select a server, add a stdio or HTTP server, refresh the list, remove a server, or log in and out with OAuth. Setup asks for an executable and each argument separately, or for a URL and optional bearer-token environment variable. Review the server before saving. Removal requires an explicit confirmation. OAuth output appears in the manager while you authenticate in your browser. Esc cancels pending work, cancels setup, or closes the manager.
+
+Both the interactive manager and `pace mcp` use the bundled Codex CLI. They share Codex's `~/.codex/config.toml` (or the directory selected by `CODEX_HOME`) and credentials; there is no separate Pace server registry. Existing Codex servers are available during Pace turns. Trusted project configuration in `.codex/config.toml` also follows Codex's native rules. The CLI remains available for advanced authentication and configuration options. See [Codex MCP configuration](https://developers.openai.com/codex/mcp) for advanced settings.
+
+```sh
+# Local stdio server; arguments after -- belong to the server.
+pace mcp add my-server -- node /absolute/path/to/server.js
+
+# Streamable HTTP server with a token read from an environment variable.
+pace mcp add my-http --url https://example.com/mcp --bearer-token-env-var MY_MCP_TOKEN
+
+pace mcp list
+pace mcp get my-server --json
+pace mcp login my-http     # For servers that use OAuth instead of a bearer token.
+pace mcp logout my-http
+pace mcp remove my-server
+pace mcp --help
+```
+
+Use `/mcp list` to print the configured external servers without opening the manager. The manager and list show configuration, not live connection health. Changes take effect on the next turn, including in a resumed conversation. Active turns retain their existing connections. Codex owns server startup, tool discovery, and tool execution, while Pace displays tool activity through its existing transcript. Pace's injected Vex server is managed separately and is not added to your Codex configuration by these commands.
 
 Pace uses the `@sidearker/vex-mcp` npm package for Vex MCP routing and decision support. Pace resolves the installed package's bundled `dist/index.js` for both MCP connections. For local development with a local Vex checkout, you can link it or install the published `@sidearker/vex-mcp` release via `npm install @sidearker/vex-mcp@latest`. Do not set a key in Pace configuration or in command arguments.
 

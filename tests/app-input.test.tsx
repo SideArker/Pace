@@ -86,6 +86,16 @@ async function mount(options: Options) {
 }
 
 describe("application keyboard input", () => {
+  it("leaves modal keyboard input to the active panel", async () => {
+    const { options, events } = fixture({ modalOpen: true });
+    const ui = await mount(options);
+    await ui.key("c", { ctrl: true });
+    await ui.key("", { escape: true });
+    await ui.key("p", { ctrl: true });
+    expect(events.interrupt).not.toHaveBeenCalled();
+    expect(events.cancelRetry).not.toHaveBeenCalled();
+    expect(events.setDraft).not.toHaveBeenCalled();
+  });
   it("closes the conversation picker with Escape, Tab, or Up at its first row", async () => {
     for (const key of [{ escape: true }, { tab: true }, { upArrow: true }]) {
       const { options, events } = fixture({ pickerFocused: true });

@@ -1,8 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { vexServerPath } from "../core/vex/client.js";
+import { codexCommand } from "./codex-cli.js";
 
 type RpcMessage = { id?: number | string; method?: string; params?: unknown; result?: unknown; error?: { message?: string } };
 export type JsonRecord = Record<string, unknown>;
@@ -13,12 +12,6 @@ export function isRecord(value: unknown): value is JsonRecord {
 
 function tomlString(value: string): string {
   return JSON.stringify(value);
-}
-
-function codexCommand(): string {
-  const require = createRequire(import.meta.url);
-  const packagePath = require.resolve("@openai/codex/package.json");
-  return join(dirname(packagePath), "bin", "codex.js");
 }
 
 import { VEX_ENV_VARS } from "./codex-options.js";

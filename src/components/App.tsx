@@ -6,6 +6,7 @@ import type { ApprovalMode, Config, ManualWorkflow, Route, Session } from "../sh
 import { PaceStore, newSession, rewindConversation, deleteConversationTurn, retryableTurn } from "../core/sessions.js";
 import { changeConversationHistory } from "../core/file-history.js";
 import { FileDiffPanel } from "./FileDiffPanel.js";
+import { McpManager } from "./McpManager.js";
 import { Orchestrator, VexUnavailableError } from "../core/orchestrator.js";
 import { PromptQueue } from "../core/prompt-queue.js";
 import { AppServerRunner } from "../integrations/codex.js";
@@ -17,6 +18,7 @@ import { configuredSkills, defaultSkillFolder, enabledSkills, skillCommand, skil
 import { formatTurnFooter, modelName } from "./turn-format.js";
 import { readUsageLimits, usageWarnings } from "../integrations/usage.js";
 import { readAvailableModels, type AvailableModel } from "../integrations/models.js";
+import { listMcpServers } from "../integrations/codex-cli.js";
 import type { UsageLimits, UsageWarningLevels } from "../integrations/usage.js";
 import { Composer, commandToken } from "./Composer.js";
 import { saveClipboardImage } from "./pasted-images.js";
@@ -55,6 +57,7 @@ export const commands = [
   "/execute",
   "/verify",
   "/models",
+  "/mcp",
   "/version",
   "/auto",
   "/manual",
@@ -104,6 +107,7 @@ export const commandArguments: Record<string, string> = {
   "/manual": "[model] [effort]",
   "/workflow": "[name|auto]",
   "/approval": "[mode]",
+  "/mcp": "[list]",
   "/skills": "[folder|enable|disable|auto|off]",
   "/btw": "<question>",
 };
@@ -116,6 +120,7 @@ const commandDescriptions: Record<string, string> = {
   "/execute": "Dispatch plan to fresh session via Vex (e.g. /execute [plan.md])",
   "/verify": "Verify plan and propose changes (e.g. /verify [file] [focus prompt])",
   "/models": "Choose model and reasoning effort",
+  "/mcp": "Manage external MCP servers interactively",
   "/version": "Show Pace and price catalog versions",
   "/auto": "Let Pace route models automatically",
   "/manual": "Configure workflow stages, models, and effort",
@@ -217,6 +222,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const [history, setHistory] = useState<string[]>([]);
   const [outputsExpanded, setOutputsExpanded] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
+  const [mcpOpen, setMcpOpen] = useState(false);
   const [historyChanging, setHistoryChanging] = useState(false);
   const historyBusy = useRef(false);
   const [transcriptRevision, setTranscriptRevision] = useState(0);
@@ -1262,7 +1268,7 @@ export default function App({ onClear }: { onClear: () => void }) {
     onApplyVerification: applyVerification,
     onUndo: () => { void changeHistory("undo"); },
     onRedo: () => { void changeHistory("redo"); },
-    diffOpen,
+    diffOpen, modalOpen: mcpOpen,
   });
   const focusQueuedOrPicker = () => {
     if (queued.length && !modelMenu && !convoMenu && !queueMenu && !approvalMenu && !manualMenu) {
@@ -1435,7 +1441,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       } catch (error) { add("error", `Could not start remote host: ${String(error)}`); }
       return;
     }
-    if (jobs.current.has(session.id) && !/^\/(?:new|clear|resume|help|exit|usage|stats|compact|context|route|artifacts|models|trust|skills|approval|tasks|remote)(?:\s|$)/.test(text)) {
+    if (jobs.current.has(session.id) && !/^\/(?:new|clear|resume|help|exit|usage|stats|compact|context|route|artifacts|models|mcp|trust|skills|approval|tasks|remote)(?:\s|$)/.test(text)) {
       if (isRegisteredCommand(text, registeredCommands) && !skillCommand(text, enabledSkills(skills, config))) {
         add("info", "This conversation is working. Use /new or /resume to switch conversations.");
         return;
@@ -1522,7 +1528,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       if (command === "/help") {
         add(
           "info",
-          "/plan [prompt] · /execute · /verify [file] [prompt] · /models · /auto · /manual [model] [effort] · /workflow [name|auto] · /approval [full-access|request-approval|limited] · /remote · /tasks · /new · /resume · /convo · /diff · /undo · /redo · /compact · /context · /usage · /retry · /cancelretry · /btw <q> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /stats · /route · /clear · /exit · Esc cancels automatic retry; Esc twice/Ctrl+C cancels other turns · Ctrl+Z undo · Ctrl+Y redo · Alt+P/Ctrl+P plan · Alt+E/Ctrl+E execute · ! Bash · Ctrl+O toggle command, diff, and reasoning details · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
+          "/plan [prompt] · /execute · /verify [file] [prompt] · /models · /mcp [list] · /auto · /manual [model] [effort] · /workflow [name|auto] · /approval [full-access|request-approval|limited] · /remote · /tasks · /new · /resume · /convo · /diff · /undo · /redo · /compact · /context · /usage · /retry · /cancelretry · /btw <q> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /stats · /route · /clear · /exit · Esc cancels automatic retry; Esc twice/Ctrl+C cancels other turns · Ctrl+Z undo · Ctrl+Y redo · Alt+P/Ctrl+P plan · Alt+E/Ctrl+E execute · ! Bash · Ctrl+O toggle command, diff, and reasoning details · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
         );
         add("info", "With multiple open conversations, press Down from the input to focus the picker. Use arrows and Enter to switch; Esc returns to input. Ctrl+C cancels the selected turn. /exit quits.");
         return;
@@ -1656,6 +1662,18 @@ export default function App({ onClear }: { onClear: () => void }) {
       if (command === "/tasks") {
         if (parts.length) { add("error", "Type /tasks without arguments."); return; }
         add("info", taskSummary(session.tasks));
+        return;
+      }
+      if (command === "/mcp") {
+        if (!parts.length) { setMcpOpen(true); return; }
+        if (parts.length && (parts.length !== 1 || parts[0] !== "list")) {
+          add("error", "Use /mcp to open the interactive manager, or /mcp list to print configured servers.");
+          return;
+        }
+        try {
+          const servers = await listMcpServers(session.projectPath);
+          add("info", `Configured external MCP servers (connection status is determined during turns):\n${servers || "No external MCP servers configured."}\nManage servers in a terminal with pace mcp add|get|remove|login|logout. Changes apply to the next turn; active turns keep their connections. Vex is managed separately by Pace.`);
+        } catch (error) { add("error", `Could not list MCP servers: ${String(error)}`); }
         return;
       }
       if (command === "/usage") {
@@ -2028,6 +2046,9 @@ export default function App({ onClear }: { onClear: () => void }) {
   if (diffOpen && session) return <FileDiffPanel store={store} session={session} width={terminalColumns} height={Math.max(1, terminalRows - 1)}
     onClose={() => { setDiffOpen(false); onClear(); setTranscriptRevision(value => value + 1); }}
     onChange={updated => { setSession({ ...updated }); rememberSession(updated); }} />;
+
+  if (mcpOpen && session) return <McpManager key={session.projectPath} project={session.projectPath} width={terminalColumns} height={Math.max(1, terminalRows - 1)}
+    onClose={() => { setMcpOpen(false); onClear(); setTranscriptRevision(value => value + 1); }} />;
 
   return (
     // Ink clears the terminal on every update when the live frame exceeds the viewport.

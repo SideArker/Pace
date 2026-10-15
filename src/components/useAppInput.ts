@@ -76,6 +76,7 @@ export function useAppInput(options: {
   onUndo?: () => void;
   onRedo?: () => void;
   diffOpen?: boolean;
+  modalOpen?: boolean;
   pickerSearch?: string;
   setPickerSearch?: Dispatch<SetStateAction<string>>;
 }) {
@@ -127,7 +128,7 @@ export function useAppInput(options: {
     return true;
   };
   useInput((input, key) => {
-    if (diffOpen) return;
+    if (diffOpen || options.modalOpen) return;
     if (!key.escape) clearEscape();
     else if (pickerFocused || modelMenu || approvalMenu || resumeMenu || convoMenu || queueMenu || manualMenu) clearEscape();
     if (key.ctrl && input === "c") {
