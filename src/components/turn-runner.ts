@@ -24,6 +24,7 @@ export type { TurnJob, PendingApproval, PendingQuestion };
 
 export function createTurnRunner({
   turnSequence, activeSessionId, jobs, promptQueue, titleAborts, pendingApprovals, pendingQuestions, unreadCompletions,
+  sessionLines,
   runner, orchestrator, store, rememberSession, onTurnStart, setRunningIds, addFor, activityFor, recordThoughtUsage, resetThoughtUsage, getTurnActivities, setStatusFor,
   showApproval, showQuestion, dismissQuestion, setSession, setVexState, refreshUsage, setQueueVersion, setProcesses, setLiveUsage, getConfig,
   readLimits = readUsageLimits,
@@ -36,6 +37,7 @@ export function createTurnRunner({
   pendingApprovals: MutableRefObject<Map<string, PendingApproval>>;
   pendingQuestions: MutableRefObject<Map<string, PendingQuestion>>;
   unreadCompletions: MutableRefObject<Set<string>>;
+  sessionLines: MutableRefObject<Map<string, Line[]>>;
   runner: CodexRunner;
   orchestrator: Orchestrator;
   store: PaceStore;
@@ -60,7 +62,7 @@ export function createTurnRunner({
   getConfig: () => Config;
   readLimits?: () => Promise<UsageLimits | undefined>;
 }) {
-  const runTurn = async (text: string, turnSession: Session, turnConfig: Config, intent?: "verify_plan" | "execute_plan", displayPrompt?: string, automaticRetry = false) => {
+  const runTurn = async (text: string, turnSession: Session, turnConfig: Config, intent?: "verify_plan" | "execute_plan" | "revise_plan" | "continue_verify", displayPrompt?: string, automaticRetry = false) => {
     let tasksChanged = false;
     let deferredForRetry = false;
     let failedForRetry = false;
@@ -162,6 +164,14 @@ export function createTurnRunner({
       if (activeSessionId.current === sessionId) setSession({ ...outcome.session });
       if (emittedMessages === 0 && outcome.result.trim()) {
         addFor(sessionId, "codex", outcome.result);
+      }
+      if (intent === "verify_plan") {
+        const old = sessionLines.current.get(sessionId) ?? [];
+        const action: Line = { id: Date.now(), role: "verify-actions", text: "Planner: `/plan <zmiany>` · verifier: użyj `v <wiadomość>`", action: "revise-plan", spaceBefore: false };
+        const updated = [...old, action];
+        sessionLines.current.set(sessionId, updated);
+        if (activeSessionId.current === sessionId) setSession({ ...outcome.session });
+        addFor(sessionId, "divider", "");
       }
       if (outcome.stages.length) addFor(sessionId,
         "meta",

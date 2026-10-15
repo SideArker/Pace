@@ -18,7 +18,8 @@ export type Line = {
     | "error"
     | "artifact"
     | "divider"
-    | "activity";
+    | "activity"
+    | "verify-actions";
   text: string;
   spaceBefore: boolean;
   activity?: {
@@ -30,6 +31,7 @@ export type Line = {
     durationMs?: number;
     tokens?: number;
   };
+  action?: "revise-plan" | "continue-verifier";
   sourceId?: string;
 };
 
@@ -147,6 +149,12 @@ export function Transcript({
               <Box flexGrow={1} flexShrink={1}>
                 <MarkdownText source={line.text} color="white" width={Math.max(10, width - 10)} />
               </Box>
+            </Box>
+          ) : line.role === "verify-actions" ? (
+            <Box marginLeft={1} paddingLeft={1} borderLeft borderStyle="round" borderColor="#C084FC" width={Math.max(10, width - 1)}>
+              <Text color="#D8B4FE" bold>◇ Weryfikacja </Text>
+              <Text color="#E9D5FF">{line.text}</Text>
+              {line.action ? <Text color="#C084FC" bold> · [A] Zastosuj poprawki · użyj `v &lt;wiadomość&gt;` dla verifiera</Text> : null}
             </Box>
           ) : line.role === "codex" ? (
             <Box gap={1} width={width}>

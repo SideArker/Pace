@@ -95,7 +95,7 @@ const workflowStages = (shape: WorkflowShape): WorkflowStage[] =>
 export const commandArguments: Record<string, string> = {
   "/plan": "[prompt|file]",
   "/execute": "[file] [prompt]",
-  "/verify": "[file]",
+  "/verify": "[file] [prompt]",
   "/manual": "[model] [effort]",
   "/workflow": "[name|auto]",
   "/approval": "[mode]",
@@ -109,7 +109,7 @@ export const skillArguments = (skillName: string): string => {
 const commandDescriptions: Record<string, string> = {
   "/plan": "Start/toggle planning or load plan file (e.g. /plan plan.md)",
   "/execute": "Dispatch plan to fresh session via Vex (e.g. /execute [plan.md])",
-  "/verify": "Review plan with a fresh read-only agent (e.g. /verify [plan.md])",
+  "/verify": "Verify plan and propose changes (e.g. /verify [file] [focus prompt])",
   "/models": "Choose model and reasoning effort",
   "/version": "Show Pace and price catalog versions",
   "/auto": "Let Pace route models automatically",
@@ -230,7 +230,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const [approval, setApproval] = useState<Extract<Progress, { kind: "approval" }>>();
   const [question, setQuestion] = useState<PendingQuestion>();
   const [pendingRevision, setPendingRevision] = useState(0);
-  const runTurnRef = useRef<((text: string, turnSession: Session, turnConfig: Config, intent?: "verify_plan" | "execute_plan", displayPrompt?: string, automaticRetry?: boolean) => Promise<void>) | undefined>(undefined);
+  const runTurnRef = useRef<((text: string, turnSession: Session, turnConfig: Config, intent?: "verify_plan" | "execute_plan" | "revise_plan" | "continue_verify", displayPrompt?: string, automaticRetry?: boolean) => Promise<void>) | undefined>(undefined);
   const [approvalMenu, setApprovalMenu] = useState(false);
   const [vexState, setVexState] = useState<
     "connecting" | "connected" | "failed"
@@ -813,6 +813,12 @@ export default function App({ onClear }: { onClear: () => void }) {
         text: turn.result,
         spaceBefore: false,
       });
+      if (turn.intent === "verify_plan" && !turn.failed) newLines.push({
+        id: id++, role: "verify-actions",
+        text: "Planner: `/plan <zmiany>` · verifier: użyj `v <wiadomość>`",
+        action: "revise-plan",
+        spaceBefore: false,
+      });
       if (!turn.failed && (turn.stages?.length ?? 1) > 0) {
         newLines.push({
           id: id++,
@@ -1168,22 +1174,41 @@ export default function App({ onClear }: { onClear: () => void }) {
       switchingSession.current = false;
     }
   };
-  const handleVerifyPlan = async (arg?: string) => {
+  const handleVerifyPlan = async (args?: string) => {
     if (!session) return;
-    const planFile = arg ? tryReadPlanFile(arg, session.projectPath) : undefined;
+    const trimmed = args?.trim() ?? "";
+    const firstSpace = trimmed.search(/\s/);
+    const firstToken = firstSpace < 0 ? trimmed : trimmed.slice(0, firstSpace);
+    const planFile = firstToken ? tryReadPlanFile(firstToken, session.projectPath) : undefined;
+    const reviewPrompt = trimmed && planFile ? trimmed.slice(firstSpace).trim() || undefined : trimmed || undefined;
     const targetPlan = planFile?.content || (session.planArtifact
       ? tryReadPlanFile(artifactPath(store, session, session.planArtifact), session.projectPath)?.content
       : session.plan);
     if (!targetPlan) {
-      add("error", "No plan found to verify. Provide a plan file (e.g. /verify plan.md) or create one with /plan.");
+      add("error", "No plan found to verify. Use /verify [file] [prompt], or create a plan with /plan.");
       return;
     }
     if (planFile) {
       add("info", `◈ Loaded plan from ${basename(planFile.path)} for verification.`);
     }
     const goal = session.turns[0]?.prompt;
-    add("info", "◈ Verifying plan in read-only mode with a fresh agent...");
-    if (config) void runTurnRef.current?.(verifyPlanPrompt(targetPlan, goal), session, config, "verify_plan");
+    session.planRoute ??= { ...session.route };
+    add("info", "◈ Verifying plan in read-only mode with a fresh agent. Use /verify <focus> to guide review...");
+    if (config) void runTurnRef.current?.(verifyPlanPrompt(targetPlan, goal, reviewPrompt), session, config, "verify_plan");
+  };
+  const applyVerification = () => {
+    if (!session || !config || jobs.current.has(session.id)) return;
+    const report = session.turns.at(-1);
+    if (!report || report.intent !== "verify_plan" || report.failed) return;
+    const prompt = `Apply the following accepted verification findings to the existing implementation plan. Inspect the saved plan and repository. Revise the saved plan artifact in place. Preserve correct content and incorporate only concrete findings below. Do not implement code.\n\nVerification findings:\n${report.result}`;
+    add("info", "◈ Sending verification findings to planner for plan revision...");
+    void runTurnRef.current?.(prompt, session, config, "revise_plan", "Applying verification findings to the saved plan with the planner.");
+  };
+  const continueVerifier = (message: string) => {
+    if (!session || !config || !session.verifierThreadId || !message.trim()) return;
+    const verifierRoute = [...session.turns].reverse().find(turn => turn.intent === "verify_plan" || turn.intent === "continue_verify")?.route ?? session.route;
+    const verifierSession = { ...session, threadId: session.verifierThreadId, route: verifierRoute };
+    void runTurnRef.current?.(message, verifierSession, config, "continue_verify");
   };
   const changeHistory = async (direction: "undo" | "redo") => {
     if (!session || historyBusy.current) return;
@@ -1226,6 +1251,7 @@ export default function App({ onClear }: { onClear: () => void }) {
     draft, setDraft, setHistory, queueMenu, setQueueMenu, promptQueue, setQueueVersion,
     onTogglePlan: () => { void startOrTogglePlanning(); },
     onExecutePlan: () => { void handleExecutePlan(); },
+    onApplyVerification: applyVerification,
     onUndo: () => { void changeHistory("undo"); },
     onRedo: () => { void changeHistory("redo"); },
     diffOpen,
@@ -1331,8 +1357,15 @@ export default function App({ onClear }: { onClear: () => void }) {
   const submit = async (raw: string) => {
     if (historyBusy.current) { add("info", "Wait for file history to finish saving."); return; }
     if (switchingSession.current) return;
+    if (!session || !config) return;
+    const directVerifier = /^v\s+([\s\S]+)$/i.exec(raw.trim());
+    if (directVerifier && session.verifierThreadId) {
+      continueVerifier(directVerifier[1]!);
+      setDraft("");
+      return;
+    }
     const text = shellMode ? raw.trim() : normalizeNewCommand(raw);
-    if (!text || !session || !config) return;
+    if (!text) return;
     setHistory(old => [...old.slice(-99), raw]);
     if (text === "!") {
       add("info", shellMode ? "$ !" : "> !");
@@ -1438,7 +1471,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         return;
       }
       if (command === "/verify") {
-        const arg = parts.join(" ").trim();
+        const arg = text.replace(/^\/verify\s*/, "").trim();
         await handleVerifyPlan(arg || undefined);
         return;
       }
@@ -1449,7 +1482,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       if (command === "/help") {
         add(
           "info",
-          "/plan [prompt] · /execute · /verify · /models · /auto · /manual [model] [effort] · /workflow [name|auto] · /approval [full-access|request-approval|limited] · /tasks · /new · /resume · /convo · /diff · /undo · /redo · /compact · /context · /usage · /retry · /cancelretry · /btw <q> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /stats · /route · /clear · /exit · Esc cancels automatic retry; Esc twice/Ctrl+C cancels other turns · Ctrl+Z undo · Ctrl+Y redo · Alt+P/Ctrl+P plan · Alt+E/Ctrl+E execute · ! Bash · Ctrl+O toggle command, diff, and reasoning details · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
+          "/plan [prompt] · /execute · /verify [file] [prompt] · /models · /auto · /manual [model] [effort] · /workflow [name|auto] · /approval [full-access|request-approval|limited] · /tasks · /new · /resume · /convo · /diff · /undo · /redo · /compact · /context · /usage · /retry · /cancelretry · /btw <q> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /stats · /route · /clear · /exit · Esc cancels automatic retry; Esc twice/Ctrl+C cancels other turns · Ctrl+Z undo · Ctrl+Y redo · Alt+P/Ctrl+P plan · Alt+E/Ctrl+E execute · ! Bash · Ctrl+O toggle command, diff, and reasoning details · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
         );
         add("info", "With multiple open conversations, press Down from the input to focus the picker. Use arrows and Enter to switch; Esc returns to input. Ctrl+C cancels the selected turn. /exit quits.");
         return;
@@ -1877,7 +1910,7 @@ export default function App({ onClear }: { onClear: () => void }) {
     void runTurn(text, session, config);
   };
   const runTurn = createTurnRunner({
-    turnSequence, activeSessionId, jobs, promptQueue, titleAborts, pendingApprovals, pendingQuestions, unreadCompletions,
+    turnSequence, activeSessionId, jobs, promptQueue, titleAborts, pendingApprovals, pendingQuestions, unreadCompletions, sessionLines,
     runner, orchestrator, store, rememberSession, onTurnStart: sessionId => thisPaceIds.current.add(sessionId), setRunningIds, addFor, activityFor,
     recordThoughtUsage, resetThoughtUsage: (sessionId: string) => lastReasoningTokens.current.delete(sessionId),
     getTurnActivities: (sessionId: string, turnId: number) => (sessionLines.current.get(sessionId) ?? [])
