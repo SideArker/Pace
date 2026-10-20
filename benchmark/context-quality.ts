@@ -263,4 +263,7 @@ async function main() {
   console.log(`Results: ${opts.out}`);
 }
 
-main().catch(error => { console.error(error); process.exitCode = 1; });
+if (process.argv.includes('--study')) {
+  const { main } = await import('./context-models.js');
+  await main();
+} else main().catch(error => { console.error(error); process.exitCode = 1; });
