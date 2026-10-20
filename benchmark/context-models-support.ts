@@ -40,7 +40,7 @@ export class Capture {
     return {
       request: async (method, params) => {
         if ((method === 'thread/start' || method === 'thread/resume') && isRecord(params)) {
-          params = { ...params, config: { 'mcp_servers.vex.enabled': false, 'mcp_servers.codex_apps.enabled': false, 'features.apps': false, 'model_reasoning_effort': this.route.effort, 'model_auto_compact_token_limit': 240000 }, serviceTier: 'standard', developerInstructions: 'Work only in the isolated fixture directory. Do not use network, MCP, or subagents. Do not read private configuration or other projects. Do not commit. Use local shell tools for this task.' };
+          params = { ...params, config: { 'mcp_servers.vex.enabled': false, 'features.apps': false, 'model_reasoning_effort': this.route.effort, 'model_auto_compact_token_limit': 240000 }, serviceTier: 'standard', developerInstructions: 'Work only in the isolated fixture directory. Do not use network, MCP, or subagents. Do not read private configuration or other projects. Do not commit. Use local shell tools for this task.' };
         }
         this.log('out', {method, params});
         const result = await server.request(method, params);
