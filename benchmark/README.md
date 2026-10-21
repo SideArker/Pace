@@ -140,3 +140,31 @@ python3 benchmark/context-models-analyze.py benchmark/results/context-models-202
 The analyzer writes `analysis.json` and includes failed and partial attempts.
 It does not grade quality or select policy. Existing non-study benchmark flags
 and behavior remain available.
+
+The 2026-10-21 audit found that resumed usage can arrive after `turn/start`.
+The study now attributes usage to the active **turn ID**, then sums distinct
+request updates. Native compaction's zero billing placeholders remain unknown.
+For older captured runs, preserve the originals and create derived accounting:
+
+```bash
+./node_modules/.bin/tsx benchmark/context-models-reaccount.ts benchmark/results/context-models-2026-10-20
+python3 benchmark/context-models-summarize.py benchmark/results/context-models-2026-10-20
+```
+
+The summarizer joins explicit manual `grades.json` files and emits
+`graded-summary.json` plus `stages.csv`. It reports both monotonic stage duration
+and UTC duration; clock discrepancies must be disclosed, not silently removed.
+It does not generate quality grades.
+
+If a benchmark process is interrupted, first check whether it is still running.
+The continuation supervisor verifies every frozen source hash and the copied
+suite, preserves original repetition/order, and starts only unfinished keys in
+a new output directory:
+
+```bash
+./node_modules/.bin/tsx benchmark/context-models-continue.ts ORIGINAL_RESULTS NEW_RESULTS
+```
+
+Keep the interrupted attempt and its partial usage in the all-attempt audit.
+After a usage-limit stop, respect the limit and wait for a new authorized
+continuation; do not substitute another model or retry in a loop.
