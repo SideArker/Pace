@@ -1379,7 +1379,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         const roots = [...new Set([project, ...sessions.filter(item => item.exists).map(item => item.projectPath)])];
         const bridge = {
           session: (id: string) => jobs.current.get(id)?.session ?? sessionRecords.current.get(id) ?? (sessionRef.current?.id === id ? sessionRef.current : undefined),
-          busy: (id: string) => jobs.current.has(id),
+          busy: (id: string) => jobs.current.has(id) || historyBusy.current,
           queue: async (target: Session, prompt: QueuedOperation) => {
             if (promptQueue.current.list(target.id).length >= 20) return false;
             promptQueue.current.add(target.id, prompt); setQueueVersion(value => value + 1);

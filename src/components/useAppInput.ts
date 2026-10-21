@@ -16,6 +16,7 @@ export function isSecondEscape(previous: { sessionId: string; at: number } | und
 }
 
 export function useAppInput(options: {
+  historyBusy?: MutableRefObject<boolean>;
   interrupt: () => void;
   cancelRetry: () => void;
   pickerFocused: boolean;
@@ -127,6 +128,7 @@ export function useAppInput(options: {
     }
     return true;
   };
+  const historyWrite = useRef(false);
   useInput((input, key) => {
     if (diffOpen || options.modalOpen) return;
     if (!key.escape) clearEscape();
@@ -277,26 +279,42 @@ export function useAppInput(options: {
         if (!session) return;
         const targetTurn = turns[menuIndex];
         if (!targetTurn) return;
-        rewindConversation(session, menuIndex);
-        session.updatedAt = new Date().toISOString();
-        void store.saveChanges(session);
-        setSession({ ...session });
-        renderSessionTurns(session);
-        setDraft(targetTurn.prompt);
-        setHistory(session.turns.map((t) => t.prompt));
-        setConvoMenu(false);
-        add("info", `Rewound to turn ${menuIndex + 1}. Prompt loaded into composer.`);
+        if (jobs.current.has(session.id) || historyWrite.current || options.historyBusy?.current) { add("info", "Wait for this conversation to finish saving before changing history."); return; }
+        const updated = structuredClone(session);
+        rewindConversation(updated, menuIndex);
+        historyWrite.current = true;
+        if (options.historyBusy) options.historyBusy.current = true;
+        void store.saveChanges(updated).then(() => {
+          Object.assign(session, updated);
+          setSession({ ...session });
+          renderSessionTurns(session);
+          setDraft(targetTurn.prompt);
+          setHistory(session.turns.map((t) => t.prompt));
+          setConvoMenu(false);
+          add("info", `Rewound to turn ${menuIndex + 1}. Prompt loaded into composer.`);
+        }).catch(error => add("error", `Could not save history: ${String(error)}`)).finally(() => {
+          historyWrite.current = false;
+          if (options.historyBusy) options.historyBusy.current = false;
+        });
       } else if (key.delete || key.backspace || input === "d") {
         if (!session) return;
-        deleteConversationTurn(session, menuIndex);
-        session.updatedAt = new Date().toISOString();
-        void store.saveChanges(session);
-        setSession({ ...session });
-        renderSessionTurns(session);
-        setHistory(session.turns.map((t) => t.prompt));
-        if (session.turns.length === 0) setConvoMenu(false);
-        else setMenuIndex(Math.min(menuIndex, session.turns.length - 1));
-        add("info", `Deleted turn ${menuIndex + 1}.`);
+        if (jobs.current.has(session.id) || historyWrite.current || options.historyBusy?.current) { add("info", "Wait for this conversation to finish saving before changing history."); return; }
+        const updated = structuredClone(session);
+        deleteConversationTurn(updated, menuIndex);
+        historyWrite.current = true;
+        if (options.historyBusy) options.historyBusy.current = true;
+        void store.saveChanges(updated).then(() => {
+          Object.assign(session, updated);
+          setSession({ ...session });
+          renderSessionTurns(session);
+          setHistory(session.turns.map((t) => t.prompt));
+          if (session.turns.length === 0) setConvoMenu(false);
+          else setMenuIndex(Math.min(menuIndex, session.turns.length - 1));
+          add("info", `Deleted turn ${menuIndex + 1}.`);
+        }).catch(error => add("error", `Could not save history: ${String(error)}`)).finally(() => {
+          historyWrite.current = false;
+          if (options.historyBusy) options.historyBusy.current = false;
+        });
       }
       return;
     }

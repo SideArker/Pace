@@ -481,3 +481,15 @@ describe("application keyboard input", () => {
     expect(eventsEmpty.setPickerFocused).toHaveBeenCalledWith(false);
   });
 });
+
+it("keeps history and main thread unchanged when a menu history save fails", async () => {
+  const { options, events, session } = fixture({ convoMenu: true });
+  session.turns.push({ prompt: "Keep", result: "Saved", at: "now" });
+  session.threadId = "main-thread";
+  vi.mocked(options.store.saveChanges).mockRejectedValue(new Error("disk full"));
+  const ui = await mount(options);
+  await ui.key("d");
+  expect(session.turns).toHaveLength(1);
+  expect(session.threadId).toBe("main-thread");
+  expect(events.add).toHaveBeenCalledWith("error", expect.stringContaining("Could not save history"));
+});
