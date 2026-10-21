@@ -291,7 +291,9 @@ export default function App({ onClear }: { onClear: () => void }) {
       if (record) record.queuedPrompts = queuedPrompts;
     }
     const previous = queueSaves.current.get(sessionId) ?? Promise.resolve();
-    const saving = previous.catch(() => {}).then(() => store.saveChanges(target, () => activeSessionId.current === sessionId));
+    const saving = previous.catch(() => {}).then(async () => {
+      await store.update(target, latest => { latest.queuedPrompts = queuedPrompts; }, () => activeSessionId.current === sessionId);
+    });
     queueSaves.current.set(sessionId, saving);
     void saving.catch(error => addFor(sessionId, "error", `Could not save queued prompts: ${String(error)}`)).finally(() => {
       if (queueSaves.current.get(sessionId) === saving) queueSaves.current.delete(sessionId);

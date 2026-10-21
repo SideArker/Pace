@@ -99,7 +99,7 @@ The Windows PowerShell smoke workflow installs, builds, links, and checks the CL
 | `/skills auto <name>` / `/skills auto off` | Add an enabled skill to ON-LAUNCH, or clear ON-LAUNCH skills for this and future conversations |
 | `/skills default` / `/skills off` | Use the default skill folder or turn skill discovery off |
 | `/<skill> [request]` | Invoke an enabled skill, such as `/caveman` or `/caveman explain this` |
-| `/stats` | Show observed time, tokens, and failures for the last 20 turns, plus compactions and checkpoints |
+| `/stats` | Show durable attempt usage, known subtotal, cost completeness, failures, and separate Vex latency |
 | `/clear` | Clear the terminal, show the entry screen, and start a new conversation |
 | `/exit` | Quit |
 | `! <command>` | Run one Bash command in the project directory |
@@ -112,6 +112,8 @@ If Codex reports a usage limit during an interactive turn, Pace saves the interr
 If a model call fails because of a connection problem or model capacity, Pace saves the request and retries automatically. Connection retries probe the OpenAI API every 15 seconds and run the model only after the probe succeeds. Capacity retries use increasing delays up to two minutes. Usage-limit retries wait for the reported reset as before. Press Esc once while waiting or during an automatic retry to cancel it; `/cancelretry` also cancels it and clears queued prompts. `/retry` can run the latest failed request immediately. Retries resume the saved Codex thread when available and ask the agent to inspect existing files before editing. Existing file changes are not rolled back.
 
 After opening a second conversation, a compact picker stays below the input. Press ↓ from the input to focus it, use ↑/↓ to select a conversation, and press Enter to switch. Esc returns to the input. Switching keeps other conversation turns running.
+
+Pace retains the active task's workflow and lead route across ordinary follow-ups. Vex explicitly chooses continuation, rerouting, replanning, replacement, clarification, or a separate answer. `/btw` uses a separate read-only thread with a Vex-selected route; `/adopt <id>` forwards one selected finding. `/verify` retains separate verifier state. `/execute` reads the current full plan into a fresh normal execution session. Interrupted attempts require reconciliation through `/resolve <attempt-id> <outcome>` before automatic retry. See [durable tasks and routing](docs/task-workflows.md) for persistence, recovery, accounting, and unchanged context policy.
 
 Pace shows routing and stage activity in the live status. `/route` and `/stats` retain the detailed decisions and stage records.
 The header's Context gauge and `/context` use the last measured Codex model request and its context-window limit. `Context ?` means Pace has no valid measurement for the selected thread and model. They are separate from `/usage`, which shows account limits. `/context` also says whether the next turn resumes a Codex thread; `/new` starts a separate conversation and `/resume` returns to a saved one. `/compact` works only when that conversation has an idle Codex thread; Esc twice within 750 ms or Ctrl+C cancels it. Pace records compaction usage, estimated API-equivalent cost, duration, and outcome separately from user turns in `/stats`. The gauge becomes unknown after compaction until another model request reports context usage.
