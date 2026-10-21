@@ -56,9 +56,11 @@ export type Session = {
   id: string; title?: string; kind?: 'normal' | 'planning'; plan?: string; planArtifact?: string;
   projectPath: string; routingMode: 'auto' | 'manual'; route: Route; updatedAt: string;
   turns: Turn[]; queuedPrompts?: string[]; tasks?: { id: string; text: string; completed: boolean; source: string }[];
+  queuedOperations?: { id: string; text: string; intent?: string; sessionId: string; taskId?: string; role: string; sourceSideId?: string }[];
+  sideAnswers?: { id: string; taskId?: string; attemptId: string; question: string; snapshotAt: string; route: Route; result?: string; error?: string; adopted?: boolean }[];
   contextByThread?: Record<string, { tokens: number; windowTokens: number; model?: string }>; threadId?: string;
 };
-export type Snapshot = { cursor: string; session: Session; active?: { prompt: string; status: string; activities: string[] }; interactions: PendingInteraction[]; approvalMode: z.infer<typeof approvalModeSchema> };
+export type Snapshot = { cursor: string; session: Session; operationError?: string; active?: { prompt: string; status: string; activities: string[] }; interactions: PendingInteraction[]; approvalMode: z.infer<typeof approvalModeSchema> };
 export type Project = { id: string; path: string; exists: boolean };
 export type FileChange = { path: string; undone: boolean };
 export type TextPage = { path: string; text: string; offset: number; nextOffset: number | null; totalLines: number };

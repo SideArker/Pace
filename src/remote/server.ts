@@ -111,6 +111,7 @@ export async function startRemoteHost(options: { baseDir: string; address: strin
       server!.listen(options.port ?? 8443, options.address, () => { server!.removeListener('error', reject); resolve(); });
     });
     const port = (server.address() as { port: number }).port;
+    await options.domain.resumeQueues();
     if (options.advertise !== false) {
       bonjour = new Bonjour(undefined, () => {});
       bonjour.publish({ name: `Pace ${hostname()}`, type: 'pace-remote', protocol: 'tcp', port, host: hostname(), txt: { v: String(VERSION) } });

@@ -41,6 +41,7 @@ export class RemoteDomain {
   private readonly sessions = new Map<string, PaceSession>();
   private readonly active = new Map<string, Active>();
   private readonly pendingLaunch = new Set<string>();
+  private readonly launchErrors = new Map<string, string>();
   private readonly controllers = new Map<string, AbortController>();
   private readonly interactions = new Map<string, Interaction>();
   private readonly interactionIds = new Map<string, string>();
@@ -81,6 +82,15 @@ export class RemoteDomain {
   }
 
   subscribe(listener: (event: RemoteEvent) => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
+  /** Resume only unstarted operations. Interrupted model attempts require reconciliation. */
+  async resumeQueues(): Promise<void> {
+    if (this.bridge) return;
+    for (const project of this.roots.values()) {
+      for (const session of await this.store.list(project)) {
+        if (session.queuedPrompts?.length) await this.drain(session);
+      }
+    }
+  }
   async close() {
     this.disposed = true;
     if (this.orchestrator.turn === this.observedTurn) this.orchestrator.turn = this.previousTurn;
@@ -152,14 +162,16 @@ export class RemoteDomain {
   private async session(projectId: string, sessionId: string) {
     if (!UUID.test(sessionId)) throw new Error("Conversation not found.");
     const path = await this.project(projectId); const current = this.bridge?.session(sessionId) ?? this.sessions.get(sessionId);
-    const value = current?.projectPath === path ? current : await this.store.load(path, sessionId);
+    const value = current?.projectPath === path && (this.bridge || this.active.has(sessionId) || this.pendingLaunch.has(sessionId)) ? current : await this.store.load(path, sessionId);
     if (!value || value.projectPath !== path) throw new Error("Conversation not found in this project.");
     this.sessions.set(value.id, value); return value;
   }
   private toDto(s: PaceSession): RemoteSession {
     return { id: s.id, ...(s.title ? { title: s.title } : {}), ...(s.kind ? { kind: s.kind } : {}), ...(s.plan ? { plan: s.plan.slice(0, MAX_FILE) } : {}), ...(s.planArtifact ? { planArtifact: s.planArtifact } : {}), projectPath: s.projectPath, routingMode: s.routingMode, route: this.wireRoute(s.route), updatedAt: s.updatedAt,
       turns: s.turns.map(t => ({ prompt: t.prompt.slice(0, 32000), ...(t.displayPrompt ? { displayPrompt: t.displayPrompt.slice(0, 32000) } : {}), result: t.result.slice(0, MAX_FILE), at: t.at, ...(t.fileEdits ? { fileEdits: t.fileEdits } : {}), ...(t.artifacts ? { artifacts: t.artifacts.filter(p => /^(?:artifacts|\.pace\/artifacts)\/[^/\\]+\.md$/.test(p)) } : {}), ...(t.failed ? { failed: true } : {}), ...(t.cancelled ? { cancelled: true } : {}), ...(t.route ? { route: this.wireRoute(t.route) } : {}), ...(t.durationMs ? { durationMs: t.durationMs } : {}), ...(t.usage ? { usage: { input_tokens: t.usage.input_tokens, output_tokens: t.usage.output_tokens } } : {}) })),
-      ...(s.queuedPrompts?.length ? { queuedPrompts: s.queuedPrompts.map(item => typeof item === "string" ? item : item.text) } : {}), ...(s.tasks ? { tasks: s.tasks.map(t => ({ ...t })) } : {}), ...(s.threadId ? { threadId: s.threadId } : {}), ...(s.threadId && s.contextByThread?.[s.threadId] ? { contextByThread: { [s.threadId]: s.contextByThread[s.threadId]! } } : {}) };
+      ...(s.queuedPrompts?.length ? { queuedPrompts: s.queuedPrompts.map(item => typeof item === "string" ? item : item.text), queuedOperations: s.queuedPrompts.map(item => operation(item, s.id, s.activeTask?.id)) } : {}),
+      ...(s.sideAnswers?.length ? { sideAnswers: s.sideAnswers.map(item => ({ ...item, question: item.question.slice(0, 32000), result: item.result?.slice(0, MAX_FILE), route: this.wireRoute(item.route) })) } : {}),
+      ...(s.tasks ? { tasks: s.tasks.map(t => ({ ...t })) } : {}), ...(s.threadId ? { threadId: s.threadId } : {}), ...(s.threadId && s.contextByThread?.[s.threadId] ? { contextByThread: { [s.threadId]: s.contextByThread[s.threadId]! } } : {}) };
   }
   private wireRoute(route: PaceSession["route"]): RemoteSession["route"] {
     const valid = ["minimal", "low", "medium", "high", "xhigh", "ultra", "persistent"];
@@ -167,7 +179,7 @@ export class RemoteDomain {
   }
   private async snapshot(projectId: string, sessionId: string): Promise<Snapshot> {
     const session = await this.session(projectId, sessionId); const active = this.active.get(sessionId);
-    return { cursor: `${this.epoch}:${this.revision}`, session: this.toDto(session), ...(active ? { active: { prompt: active.prompt, status: active.status, activities: [...active.activities] } } : {}), interactions: [...this.interactions.values()].filter(item => item.sessionId === sessionId).map(item => item.public), approvalMode: (await this.store.loadConfig()).approvalMode ?? "request-approval" };
+    return { cursor: `${this.epoch}:${this.revision}`, session: this.toDto(session), ...(this.launchErrors.has(sessionId) ? { operationError: this.launchErrors.get(sessionId) } : {}), ...(active ? { active: { prompt: active.prompt, status: active.status, activities: [...active.activities] } } : {}), interactions: [...this.interactions.values()].filter(item => item.sessionId === sessionId).map(item => item.public), approvalMode: (await this.store.loadConfig()).approvalMode ?? "request-approval" };
   }
   private addInteraction(session: PaceSession, value: PendingInteraction, respond: (answer: never) => void) {
     const timer = setTimeout(() => { this.interactions.delete(value.id); this.emit(session); }, 10 * 60 * 1000);
@@ -230,8 +242,8 @@ export class RemoteDomain {
       if (busy && (session.queuedPrompts?.length ?? 0) >= 20) throw new Error("Conversation queue is full (20 prompts).");
       const accepted = await this.once(deviceId, key, payload); if (!accepted) return { accepted: true, duplicate: true, sessionId };
       const item = operation(prompt, session.id, session.activeTask?.id);
-      const command = /^\/(verify|execute|btw|adopt)(?:\s+([\s\S]*))?$/.exec(prompt.trim());
-      item.intent = intent ?? (command?.[1] === "verify" ? "verify_plan" : command?.[1] === "execute" ? "execute_plan" : command?.[1] === "btw" ? "aside" : command?.[1] === "adopt" ? "adopt_side" : undefined);
+      const command = /^\/(verify|execute|run-plan|btw|adopt)(?:\s+([\s\S]*))?$/.exec(prompt.trim());
+      item.intent = intent ?? (command?.[1] === "verify" ? "verify_plan" : command?.[1] === "execute" || command?.[1] === "run-plan" ? "execute_plan" : command?.[1] === "btw" ? "aside" : command?.[1] === "adopt" ? "adopt_side" : undefined);
       item.role = item.intent === "verify_plan" ? "verifier" : item.intent === "aside" ? "aside" : "main";
       if (item.intent === "adopt_side") item.sourceSideId = command?.[2]?.trim();
       if (busy) {
@@ -242,12 +254,14 @@ export class RemoteDomain {
       this.launch(session, item); return { accepted: true, queued: false, sessionId, operationId: item.id };
     });
   }
-  private launch(source: PaceSession, item: QueuedOperation) {
+  private launch(source: PaceSession, item: QueuedOperation, queued = false) {
     this.pendingLaunch.add(source.id);
+    this.launchErrors.delete(source.id);
     this.sessions.set(source.id, source);
     void (async () => {
       let completed = false;
       try {
+        if (item.sessionId !== source.id || (item.taskId && item.taskId !== source.activeTask?.id)) throw new Error("Queued operation target changed; select its original task before running it.");
         const config = await this.store.loadConfig();
         let session = source;
         let prompt = item.text;
@@ -265,8 +279,11 @@ export class RemoteDomain {
         } else if (item.intent === "aside") prompt = item.text.replace(/^\/btw(?:\s+|$)/, "").trim();
         if (this.bridge) await this.bridge.submit(prompt, session, item.intent, item);
         else await this.orchestrator.turn(prompt, session, config, () => {}, undefined, true, item.intent, undefined, item);
+        if (queued) await this.store.update(source, latest => {
+          latest.queuedPrompts = latest.queuedPrompts?.filter(value => typeof value === "string" || value.id !== item.id);
+        }, false);
         completed = true;
-      } catch { /* Failures stop draining. Durable attempts retain execution errors. */ }
+      } catch (error) { this.launchErrors.set(source.id, String(error)); this.emit(source); }
       finally { this.pendingLaunch.delete(source.id); if (completed) void this.drain(source); }
     })();
   }
@@ -282,13 +299,11 @@ export class RemoteDomain {
       if (this.disposed || this.pendingLaunch.has(session.id) || this.active.has(session.id) || this.bridge?.busy(session.id)) return;
       // The UI owns its in-memory queue and drains it through the turn runner.
       if (this.bridge) return;
-      let next: QueuedOperation | undefined;
-      const latest = await this.store.update(session, current => {
-        const value = current.queuedPrompts?.shift();
-        if (value !== undefined) next = operation(value, current.id, current.activeTask?.id);
-      });
+      const latest = await this.store.load(session.projectPath, session.id);
+      if (!latest || latest.deferredTurn || latest.turns.at(-1)?.failed || latest.attempts?.some(item => ["running", "awaiting_user"].includes(item.status))) return;
       Object.assign(session, latest); this.emit(session);
-      if (next) this.launch(session, next);
+      const value = latest.queuedPrompts?.[0];
+      if (value !== undefined) this.launch(session, operation(value, session.id, session.activeTask?.id), true);
     });
   }
   private async once(device: string, key: string, payload: unknown) {
