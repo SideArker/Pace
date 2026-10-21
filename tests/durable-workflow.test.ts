@@ -1,0 +1,209 @@
+import { afterEach, expect, it, vi } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Orchestrator } from "../src/core/orchestrator.js";
+import { PaceStore, newSession, undoConversationTurn } from "../src/core/sessions.js";
+import { resolveAttempt, taskAccounting, TransitionSaveError, UncertainAttemptError } from "../src/core/task-execution.js";
+import { adoptedSidePrompt, operation, preparePlanExecution } from "../src/core/operations.js";
+import { DEFAULT_ROUTING_PROMPTS } from "../src/core/routing/routing-prompts.js";
+import type { Config, Session } from "../src/shared/types.js";
+import type { CodexRunner } from "../src/integrations/codex-types.js";
+import { CodexRunError } from "../src/integrations/codex-types.js";
+import type { VexRequest } from "../src/core/vex/requests.js";
+import { decision } from "./routing-fixture.js";
+
+const roots: string[] = [];
+afterEach(async () => { vi.restoreAllMocks(); await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
+const config: Config = { routingMode: "auto", defaultRoute: { model: "gpt-6.1-sol", effort: "medium" }, models: [{ model: "gpt-6.1-sol", efforts: ["medium", "high"] }] };
+const usage = { input_tokens: 100, cached_input_tokens: 20, cache_write_input_tokens: 0, output_tokens: 10, reasoning_output_tokens: 0 };
+const report = JSON.stringify({ summary: "Located code; implementation remains", findings: [], checks: [], risks: [], nextSteps: ["Implement"] });
+async function setup(shape = "single") {
+  const root = await mkdtemp(join(tmpdir(), "pace-workflow-")); roots.push(root);
+  const store = new PaceStore(join(root, "storage")); const session = newSession(root, "auto");
+  const calls: Parameters<CodexRunner["run"]>[] = []; const requests: VexRequest[] = [];
+  let action = "continue", selectedShape = shape, assessment = "partial";
+  const vex = { choose: async (request: VexRequest) => {
+    requests.push(structuredClone(request));
+    return decision(request, request.options.some(item => item.id === "closed") ? assessment : request.options.some(item => item.id === "reroute") ? action : request.options[0]?.id === "single" ? selectedShape : "0:medium");
+  } };
+  const runner: CodexRunner = { run: async (...args) => {
+    calls.push(args); const [prompt, , , thread, progress, , mode] = args;
+    const id = thread ?? `thread-${calls.length}`; await progress({ kind: "thread", text: id });
+    await progress({ kind: "tasks", items: [{ text: `${mode} task`, completed: false }] });
+    await progress({ kind: "activity", id: "check", category: "command", title: "npm test", completed: true, outcome: "success", detail: "Assertions passed" });
+    if (mode === "planning") { const path = prompt.match(/The saved plan path is ([^\n]+?\.pace-plan\.md)/)?.[1]; if (path) await writeFile(path, "# Full saved plan\nImplement and verify all requirements."); }
+    return { result: mode === "side" && prompt.includes("JSON object") ? report : "Result with remaining scope", completed: true, threadId: id, turnId: `turn-${calls.length}`, usage };
+  } };
+  const orchestrator = new Orchestrator(store, runner, vex);
+  return { root, store, session, calls, requests, runner, orchestrator, vex, setAction: (value: string) => { action = value; }, setShape: (value: string) => { selectedShape = value; }, setAssessment: (value: string) => { assessment = value; } };
+}
+
+it("keeps workflow, lead and stage across restart; a plan correction never repeats the completed scout", async () => {
+  const env = await setup("scout_plan");
+  await env.orchestrator.turn("Plan the complete feature", env.session, config, () => {});
+  expect(env.calls.map(call => call[6])).toEqual(["side", "planning"]);
+  const loaded = (await new PaceStore(env.store.baseDir).load(env.root, env.session.id))!;
+  const lead = loaded.threadId; const route = structuredClone(loaded.route); const taskId = loaded.activeTask?.id;
+  const before = env.requests.length;
+  await env.orchestrator.turn("Correct the plan", loaded, config, () => {});
+  expect(env.calls.map(call => call[6])).toEqual(["side", "planning", "planning"]);
+  expect(env.calls[2]?.[3]).toBe(lead); expect(loaded.route).toEqual(route);
+  expect(loaded.activeTask?.id).toBe(taskId); expect(JSON.parse(loaded.activeTask!.workflow!.scoutHandoff!)).toEqual(JSON.parse(report));
+  expect(env.requests.slice(before).map(item => item.options[0]?.id)).toEqual(["continue", "closed"]);
+  expect(loaded.attempts).toHaveLength(3); expect(loaded.attempts?.every(item => item.assessment)).toBe(true);
+});
+
+it("deliberate replan creates a new workflow generation and reruns only explicitly selected scout", async () => {
+  const env = await setup("scout"); await env.orchestrator.turn("Implement", env.session, config, () => {});
+  env.setAction("replan"); await env.orchestrator.turn("Same words", env.session, config, () => {});
+  expect(env.session.activeTask?.workflow?.generation).toBe(2);
+  expect(env.calls.map(item => item[6])).toEqual(["side", "main", "side", "main"]);
+  expect(new Set(env.session.attempts?.map(item => item.id)).size).toBe(4);
+});
+
+for (const action of ["continue", "reroute", "replace", "aside", "clarify"]) it(`executes semantic ${action} for identical short follow-up`, async () => {
+  const env = await setup(); await env.orchestrator.turn("Implement the feature", env.session, config, () => {});
+  const id = env.session.activeTask?.id; const thread = env.session.threadId; const route = structuredClone(env.session.route);
+  const before = env.calls.length; env.setAction(action);
+  const outcome = await env.orchestrator.turn("OK", env.session, config, () => {});
+  if (action === "clarify") expect(env.calls).toHaveLength(before);
+  else if (action === "aside") { expect(outcome.role).toBe("aside"); expect(outcome.session.sideAnswers).toHaveLength(1); expect(env.session.threadId).toBe(thread); expect(env.session.route).toEqual(route); }
+  else { expect(env.calls).toHaveLength(before + 1); expect(env.calls.at(-1)?.[3]).toBe(thread); expect(env.session.activeTask?.id === id).toBe(action !== "replace"); }
+});
+
+it("does not start a stage if its mandatory start save fails", async () => {
+  const env = await setup(); const save = env.store.saveChanges.bind(env.store);
+  vi.spyOn(env.store, "saveChanges").mockImplementation(async (...args) => {
+    if (args[0].attempts?.some(item => item.status === "running")) throw new Error("disk full before runner");
+    return save(...args);
+  });
+  await expect(env.orchestrator.turn("Implement", env.session, config, () => {})).rejects.toBeInstanceOf(TransitionSaveError);
+  expect(env.calls).toHaveLength(0);
+});
+
+for (const shape of ["single", "scout"]) it(`post-${shape} save failure leaves uncertain attempt and prevents blind retry after restart`, async () => {
+  const env = await setup(shape); const save = env.store.saveChanges.bind(env.store);
+  vi.spyOn(env.store, "saveChanges").mockImplementation(async (...args) => {
+    if (args[0].attempts?.some(item => item.status === "completed")) throw new Error("disk full after runner");
+    return save(...args);
+  });
+  await expect(env.orchestrator.turn("Implement", env.session, config, () => {})).rejects.toBeInstanceOf(TransitionSaveError);
+  expect(env.calls).toHaveLength(1);
+  vi.restoreAllMocks(); const loaded = (await env.store.load(env.root, env.session.id))!;
+  expect(loaded.attempts?.[0]?.status).toBe("running");
+  await expect(env.orchestrator.turn("Retry", loaded, config, () => {})).rejects.toBeInstanceOf(UncertainAttemptError);
+  expect(env.calls).toHaveLength(1);
+  await resolveAttempt(env.store, loaded, loaded.attempts![0]!.id, shape === "scout" ? report : "Verified current thread, files and artifacts; implementation is complete");
+  await env.orchestrator.turn("Continue only unfinished work", loaded, config, () => {});
+  expect(env.calls).toHaveLength(2);
+  if (shape === "scout") expect(env.calls[1]?.[6]).toBe("main");
+});
+
+it("Vex completion has recorded core evidence and does not derive completion from turn/completed", async () => {
+  const env = await setup(); env.setAssessment("unknown");
+  await env.orchestrator.turn("Implement and check all modules", env.session, config, () => {});
+  expect(env.session.activeTask?.assessment).toBe("unknown");
+  const request = env.requests.find(item => item.options[0]?.id === "closed")!;
+  expect(request.context.evidence).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "tasks" }), expect.objectContaining({ kind: "activity", text: expect.stringContaining("Assertions passed") }), expect.objectContaining({ kind: "answer" }), expect.objectContaining({ kind: "artifacts" })]));
+  expect(env.session.attempts?.[0]?.assessment).toMatchObject({ value: "unknown", evidence: 4 });
+});
+
+for (const cancel of [false, true]) it(`retains ${cancel ? "cancelled" : "failed"} usage attempts after retry, deduplication, truncation and undo`, async () => {
+  const env = await setup(); const controller = new AbortController();
+  env.runner.run = async () => { if (cancel) controller.abort(); throw new CodexRunError("failed after inference", usage); };
+  await expect(env.orchestrator.turn("Implement", env.session, config, () => {}, controller.signal)).rejects.toThrow("failed after inference");
+  expect(env.session.attempts?.[0]).toMatchObject({ status: cancel ? "cancelled" : "failed", usage });
+  const known = taskAccounting(env.session).knownSubtotalUsd;
+  env.session.turns = Array.from({ length: 20 }, () => ({ at: "now", prompt: "Visible", result: "Text" })); undoConversationTurn(env.session);
+  expect(env.session.activeTask?.assessment).toBe("unknown");
+  expect(taskAccounting(env.session).knownSubtotalUsd).toBe(known); expect(known).toBeGreaterThan(0);
+});
+
+it("isolates verifier tasks, thread, route, count, context, checkpoint and task even when checkpoint is due", async () => {
+  const env = await setup("plan"); await env.orchestrator.turn("Plan", env.session, config, () => {});
+  env.session.threadTurnCount = 16;
+  const main = { threadId: env.session.threadId, route: structuredClone(env.session.route), tasks: structuredClone(env.session.tasks), count: env.session.threadTurnCount, context: structuredClone(env.session.contextByThread), task: structuredClone(env.session.activeTask), checkpoint: env.session.checkpoint };
+  await env.orchestrator.turn("Verify full plan", env.session, config, () => {}, undefined, true, "verify_plan");
+  await env.orchestrator.turn("Check again", env.session, config, () => {}, undefined, true, "continue_verify");
+  expect({ threadId: env.session.threadId, route: env.session.route, tasks: env.session.tasks, count: env.session.threadTurnCount, context: env.session.contextByThread, task: env.session.activeTask, checkpoint: env.session.checkpoint }).toEqual(main);
+  expect(env.session.verifier?.threadTurnCount).toBe(2); expect(env.session.verifier?.tasks?.[0]?.text).toBe("side task");
+});
+
+it("persists side result without taking over lead; explicit adoption carries source and does not forward every result", async () => {
+  const env = await setup(); await env.orchestrator.turn("Implement", env.session, config, () => {});
+  const main = structuredClone(env.session.activeTask); const lead = env.session.threadId;
+  const side = await env.orchestrator.aside("Explain known fact", env.session, config, () => {});
+  expect(side.session.activeTask).toEqual(main); expect(side.session.threadId).toBe(lead); expect(env.calls.at(-1)?.[3]).toBeUndefined();
+  const loaded = (await env.store.load(env.root, env.session.id))!;
+  const id = loaded.sideAnswers![0]!.id;
+  const transfer = { ...operation("Use finding", loaded.id, loaded.activeTask?.id), intent: "adopt_side" as const, sourceSideId: id };
+  await env.orchestrator.turn("Use finding", loaded, config, () => {}, undefined, true, "adopt_side", undefined, transfer);
+  expect(env.calls.at(-1)?.[0]).toContain(`Source side answer: ${id}`); expect(loaded.sideAnswers?.[0]?.adopted).toBe(true);
+});
+
+it("loads custom profiles in manually delegated scout workflow without Luna", async () => {
+  const env = await setup(); const prompts = structuredClone(DEFAULT_ROUTING_PROMPTS); prompts.stage.question = "User custom route chooser";
+  await writeFile(join(env.store.baseDir, "routing-prompts.json"), JSON.stringify(prompts)).catch(async () => { await env.store.save(env.session); await writeFile(join(env.store.baseDir, "routing-prompts.json"), JSON.stringify(prompts)); });
+  env.session.routingMode = "manual"; env.session.manualWorkflow = { shape: "scout", routes: { scout: "vex", final: "vex" } };
+  await env.orchestrator.turn("Implement", env.session, config, () => {});
+  expect(env.calls.map(item => item[6])).toEqual(["side", "main"]); expect(env.requests.filter(item => item.context.stageObjective).every(item => item.question === "User custom route chooser")).toBe(true);
+});
+
+it("shared execution reads latest artifact, creates normal fresh task and records full source plan", async () => {
+  const env = await setup("plan"); await env.orchestrator.turn("Plan", env.session, config, () => {});
+  const path = join(env.store.conversationDir(env.root, env.session.id), env.session.planArtifact!);
+  await writeFile(path, "# Current complete plan\nChanged after previous turn.");
+  env.session.routingMode = "manual";
+  const execution = await preparePlanExecution(env.store, env.session, config);
+  expect(execution.session).toMatchObject({ kind: "normal", routingMode: "auto", executionSource: { sessionId: env.session.id, taskId: env.session.activeTask?.id, plan: "# Current complete plan\nChanged after previous turn." } });
+  expect(execution.session.id).not.toBe(env.session.id); expect(execution.prompt).toContain("Changed after previous turn.");
+});
+
+it("accepted verification changes keep the planner task and completed scout", async () => {
+  const env = await setup("scout_plan");
+  await env.orchestrator.turn("Plan entire feature", env.session, config, () => {});
+  const taskId = env.session.activeTask!.id;
+  const handoff = env.session.activeTask!.workflow!.scoutHandoff;
+  const lead = env.session.threadId;
+  await env.orchestrator.turn("Apply accepted findings", env.session, config, () => {}, undefined, true, "revise_plan");
+  expect(env.session.activeTask).toMatchObject({ id: taskId, originalRequest: "Plan entire feature" });
+  expect(env.session.activeTask!.workflow!.scoutHandoff).toBe(handoff);
+  expect(env.calls.map(item => item[6])).toEqual(["side", "planning", "planning"]);
+  expect(env.calls.at(-1)?.[3]).toBe(lead);
+});
+
+it("failed terminal persistence also blocks a retry on the current in-memory session", async () => {
+  const env = await setup(); const save = env.store.saveChanges.bind(env.store);
+  vi.spyOn(env.store, "saveChanges").mockImplementation(async (...args) => {
+    if (args[0].attempts?.some(item => item.status === "completed")) throw new Error("disk full");
+    return save(...args);
+  });
+  await expect(env.orchestrator.turn("Implement", env.session, config, () => {})).rejects.toBeInstanceOf(TransitionSaveError);
+  await expect(env.orchestrator.turn("Retry", env.session, config, () => {})).rejects.toBeInstanceOf(UncertainAttemptError);
+  expect(env.calls).toHaveLength(1);
+});
+
+it("technical noncompletion stops a scout before any final agent starts", async () => {
+  const env = await setup("scout");
+  env.runner.run = async () => ({ result: report, completed: false, usage });
+  await expect(env.orchestrator.turn("Implement", env.session, config, () => {})).rejects.toThrow("did not complete");
+  expect(env.session.attempts).toHaveLength(1);
+  expect(env.session.attempts![0]).toMatchObject({ role: "scout", status: "failed", usage });
+  expect(env.session.activeTask!.workflow!.scoutHandoff).toBeUndefined();
+});
+
+it("legacy command-looking queue strings remain plain prompts when drained", async () => {
+  const env = await setup();
+  await env.store.save(env.session);
+  const legacy = operation("/verify", env.session.id);
+  await env.orchestrator.turn(legacy.text, env.session, config, () => {}, undefined, true, legacy.intent, undefined, legacy);
+  expect(env.calls).toHaveLength(1);
+  expect(env.calls[0]?.[6]).toBe("main");
+});
+
+it("side result refreshes the calling snapshot for immediate explicit adoption", async () => {
+  const env = await setup(); await env.orchestrator.turn("Implement", env.session, config, () => {});
+  await env.orchestrator.aside("Explain", env.session, config, () => {});
+  expect(adoptedSidePrompt(env.session, env.session.sideAnswers![0]!.id)).toContain("Source side answer:");
+});

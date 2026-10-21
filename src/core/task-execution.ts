@@ -43,6 +43,15 @@ export function durableRunner(
     session.attempts = [...(session.attempts ?? []), record];
     await requiredSave(store, session, activate);
     const current = () => session.attempts!.find(item => item.id === id)!;
+    const persistResult = async () => {
+      try { await requiredSave(store, session, activate); }
+      catch (error) {
+        // Also stop retries in this process, whose object already contains the
+        // unsaved result. Disk still records a running, uncertain invocation.
+        current().status = "awaiting_user";
+        throw error;
+      }
+    };
     const progress = (event: Progress) => {
       const attempt = current();
       if (event.kind === "thread") attempt.threadId = event.text;
@@ -60,6 +69,8 @@ export function durableRunner(
     let execution: Execution;
     try {
       execution = await runner.run(...[...args.slice(0, 4), progress, ...args.slice(5)] as Parameters<CodexRunner["run"]>);
+      if (!execution.completed) throw new CodexRunError("Codex invocation did not complete", execution.usage, execution.context,
+        { threadId: execution.threadId, turnId: execution.turnId, route: execution.route ?? route, knownUsage: execution.knownUsage, usageComplete: execution.usageComplete ?? !!execution.usage });
     } catch (error) {
       const attempt = current();
       attempt.status = signal?.aborted ? "cancelled" : "failed";
@@ -70,17 +81,17 @@ export function durableRunner(
         attempt.threadId = error.accounting?.threadId ?? attempt.threadId; attempt.turnId = error.accounting?.turnId;
       }
       finish(attempt, started);
-      await requiredSave(store, session, activate);
+      await persistResult();
       throw error;
     }
     const attempt = current();
-    attempt.status = execution.completed ? "completed" : "failed";
+    attempt.status = signal?.aborted ? "cancelled" : execution.completed ? "completed" : "failed";
     attempt.result = execution.result; attempt.threadId = execution.threadId ?? attempt.threadId; attempt.turnId = execution.turnId;
     attempt.usage = execution.usage; attempt.knownUsage = execution.knownUsage ?? execution.usage;
     attempt.usageComplete = execution.usageComplete ?? !!execution.usage;
     attempt.observations.push({ kind: "answer", text: execution.result });
     finish(attempt, started);
-    await requiredSave(store, session, activate);
+    await persistResult();
     await after?.(id);
     return execution;
   } };
