@@ -92,3 +92,9 @@ The first coding comparison and its limitations are in [the 2026-09-29 context q
 Codex dollar values are **estimated Standard API equivalents**, since actual account billing is unavailable to the SDK. Stage cost uses its own model's ordinary, cached, cache-write, and output rates; reasoning output is already in output. Workflow cost sums all recorded stages. Vex cost is measured separately and never enters routing optimization. Compare quality-passing pairs for policy decisions, and report all-attempt cost, failures, latency, and raw tokens separately; mark cost unknown when usage was not reported.
 
 Runs are sequential and consume Codex account allowance. They use the existing Codex login. The baseline disables MCP servers; routed arms may call Vex, and those agent-initiated calls are counted separately from Pace routing calls. A repository under test can still invoke installed programs through shell commands. Review raw event logs before sharing them because they may contain source text or command output.
+
+## Durable task control
+
+`npm run benchmark:task-control -- --baseline-dir <built-baseline-checkout> --out <new-directory>` compares the frozen bilingual task cases through the production controller and corrected App Server runner. It saves every inference, answer, check, decision and Vex cost separately. Seeded prior exchanges leave full historical task cost unknown. The routing-only CLI also uses the production `Orchestrator.turn`; its simulated answers do not grade task quality.
+
+See [the 22 October task workflow evaluation](../docs/task-workflow-evaluation-2026-10-22.md) for the paired run, separately retained quality failure and correction, bilingual paraphrase probe, and evidence limits.

@@ -5,7 +5,7 @@
     "constraints": "Resolve the requested outcome from the latest request and conversation. A short follow-up can authorize substantial implementation or continue unfinished work; do not infer workload from message length. Clarify only when no actionable outcome can be inferred. Choose plan when the user asks for a plan before implementation; it ends in Pace's read-only planning mode. Choose scout_plan only when a read-only scout materially helps that plan. Never treat a plan route as permission to implement. Implementation of a saved plan requires the user's /execute command. Scout requires an available allowed route. Compare total Codex cost and latency at Sol High quality. Report Vex cost separately from Codex cost.",
     "choices": {
       "single": "One Codex agent completes the resolved deliverable. Prefer for self-contained answers and focused repository lookups that Luna can answer cheaply in one pass. A brief message in an ongoing task is not necessarily a brief deliverable. Compare its full cost with both scout stages.",
-      "scout": "A read-only agent read-only scout identifies relevant files, behavior, and tests; second agent completes the request from a structured handoff. Use when broad or uncertain repository exploration can materially reduce completion-agent work. Include both stages in total Codex cost.",
+      "scout": "A read-only scout identifies relevant files, behavior, and tests; second agent completes the request from a structured handoff. Use when broad or uncertain repository exploration can materially reduce completion-agent work. Include both stages in total Codex cost.",
       "plan": "Enter Pace's read-only planning mode, write a Markdown plan, save it, and stop. The user may later run /verify or /execute.",
       "scout_plan": "A read-only agent scouts the repository read-only, then a planning agent writes and saves a Markdown plan. Stop before implementation; use only when scouting adds clear value.",
       "clarify": "Ask user to clarify requested outcome when deliverable cannot be determined from original request and conversation."
@@ -38,7 +38,7 @@
   "modelCapabilities": {
     "gpt-6-luna": "Collect and organize data, repeatable operations, bounded tasks, and explain established facts. Validate suitability for the full remaining scope.",
     "gpt-6-sol": "Synthesize dependencies, open problems, uncertainty, verify assumptions, and demanding implementations. Sol High is the quality baseline, not a routing mandate.",
-    "gpt-6.1-sol": "Near-Astra capability for complex coding at the Sol price tier; synthesize dependencies, open problems, uncertainty and demanding implementations.",
+    "gpt-6.1-sol": "near-Astra capability for complex coding at the Sol price tier; synthesize dependencies, open problems, uncertainty and demanding implementations.",
     "gpt-6-astra": "most demanding end-to-end work"
   },
   "effortCapabilities": {
