@@ -9,7 +9,7 @@ import {
 } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { VexDiagnosticError, type VexRequest } from "./requests.js";
-export { shapeChoices, shapeRequest, stageRequest, taskRelationRequest, type RoutingState, type VexRequest } from "./requests.js";
+export { controlRequest, assessmentRequest, shapeChoices, shapeRequest, stageRequest, taskRelationRequest, type RoutingState, type VexRequest } from "./requests.js";
 export { VexDiagnosticError } from "./requests.js";
 import type { ModelOption, TurnSummary } from "../../shared/types.js";
 import { PRICE_SNAPSHOT, modelRates } from "../routing/pricing.js";

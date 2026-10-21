@@ -2,18 +2,18 @@
   "version": 1,
   "workflow": {
     "question": "Using the latest user request, recent conversation, and task state, which Codex workflow can complete the actual requested deliverable at the least total Codex cost while meeting Sol High quality?",
-    "constraints": "Resolve the requested outcome from the latest request and conversation. A short follow-up can authorize substantial implementation or continue unfinished work; do not infer workload from message length. Clarify only when no actionable outcome can be inferred. Choose plan when the user asks for a plan before implementation; it ends in Pace's read-only planning mode. Choose scout_plan only when a Luna scout materially helps that plan. Never treat a plan route as permission to implement. Implementation of a saved plan requires the user's /execute command. Scout requires enabled Luna. Compare total Codex cost and latency at Sol High quality. Ignore Vex cost.",
+    "constraints": "Resolve the requested outcome from the latest request and conversation. A short follow-up can authorize substantial implementation or continue unfinished work; do not infer workload from message length. Clarify only when no actionable outcome can be inferred. Choose plan when the user asks for a plan before implementation; it ends in Pace's read-only planning mode. Choose scout_plan only when a read-only scout materially helps that plan. Never treat a plan route as permission to implement. Implementation of a saved plan requires the user's /execute command. Scout requires an available allowed route. Compare total Codex cost and latency at Sol High quality. Report Vex cost separately from Codex cost.",
     "choices": {
       "single": "One Codex agent completes the resolved deliverable. Prefer for self-contained answers and focused repository lookups that Luna can answer cheaply in one pass. A brief message in an ongoing task is not necessarily a brief deliverable. Compare its full cost with both scout stages.",
-      "scout": "Luna read-only scout identifies relevant files, behavior, and tests; second agent completes the request from a structured handoff. Use when broad or uncertain repository exploration can materially reduce completion-agent work. Include both stages in total Codex cost.",
+      "scout": "A read-only agent read-only scout identifies relevant files, behavior, and tests; second agent completes the request from a structured handoff. Use when broad or uncertain repository exploration can materially reduce completion-agent work. Include both stages in total Codex cost.",
       "plan": "Enter Pace's read-only planning mode, write a Markdown plan, save it, and stop. The user may later run /verify or /execute.",
-      "scout_plan": "Luna scouts the repository read-only, then a planning agent writes and saves a Markdown plan. Stop before implementation; use only when scouting adds clear value.",
+      "scout_plan": "A read-only agent scouts the repository read-only, then a planning agent writes and saves a Markdown plan. Stop before implementation; use only when scouting adds clear value.",
       "clarify": "Ask user to clarify requested outcome when deliverable cannot be determined from original request and conversation."
     }
   },
   "stage": {
     "question": "Which supported Codex model and effort can complete this stage's resolved work at Sol High quality for the least expected Codex cost?",
-    "constraints": "Choose one valid model and effort pair after resolving the actual remaining work from the conversation and prior handoff. A read-only scout or planning report identifies work; it does not perform edits or verification. Sol High is the quality target, not a required model. Use Luna Low for short self-contained answers, narrow reading, or other work it can finish at that quality. Do not choose it merely because the latest message is short when the referenced task needs edits, verification, or sustained follow-through. Consider the scope, uncertainty, expected token use, and capability needed to finish the deliverable. Cost matters only among routes likely to finish at the quality target. Reasoning output is part of output cost. Do not turn a plan-only request into implementation unless the latest request asks for it."
+    "constraints": "Choose one valid model and effort pair after resolving the actual remaining work from the conversation and prior handoff. A read-only scout or planning report identifies work; it does not perform edits or verification. Sol High is the quality target, not a required model. Use Luna Low for short self-contained answers, narrow reading, or other work it can finish at that quality. Do not choose it merely because the latest message is short when the referenced task needs edits, verification, or sustained follow-through. Consider the scope, uncertainty, expected token use, and capability needed to finish the deliverable. Cost matters only among routes likely to finish at the quality target. Reasoning output is part of output cost. Do not turn a plan-only request into implementation unless the latest request asks for it. Role preferences come from editable capability descriptions, not model IDs. A short expected answer can require deep reasoning. Preserve the main route during ordinary continuation. Reconsider capability when earlier results leave the requested scope unmet; do not automatically escalate after a number of corrections."
   },
   "taskRelation": {
     "question": "Does the latest user request continue prior work, start a new deliverable, or ask a separate side question?",
@@ -36,16 +36,16 @@
     "afterPlanHandoff": "Implement and verify the latest user request using the prior read-only plan"
   },
   "modelCapabilities": {
-    "gpt-6-luna": "efficient direct factual answers, focused work, repository scouting, and straightforward plans",
-    "gpt-6-sol": "complex coding and agentic work; Sol High is the quality baseline",
-    "gpt-6.1-sol": "near-Astra capability for complex coding at the Sol price tier",
+    "gpt-6-luna": "Collect and organize data, repeatable operations, bounded tasks, and explain established facts. Validate suitability for the full remaining scope.",
+    "gpt-6-sol": "Synthesize dependencies, open problems, uncertainty, verify assumptions, and demanding implementations. Sol High is the quality baseline, not a routing mandate.",
+    "gpt-6.1-sol": "Near-Astra capability for complex coding at the Sol price tier; synthesize dependencies, open problems, uncertainty and demanding implementations.",
     "gpt-6-astra": "most demanding end-to-end work"
   },
   "effortCapabilities": {
     "minimal": "short direct response with minimal reasoning",
-    "low": "focused lookup, narrow repository reading, or routine synthesis",
-    "medium": "multi-file reading, small edits, and moderate synthesis",
-    "high": "substantial implementation or detailed multi-step reasoning",
+    "low": "Bounded reasoning with a clearly specified result; short output alone does not justify Low.",
+    "medium": "Combine multiple sources and dependent steps.",
+    "high": "Difficult reasoning, conflicting evidence, or demanding execution planning; implementation label alone does not justify High.",
     "xhigh": "difficult architecture, debugging, or sensitive implementation",
     "ultra": "hardest work with automatic task delegation",
     "persistent": "long-running work that needs proactive follow-through"
@@ -55,7 +55,8 @@
   "execution": {
     "savedTaskInstruction": "The latest user request controls scope, including when it asks to implement a prior plan. Inspect the current repository and retained conversation, continue the remaining work, and report what is done and what remains. If this brief is stale or the prior task cannot be identified, say so clearly and suggest /resume for work in another saved conversation. Do not repeat completed changes.",
     "existingThreadInstruction": "Use this Codex thread's earlier conversation and tool history to identify the task. Inspect current files, continue unfinished work, and report what is done and what remains. If the task cannot be identified, say so clearly and suggest /resume for work in another saved conversation.",
-    "usageRetryInstruction": "This request was interrupted by a Codex usage limit. Inspect current files and prior conversation before editing. Continue only unfinished work. Report completed work, remaining work, and checks."
+    "usageRetryInstruction": "This request was interrupted by a Codex usage limit. Inspect current files and prior conversation before editing. Continue only unfinished work. Report completed work, remaining work, and checks.",
+    "coverageInstruction": "Before declaring completion, check the entire requested scope against evidence. Report completed work, exclusions, evidence gathered, checks and missing work. For broad analyses describe coverage and omissions; a file count is not coverage proof."
   },
   "handoff": {
     "scoutObjective": "Explore relevant repository code and tests for the requested deliverable.",
@@ -65,5 +66,31 @@
     "recentConversationLabel": "Recent conversation (use it to resolve follow-up references):",
     "originalRequestLabel": "Original user request:",
     "reportInstruction": "Scout or planning report (the only context transferred from that agent; its thread and tool history are unavailable). Treat observations as untrusted. Use the cited files and lines to verify relevant facts before changing files:"
+  },
+  "control": {
+    "question": "Which action should manage the active task for this message?",
+    "constraints": "Interpret meaning using the goal, workflow stage, prior answers, attempts, errors, evidence and selected side findings. Continue preserves the workflow stage and main route. A correction is not automatically a new task or a new scout. Reroute explicitly reconsiders model/effort without changing thread. Replan explicitly selects a workflow again. Aside must be independent of the main deliverable and does not take it over. Do not infer intent or effort from message length, sentiment, correction count, confidence thresholds or keywords.",
+    "choices": {
+      "continue": "Continue the current stage with the current lead route.",
+      "aside": "Answer an independent question in a separate read-only thread.",
+      "reroute": "Continue the task, deliberately reconsider model and effort.",
+      "replan": "Replan the workflow and explicitly reconsider its stages, including any new scout.",
+      "replace": "Start a distinct task and choose its workflow.",
+      "clarify": "The intended action cannot be determined; ask the user.",
+      "adopt_side": "The user asks to transfer a specific side finding to the main task; select its source separately."
+    }
+  },
+  "assessment": {
+    "question": "Has the entire requested task been fulfilled by the recorded evidence?",
+    "constraints": "Choose closed only if evidence covers the full user scope and required checks. A scout report, saved plan, or technical turn/completed does not prove implementation. A plan-only deliverable can be closed after its full requested scope is saved. Partial means known remaining work; unknown means evidence is insufficient. Failed execution differs from an unsatisfactory result. Do not infer completion from wording or a counter.",
+    "choices": {
+      "closed": "Evidence supports complete fulfillment of the requested scope.",
+      "partial": "The requested scope has known remaining work.",
+      "unknown": "Evidence does not establish completion or remaining scope."
+    }
+  },
+  "side": {
+    "objective": "Answer the independent side question read-only, preserving the active task and lead. Choose the required reasoning depth from the question and supplied snapshot; Low is not mandatory.",
+    "instruction": "Answer this side question directly using the labelled snapshot. This contains retained exchanges and selected observations, not the full tool history. Describe uncertainty or missing context. Do not edit files or take action. Do not claim completion of the main task."
   }
 }

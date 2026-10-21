@@ -7,19 +7,20 @@ import { Orchestrator } from "../core/orchestrator.js";
 import { FileEdits } from "../core/file-edits.js";
 import { changeFileHistory } from "../core/file-history.js";
 import { artifactDirectory, artifactPath } from "../core/system/artifacts.js";
-import { executePlanPrompt, verifyPlanPrompt } from "../core/orchestrator-helpers.js";
+import { verifyPlanPrompt, tryReadPlanFile } from "../core/orchestrator-helpers.js";
+import { operation, preparePlanExecution, currentPlan } from "../core/operations.js";
 import { configuredSkills, enabledSkills } from "../core/system/skills.js";
 import { readAvailableModels } from "../integrations/models.js";
 import { readUsageLimits } from "../integrations/usage.js";
 import { validRoute } from "../shared/config.js";
-import type { Config, Session as PaceSession } from "../shared/types.js";
+import type { Config, OperationIntent, QueuedOperation, Session as PaceSession } from "../shared/types.js";
 import { VERSION, MAX_TEXT_BYTES, parseRequest, type Method, type PendingInteraction, type RemoteEvent, type Request, type Route, type Session as RemoteSession, type Snapshot } from "./protocol.js";
 
 export type RemoteBridge = {
-  submit(prompt: string, session: PaceSession, intent?: "verify_plan" | "execute_plan"): Promise<void>;
+  submit(prompt: string, session: PaceSession, intent?: OperationIntent, operation?: QueuedOperation): Promise<void>;
   cancel(sessionId: string): boolean;
   busy(sessionId: string): boolean;
-  queue(session: PaceSession, prompt: string): Promise<boolean>;
+  queue(session: PaceSession, prompt: QueuedOperation): Promise<boolean>;
   session(sessionId: string): PaceSession | undefined;
   changed(session: PaceSession): void;
 };
@@ -39,6 +40,7 @@ export class RemoteDomain {
   private readonly roots = new Map<string, string>();
   private readonly sessions = new Map<string, PaceSession>();
   private readonly active = new Map<string, Active>();
+  private readonly pendingLaunch = new Set<string>();
   private readonly controllers = new Map<string, AbortController>();
   private readonly interactions = new Map<string, Interaction>();
   private readonly interactionIds = new Map<string, string>();
@@ -53,7 +55,7 @@ export class RemoteDomain {
   constructor(private readonly store: PaceStore, private readonly orchestrator: Orchestrator, projects: readonly string[], private readonly bridge?: RemoteBridge) {
     for (const path of projects) this.roots.set(projectKey(path), resolve(path));
     this.previousTurn = orchestrator.turn.bind(orchestrator);
-    this.observedTurn = (async (prompt, session, config, callback, signal, activate, intent, displayPrompt) => {
+    this.observedTurn = (async (prompt, session, config, callback, signal, activate, intent, displayPrompt, queuedOperation) => {
       const active = { prompt, status: "Starting…", activities: [] as string[] };
       this.sessions.set(session.id, session); this.active.set(session.id, active); this.emit(session);
       const progress = Object.assign((event: Parameters<typeof callback>[0]) => {
@@ -66,12 +68,13 @@ export class RemoteDomain {
       }, { ...(callback as unknown as Record<string, unknown>) });
       const controller = signal ? undefined : new AbortController();
       if (controller) this.controllers.set(session.id, controller);
-      try { return await this.previousTurn(prompt, session, config, progress, signal ?? controller!.signal, activate, intent, displayPrompt); }
+      let completed = false;
+      try { const outcome = await this.previousTurn(prompt, session, config, progress, signal ?? controller!.signal, activate, intent, displayPrompt, queuedOperation); completed = true; return outcome; }
       finally {
         if (controller) this.controllers.delete(session.id);
         this.active.delete(session.id);
         for (const [id, item] of this.interactions) if (item.sessionId === session.id) this.removeInteraction(id);
-        this.sessions.set(session.id, session); this.bridge?.changed(session); this.emit(session); void this.drain(session);
+        this.sessions.set(session.id, session); this.bridge?.changed(session); this.emit(session); if (completed) void this.drain(session);
       }
     }) as Orchestrator["turn"];
     orchestrator.turn = this.observedTurn;
@@ -95,15 +98,15 @@ export class RemoteDomain {
       case "sessions.create": return this.serial(request.params.projectId, async () => {
         const path = await this.project(request.params.projectId); const config = await this.store.loadConfig();
         const session = newSession(path, config.routingMode, request.params.kind, config.autoLaunchSkills);
-        await this.store.save(session); this.sessions.set(session.id, session); this.emit(session); return { id: session.id };
+        await this.store.saveChanges(session); this.sessions.set(session.id, session); this.emit(session); return { id: session.id };
       });
       case "sessions.snapshot": return this.snapshot(request.params.projectId, request.params.sessionId);
       case "prompts.send": return this.accept(request.params.projectId, request.params.sessionId, deviceId, request.params.key, request.params, request.params.prompt);
       case "plan.run": {
         const session = await this.session(request.params.projectId, request.params.sessionId);
-        if (!session.plan?.trim()) throw new Error("Conversation has no saved plan.");
+        if (!(await currentPlan(this.store, session))?.trim()) throw new Error("Conversation has no saved plan.");
         const intent = request.params.action === "verify" ? "verify_plan" : "execute_plan";
-        const prompt = request.params.action === "verify" ? verifyPlanPrompt(session.plan) : executePlanPrompt(session.plan);
+        const prompt = request.params.action === "verify" ? "/verify" : "/execute";
         return this.accept(request.params.projectId, session.id, deviceId, request.params.key, request.params, prompt, intent);
       }
       case "task.run": {
@@ -114,11 +117,11 @@ export class RemoteDomain {
       case "queue.remove": {
         const session = await this.session(request.params.projectId, request.params.sessionId);
         const items = session.queuedPrompts ?? []; if (request.params.index >= items.length) throw new Error("Queued prompt not found.");
-        items.splice(request.params.index, 1); session.queuedPrompts = items; await this.store.save(session); this.emit(session); return { removed: true, queuedPrompts: items };
+        items.splice(request.params.index, 1); session.queuedPrompts = items; await this.store.saveChanges(session); this.emit(session); return { removed: true, queuedPrompts: items.map(item => typeof item === "string" ? item : item.text) };
       }
       case "turn.cancel": {
         const session = await this.session(request.params.projectId, request.params.sessionId); const removedQueued = session.queuedPrompts?.length ?? 0;
-        session.queuedPrompts = []; await this.store.save(session);
+        session.queuedPrompts = []; await this.store.saveChanges(session);
         const cancelled = this.bridge ? this.bridge.cancel(session.id) : !!this.controllers.get(session.id);
         if (!this.bridge) this.controllers.get(session.id)?.abort(); this.emit(session); return { cancelled, removedQueued };
       }
@@ -156,7 +159,7 @@ export class RemoteDomain {
   private toDto(s: PaceSession): RemoteSession {
     return { id: s.id, ...(s.title ? { title: s.title } : {}), ...(s.kind ? { kind: s.kind } : {}), ...(s.plan ? { plan: s.plan.slice(0, MAX_FILE) } : {}), ...(s.planArtifact ? { planArtifact: s.planArtifact } : {}), projectPath: s.projectPath, routingMode: s.routingMode, route: this.wireRoute(s.route), updatedAt: s.updatedAt,
       turns: s.turns.map(t => ({ prompt: t.prompt.slice(0, 32000), ...(t.displayPrompt ? { displayPrompt: t.displayPrompt.slice(0, 32000) } : {}), result: t.result.slice(0, MAX_FILE), at: t.at, ...(t.fileEdits ? { fileEdits: t.fileEdits } : {}), ...(t.artifacts ? { artifacts: t.artifacts.filter(p => /^(?:artifacts|\.pace\/artifacts)\/[^/\\]+\.md$/.test(p)) } : {}), ...(t.failed ? { failed: true } : {}), ...(t.cancelled ? { cancelled: true } : {}), ...(t.route ? { route: this.wireRoute(t.route) } : {}), ...(t.durationMs ? { durationMs: t.durationMs } : {}), ...(t.usage ? { usage: { input_tokens: t.usage.input_tokens, output_tokens: t.usage.output_tokens } } : {}) })),
-      ...(s.queuedPrompts?.length ? { queuedPrompts: s.queuedPrompts } : {}), ...(s.tasks ? { tasks: s.tasks.map(t => ({ ...t })) } : {}), ...(s.threadId ? { threadId: s.threadId } : {}), ...(s.threadId && s.contextByThread?.[s.threadId] ? { contextByThread: { [s.threadId]: s.contextByThread[s.threadId]! } } : {}) };
+      ...(s.queuedPrompts?.length ? { queuedPrompts: s.queuedPrompts.map(item => typeof item === "string" ? item : item.text) } : {}), ...(s.tasks ? { tasks: s.tasks.map(t => ({ ...t })) } : {}), ...(s.threadId ? { threadId: s.threadId } : {}), ...(s.threadId && s.contextByThread?.[s.threadId] ? { contextByThread: { [s.threadId]: s.contextByThread[s.threadId]! } } : {}) };
   }
   private wireRoute(route: PaceSession["route"]): RemoteSession["route"] {
     const valid = ["minimal", "low", "medium", "high", "xhigh", "ultra", "persistent"];
@@ -188,7 +191,7 @@ export class RemoteDomain {
   private async routing(projectId: string, sessionId: string, mode: "auto" | "manual", route: Route) {
     const session = await this.session(projectId, sessionId); if (this.active.has(sessionId) || this.bridge?.busy(sessionId)) throw new Error("Wait for active turn before changing routing.");
     const config = await this.store.loadConfig(); if (mode === "manual" && !validRoute(route, config.models)) throw new Error("Choose model and effort available in Pace settings.");
-    session.routingMode = mode; session.route = mode === "manual" ? route : config.defaultRoute; await this.store.save(session); this.emit(session); return { routingMode: mode, route: session.route };
+    session.routingMode = mode; session.route = mode === "manual" ? route : config.defaultRoute; await this.store.saveChanges(session); this.emit(session); return { routingMode: mode, route: session.route };
   }
   private async artifacts(projectId: string, sessionId: string) {
     const s = await this.session(projectId, sessionId); const files = await readdir(artifactDirectory(this.store, s), { withFileTypes: true }).catch(e => missing(e) ? [] : Promise.reject(e));
@@ -220,30 +223,73 @@ export class RemoteDomain {
     const { session, record } = await this.edit(projectId, sessionId, editId); if (!record.changes.some(item => item.path === path)) throw new Error("File is not part of this turn.");
     const files = await changeFileHistory(this.store, session, editId, direction, path); this.sessions.set(session.id, session); this.bridge?.changed(session); this.emit(session); return { files, direction };
   }
-  private async accept(projectId: string, sessionId: string, deviceId: string, key: string, payload: unknown, prompt: string, intent?: "verify_plan" | "execute_plan") {
-    const session = await this.session(projectId, sessionId);
-    if ((this.active.has(sessionId) || this.bridge?.busy(sessionId)) && (session.queuedPrompts?.length ?? 0) >= 20) throw new Error("Conversation queue is full (20 prompts).");
-    const accepted = await this.once(deviceId, key, payload); if (!accepted) return { accepted: true, duplicate: true, sessionId };
-    if (this.active.has(sessionId) || this.bridge?.busy(sessionId)) {
-      if (this.bridge) { if (!await this.bridge.queue(session, prompt)) throw new Error("Conversation queue is full (20 prompts)."); } else await this.queue(session, prompt);
-      return { accepted: true, queued: true, sessionId };
-    }
-    this.launch(session, prompt, intent); return { accepted: true, queued: false, sessionId };
+  private async accept(projectId: string, sessionId: string, deviceId: string, key: string, payload: unknown, prompt: string, intent?: OperationIntent) {
+    return this.serial(sessionId, async () => {
+      const session = await this.session(projectId, sessionId);
+      const busy = this.pendingLaunch.has(sessionId) || this.active.has(sessionId) || this.bridge?.busy(sessionId);
+      if (busy && (session.queuedPrompts?.length ?? 0) >= 20) throw new Error("Conversation queue is full (20 prompts).");
+      const accepted = await this.once(deviceId, key, payload); if (!accepted) return { accepted: true, duplicate: true, sessionId };
+      const item = operation(prompt, session.id, session.activeTask?.id);
+      const command = /^\/(verify|execute|btw|adopt)(?:\s+([\s\S]*))?$/.exec(prompt.trim());
+      item.intent = intent ?? (command?.[1] === "verify" ? "verify_plan" : command?.[1] === "execute" ? "execute_plan" : command?.[1] === "btw" ? "aside" : command?.[1] === "adopt" ? "adopt_side" : undefined);
+      item.role = item.intent === "verify_plan" ? "verifier" : item.intent === "aside" ? "aside" : "main";
+      if (item.intent === "adopt_side") item.sourceSideId = command?.[2]?.trim();
+      if (busy) {
+        if (this.bridge) { if (!await this.bridge.queue(session, item)) throw new Error("Conversation queue is full (20 prompts)."); }
+        else await this.queue(session, item);
+        return { accepted: true, queued: true, sessionId, operationId: item.id };
+      }
+      this.launch(session, item); return { accepted: true, queued: false, sessionId, operationId: item.id };
+    });
   }
-  private launch(session: PaceSession, prompt: string, intent?: "verify_plan" | "execute_plan") {
-    this.sessions.set(session.id, session);
-    void (async () => { try { if (this.bridge) await this.bridge.submit(prompt, session, intent); else await this.orchestrator.turn(prompt, session, await this.store.loadConfig(), () => {}, undefined, true, intent); } catch { /* Pace persists failure summaries. */ } })();
+  private launch(source: PaceSession, item: QueuedOperation) {
+    this.pendingLaunch.add(source.id);
+    this.sessions.set(source.id, source);
+    void (async () => {
+      let completed = false;
+      try {
+        const config = await this.store.loadConfig();
+        let session = source;
+        let prompt = item.text;
+        if (item.intent === "execute_plan") {
+          const argument = item.text.replace(/^\/(?:execute|run-plan)(?:\s+|$)/, "").trim();
+          const execution = await preparePlanExecution(this.store, source, config, argument || undefined);
+          session = execution.session; prompt = execution.prompt;
+          this.sessions.set(session.id, session); this.bridge?.changed(session); this.emit(session);
+        } else if (item.intent === "verify_plan") {
+          const argument = item.text.replace(/^\/verify(?:\s+|$)/, "").trim();
+          const parts = argument.split(/\s+/); const file = argument ? tryReadPlanFile(parts[0]!, source.projectPath) : undefined;
+          const plan = file?.content ?? await currentPlan(this.store, source);
+          if (!plan?.trim()) throw new Error("Conversation has no saved plan.");
+          prompt = verifyPlanPrompt(plan, source.turns[0]?.prompt, file ? parts.slice(1).join(" ") : argument || undefined);
+        } else if (item.intent === "aside") prompt = item.text.replace(/^\/btw(?:\s+|$)/, "").trim();
+        if (this.bridge) await this.bridge.submit(prompt, session, item.intent, item);
+        else await this.orchestrator.turn(prompt, session, config, () => {}, undefined, true, item.intent, undefined, item);
+        completed = true;
+      } catch { /* Failures stop draining. Durable attempts retain execution errors. */ }
+      finally { this.pendingLaunch.delete(source.id); if (completed) void this.drain(source); }
+    })();
   }
-  private async queue(session: PaceSession, prompt: string) {
-    if ((session.queuedPrompts?.length ?? 0) >= 20) throw new Error("Conversation queue is full (20 prompts).");
-    const previous = this.chains.get(session.id) ?? Promise.resolve();
-    const next = previous.then(async () => { session.queuedPrompts = [...(session.queuedPrompts ?? []), prompt]; await this.store.save(session); this.emit(session); });
-    this.chains.set(session.id, next.catch(() => {})); await next;
+  private async queue(session: PaceSession, item: QueuedOperation) {
+    const latest = await this.store.update(session, current => {
+      if ((current.queuedPrompts?.length ?? 0) >= 20) throw new Error("Conversation queue is full (20 prompts).");
+      current.queuedPrompts = [...(current.queuedPrompts ?? []), item];
+    });
+    Object.assign(session, latest); this.emit(session);
   }
   private async drain(session: PaceSession) {
-    if (this.disposed || this.active.has(session.id) || this.bridge?.busy(session.id)) return;
-    const prompt = session.queuedPrompts?.shift(); if (prompt === undefined) return;
-    try { await this.store.save(session); this.emit(session); this.launch(session, prompt); } catch { session.queuedPrompts = [prompt, ...(session.queuedPrompts ?? [])]; }
+    return this.serial(session.id, async () => {
+      if (this.disposed || this.pendingLaunch.has(session.id) || this.active.has(session.id) || this.bridge?.busy(session.id)) return;
+      // The UI owns its in-memory queue and drains it through the turn runner.
+      if (this.bridge) return;
+      let next: QueuedOperation | undefined;
+      const latest = await this.store.update(session, current => {
+        const value = current.queuedPrompts?.shift();
+        if (value !== undefined) next = operation(value, current.id, current.activeTask?.id);
+      });
+      Object.assign(session, latest); this.emit(session);
+      if (next) this.launch(session, next);
+    });
   }
   private async once(device: string, key: string, payload: unknown) {
     if (!UUID.test(key)) throw new Error("Invalid idempotency key.");

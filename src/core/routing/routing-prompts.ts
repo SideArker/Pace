@@ -14,6 +14,9 @@ const retiredChoiceIds = ["plan_execute", "scout_plan_execute", "plan_verify"] a
 
 export type RoutingPrompts = {
   version: 1;
+  control: { question: string; constraints: string; choices: Record<"continue" | "aside" | "reroute" | "replan" | "replace" | "clarify" | "adopt_side", string> };
+  assessment: { question: string; constraints: string; choices: Record<"closed" | "partial" | "unknown", string> };
+  side: { objective: string; instruction: string };
   workflow: {
     question: string;
     constraints: string;
@@ -38,6 +41,7 @@ export type RoutingPrompts = {
   unknownModelCapability: string;
   unknownEffortCapability: string;
   execution: {
+    coverageInstruction: string;
     savedTaskInstruction: string;
     existingThreadInstruction: string;
     usageRetryInstruction: string;
@@ -65,6 +69,13 @@ function stringMap(value: unknown, name: string): Record<string, string> {
   for (const [key, entry] of Object.entries(value))
     nonempty(entry, `${name}.${key}`);
   return value as Record<string, string>;
+}
+
+function parseSection<T extends { question: string; constraints: string; choices: Record<string, string> }>(value: unknown, defaults: T, name: string): T {
+  if (!isRecord(value)) throw new Error(`routing-prompts.json: ${name} must be an object`);
+  const choices = stringMap(value.choices, `${name}.choices`);
+  if (Object.keys(choices).some(id => !(id in defaults.choices))) throw new Error(`routing-prompts.json: ${name}.choices contains an unknown choice`);
+  return { question: nonempty(value.question, `${name}.question`), constraints: nonempty(value.constraints, `${name}.constraints`), choices: Object.fromEntries(Object.keys(defaults.choices).map(id => [id, nonempty(choices[id] ?? defaults.choices[id], `${name}.choices.${id}`)])) } as T;
 }
 
 export function parseRoutingPrompts(value: unknown): RoutingPrompts {
@@ -101,6 +112,12 @@ export function parseRoutingPrompts(value: unknown): RoutingPrompts {
     );
   return {
     version: 1,
+    control: parseSection(value.control ?? shipped.control, shipped.control, "control"),
+    assessment: parseSection(value.assessment ?? shipped.assessment, shipped.assessment, "assessment"),
+    side: {
+      objective: nonempty(isRecord(value.side) ? value.side.objective ?? shipped.side.objective : shipped.side.objective, "side.objective"),
+      instruction: nonempty(isRecord(value.side) ? value.side.instruction ?? shipped.side.instruction : shipped.side.instruction, "side.instruction"),
+    },
     workflow: {
       question: nonempty(workflow.question, "workflow.question"),
       constraints: nonempty(workflow.constraints, "workflow.constraints"),
@@ -148,6 +165,7 @@ export function parseRoutingPrompts(value: unknown): RoutingPrompts {
       "unknownEffortCapability",
     ),
     execution: {
+      coverageInstruction: nonempty(execution.coverageInstruction ?? shipped.execution.coverageInstruction, "execution.coverageInstruction"),
       savedTaskInstruction: nonempty(execution.savedTaskInstruction, "execution.savedTaskInstruction"),
       existingThreadInstruction: nonempty(execution.existingThreadInstruction, "execution.existingThreadInstruction"),
       usageRetryInstruction: nonempty(execution.usageRetryInstruction, "execution.usageRetryInstruction"),

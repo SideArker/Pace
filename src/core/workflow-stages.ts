@@ -28,11 +28,11 @@ export async function runPlanningStage({
 }): Promise<string> {
   let handoff = "";
   const objective = prompts.objectives.scout;
-  const stageModels = enabled.filter((model) => model.model === "gpt-6-luna");
+  const stageModels = enabled.filter(model => model.enabled !== false && model.efforts.length > 0);
   const available = routeOverride && routeOverride !== "vex" && routeOverride.model && !routeOverride.effort
     ? stageModels.filter(model => model.model === routeOverride.model) : stageModels;
   if (!available.length)
-    throw new Error("Vex chose a Luna scout, but Luna is not enabled");
+    throw new Error("No allowed route is available for the read-only scout");
   const sideRoute = routeOverride && routeOverride !== "vex" && routeOverride.effort ? routeOverride : chosenRoute(
     (
       await choose(

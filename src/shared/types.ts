@@ -42,7 +42,7 @@ export type TurnSummary = {
   fileEdits?: string;
   prompt: string;
   displayPrompt?: string;
-  intent?: "verify_plan" | "execute_plan" | "revise_plan" | "continue_verify";
+  intent?: OperationIntent;
   result: string;
   at: string;
   route?: Route;
@@ -102,7 +102,53 @@ export type CheckpointGeneration = {
   error?: string;
 };
 export type SessionKind = "normal" | "planning";
+export type OperationIntent = "verify_plan" | "execute_plan" | "revise_plan" | "continue_verify" | "aside" | "adopt_side";
+export type AgentRole = "main" | "scout" | "verifier" | "aside" | "status";
+export type QueuedOperation = {
+  id: string; text: string; intent?: OperationIntent;
+  sessionId: string; taskId?: string; role: AgentRole; sourceSideId?: string;
+};
+export type WorkflowShape = "single" | "scout" | "plan" | "scout_plan";
+export type TaskAssessment = "closed" | "partial" | "unknown";
+export type WorkflowState = {
+  version: 1; generation: number; shape: WorkflowShape; stage: "scout" | "plan" | "final";
+  mainRoute?: Route; mainThreadId?: string; scoutHandoff?: string;
+  source: "vex" | "user"; needsAssessment?: boolean;
+};
+export type AttemptObservation = {
+  kind: "activity" | "tasks" | "answer" | "artifacts";
+  text?: string; items?: Pick<Task, "text" | "completed">[]; paths?: string[];
+};
+export type StageAttempt = {
+  id: string; taskId: string; generation: number; stage: string; role: AgentRole;
+  status: "pending" | "running" | "completed" | "failed" | "cancelled" | "awaiting_user";
+  route: Route; threadId?: string; turnId?: string; startedAt: string; finishedAt?: string;
+  durationMs?: number; result?: string; error?: string; handoff?: string;
+  usage?: Usage; knownUsage?: Usage; usageComplete?: boolean; estimatedCostUsd?: number; knownCostUsd?: number;
+  observations: AttemptObservation[];
+  assessment?: { value: TaskAssessment; evidence: number; decisionId: string };
+};
+export type ControlRecord = {
+  id: string; taskId?: string; attemptId?: string; stage?: string; role: AgentRole;
+  objective: string; choice: string; confidence: number; probabilities: Record<string, number>;
+  durationMs: number; at: string; source: "vex" | "user"; contextAction: "continue";
+};
+export type SideAnswer = {
+  id: string; taskId?: string; attemptId: string; question: string; snapshotAt: string;
+  result?: string; error?: string; route: Route; threadId?: string; adopted?: boolean;
+};
+export type RoleState = { route: Route; threadId?: string; threadTurnCount?: number; context?: ContextMeasurement; tasks?: Task[] };
+export type ActiveTask = {
+  originalRequest: string; instructions: string[]; latestOutcome?: string; failed?: boolean;
+  id?: string; workflow?: WorkflowState; assessment?: TaskAssessment;
+};
 export type Session = {
+  revision?: number;
+  attempts?: StageAttempt[];
+  controlDecisions?: ControlRecord[];
+  sideAnswers?: SideAnswer[];
+  verifier?: RoleState;
+  executionSource?: { sessionId: string; taskId?: string; artifact?: string; plan: string };
   id: string;
   kind?: SessionKind;
   plan?: string;
@@ -124,9 +170,9 @@ export type Session = {
   autoLaunchSkills?: string[];
   autoLaunchThreadId?: string;
   tasks?: Task[];
-  activeTask?: { originalRequest: string; instructions: string[]; latestOutcome?: string; failed?: boolean };
-  deferredTurn?: { prompt: string; retryAt: string; attempt: number; reason?: "usage" | "network" | "capacity"; intent?: "verify_plan" | "execute_plan" | "revise_plan" | "continue_verify"; displayPrompt?: string };
-  queuedPrompts?: string[];
+  activeTask?: ActiveTask;
+  deferredTurn?: { prompt: string; retryAt: string; attempt: number; reason?: "usage" | "network" | "capacity"; intent?: OperationIntent; displayPrompt?: string };
+  queuedPrompts?: (string | QueuedOperation)[];
   skillOptions?: Record<string, string>;
   turns: TurnSummary[];
   undoneTurns?: TurnSummary[];

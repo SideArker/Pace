@@ -6,7 +6,7 @@ function invalidateThread(session: Session) {
   session.threadId = undefined;
   session.threadTurnCount = undefined;
   session.checkpoint = undefined;
-  session.activeTask = undefined;
+  if (session.activeTask) { session.activeTask.assessment = "unknown"; if (session.activeTask.workflow) session.activeTask.workflow.needsAssessment = true; }
   session.deferredTurn = undefined;
   session.updatedAt = new Date().toISOString();
 }
@@ -17,8 +17,8 @@ async function restoreAndSave(store: PaceStore, session: Session, next: Session,
   if (fileTurnActive(session.projectPath)) throw new Error("Wait for running turns in this project before changing files.");
   const edits = new FileEdits(store, session);
   const applicable = id && id !== "none";
-  const count = applicable ? await edits.restore(id, direction, paths, () => store.save(next)) : 0;
-  if (!applicable) await store.save(next);
+  const count = applicable ? await edits.restore(id, direction, paths, () => store.saveChanges(next)) : 0;
+  if (!applicable) await store.saveChanges(next);
   Object.assign(session, next);
   return count;
 }

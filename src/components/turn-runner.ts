@@ -97,7 +97,7 @@ export function createTurnRunner({
           const title = result.result.replace(/^['"#]+|['"#]+$/g, "").replace(/\s+/g, " ").trim().slice(0, 80);
           if (!title || turnSession.title || titleController.signal.aborted) return;
           turnSession.title = title;
-          await store.save(turnSession, () => activeSessionId.current === sessionId);
+          await store.saveChanges(turnSession, () => activeSessionId.current === sessionId);
           rememberSession(turnSession);
           if (activeSessionId.current === sessionId) setSession({ ...turnSession });
         }).catch(() => {}).finally(() => {
@@ -159,7 +159,7 @@ export function createTurnRunner({
       );
       if (turnSession.deferredTurn?.prompt === text) {
         turnSession.deferredTurn = undefined;
-        await store.save(turnSession, () => activeSessionId.current === sessionId);
+        await store.saveChanges(turnSession, () => activeSessionId.current === sessionId);
       }
       if (activeSessionId.current === sessionId) setSession({ ...outcome.session });
       if (emittedMessages === 0 && outcome.result.trim()) {
@@ -194,7 +194,7 @@ export function createTurnRunner({
             if (progress.kind === "questionResolved") dismissQuestion(progress.id, sessionId);
             if (progress.kind === "error") addFor(sessionId, "error", progress.text);
           }, controller.signal, turnConfig.approvalMode);
-          await store.save(turnSession, () => activeSessionId.current === sessionId);
+          await store.saveChanges(turnSession, () => activeSessionId.current === sessionId);
           if (activeSessionId.current === sessionId) setSession({ ...turnSession });
           if (checkpoint) addFor(sessionId, "meta", "Context checkpoint saved. The next turn starts a fresh thread.");
           else addFor(sessionId, "meta", "Context checkpoint could not be validated; the existing thread remains available.");
@@ -212,7 +212,7 @@ export function createTurnRunner({
       if (controller.signal.aborted) {
         if (turnSession.deferredTurn?.prompt === text) {
           turnSession.deferredTurn = undefined;
-          await store.save(turnSession, () => activeSessionId.current === sessionId).catch(() => {});
+          await store.saveChanges(turnSession, () => activeSessionId.current === sessionId).catch(() => {});
         }
         addFor(sessionId, "meta", "Turn cancelled by user");
         setStatusFor(sessionId, "Cancelled");
@@ -224,7 +224,7 @@ export function createTurnRunner({
           : transientRetryAt(reason, attempt);
         turnSession.deferredTurn = { prompt: text, retryAt: retryAt.toISOString(), attempt, reason, intent, displayPrompt };
         try {
-          await store.save(turnSession, () => activeSessionId.current === sessionId);
+          await store.saveChanges(turnSession, () => activeSessionId.current === sessionId);
           deferredForRetry = true;
           rememberSession(turnSession);
           if (activeSessionId.current === sessionId) setSession({ ...turnSession });
@@ -241,7 +241,7 @@ export function createTurnRunner({
         failedForRetry = !!failedTurn?.failed && !failedTurn.cancelled && failedTurn.prompt === text;
         if (turnSession.deferredTurn?.prompt === text) {
           turnSession.deferredTurn = undefined;
-          await store.save(turnSession, () => activeSessionId.current === sessionId).catch(() => {});
+          await store.saveChanges(turnSession, () => activeSessionId.current === sessionId).catch(() => {});
         }
         addFor(sessionId, "error", String(error));
         if (failedForRetry)
@@ -263,7 +263,7 @@ export function createTurnRunner({
         return updated;
       });
       if (tasksChanged || lastTurn?.activities?.length) {
-        await store.save(turnSession, () => activeSessionId.current === sessionId).catch(() => {});
+        await store.saveChanges(turnSession, () => activeSessionId.current === sessionId).catch(() => {});
       }
       setProcesses(old => old.filter(item => !item.id.startsWith(`turn-${turnId}-`)));
       const pending = pendingApprovals.current.get(sessionId);

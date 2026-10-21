@@ -29,6 +29,7 @@ function recentConversation(turns: TurnSummary[]) {
   return turns.slice(-10).map(turn => ({
     user: excerpt(turn.prompt, 1200),
     assistant: excerpt(turn.result, 1200),
+    route: turn.route, stages: turn.stages, routing: turn.routing,
     ...(turn.failed ? { failed: true } : {}),
   }));
 }
@@ -37,6 +38,7 @@ function compactState(state: RoutingState): RoutingState {
     ...state,
     openTasks: state.openTasks?.slice(-8).map(item => excerpt(item, 300)),
     activeTask: state.activeTask ? {
+      ...state.activeTask,
       originalRequest: excerpt(state.activeTask.originalRequest, 3000),
       instructions: state.activeTask.instructions.slice(-4).map(item => excerpt(item, 800)),
       latestOutcome: state.activeTask.latestOutcome ? excerpt(state.activeTask.latestOutcome, 800) : undefined,
@@ -102,9 +104,7 @@ export function shapeRequest(
   const configuredChoices = Object.entries(prompts.workflow.choices).map(
     ([id, description]) => ({ id, description }),
   );
-  const options = models.some((model) => model.model === "gpt-6-luna")
-    ? configuredChoices
-    : configuredChoices.filter((choice) => choice.id !== "scout" && choice.id !== "scout_plan");
+  const options = models.some(model => model.enabled !== false && model.efforts.length) ? configuredChoices : configuredChoices.filter(choice => !["scout", "scout_plan"].includes(choice.id));
   return {
     question: prompts.workflow.question,
     context: taskContext(prompt, turns, models, prompts, state),
@@ -135,4 +135,15 @@ export function stageRequest(
     decisionType: "routing",
     constraints: `${prompts.stage.constraints}\n\n${prompts.routingRules.stageResolution}`,
   };
+}
+
+export function controlRequest(prompt: string, session: Session, prompts = DEFAULT_ROUTING_PROMPTS): VexRequest {
+  const choices = Object.entries(prompts.control.choices).filter(([id]) => id !== "adopt_side" || session.sideAnswers?.some(answer => answer.result && !answer.error && answer.taskId === session.activeTask?.id));
+  return { question: prompts.control.question, decisionType: "routing", options: choices.map(([id, description]) => ({ id, description })), constraints: prompts.control.constraints,
+    context: { latestRequest: excerpt(prompt, 12000), recentConversation: recentConversation(session.turns), activeTask: session.activeTask, attempts: (session.attempts ?? []).filter(item => item.taskId === session.activeTask?.id).slice(-12), sideAnswers: session.sideAnswers?.filter(item => item.taskId === session.activeTask?.id), conversationState: compactState({ previousRoute: session.route, activeTask: session.activeTask, hasCodexThread: !!session.threadId }) } };
+}
+export function assessmentRequest(session: Session, attemptId: string, prompts = DEFAULT_ROUTING_PROMPTS): VexRequest {
+  const attempt = session.attempts?.find(item => item.id === attemptId);
+  return { question: prompts.assessment.question, decisionType: "routing", options: Object.entries(prompts.assessment.choices).map(([id, description]) => ({ id, description })), constraints: prompts.assessment.constraints,
+    context: { goal: session.activeTask, attempt, priorAttempts: session.attempts?.filter(item => item.taskId === attempt?.taskId && item.id !== attemptId).slice(-10), recentConversation: recentConversation(session.turns), evidence: attempt?.observations, sideAnswers: session.sideAnswers?.filter(item => item.adopted) } };
 }

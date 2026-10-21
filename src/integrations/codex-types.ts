@@ -5,7 +5,7 @@ import type { ContextMeasurement } from "../shared/types.js";
 export type ApprovalDecision = "accept" | "decline";
 export type UserQuestion = { id: string; header: string; question: string; options: { label: string; description: string }[]; isOther: boolean; isSecret: boolean };
 export type UserAnswers = Record<string, { answers: string[] }>;
-export type Progress =
+export type Progress = (
   | { kind: "status" | "message" | "error" | "thread" | "system"; text: string }
   | { kind: "route"; route: Route }
   | { kind: "usage"; usage: Usage }
@@ -13,16 +13,21 @@ export type Progress =
   | { kind: "tasks"; items: Pick<Task, "text" | "completed">[] }
   | { kind: "question"; id: string; questions: UserQuestion[]; respond: (answers: UserAnswers) => void }
   | { kind: "questionResolved"; id: string }
-  | { kind: "approval"; id: string; command: string; cwd?: string; reason?: string; network?: boolean; respond: (decision: ApprovalDecision) => void };
+  | { kind: "approval"; id: string; command: string; cwd?: string; reason?: string; network?: boolean; respond: (decision: ApprovalDecision) => void })
+ & { taskId?: string; role?: import("../shared/types.js").AgentRole; attemptId?: string };
 export type Execution = {
   threadId?: string;
   result: string;
   completed: boolean;
+  turnId?: string;
+  route?: Route;
+  knownUsage?: Usage;
+  usageComplete?: boolean;
   usage?: Usage;
   context?: ContextMeasurement;
 };
 export class CodexRunError extends Error {
-  constructor(message: string, readonly usage?: Usage, readonly context?: ContextMeasurement) {
+  constructor(message: string, readonly usage?: Usage, readonly context?: ContextMeasurement, readonly accounting?: { threadId?: string; turnId?: string; route: Route; knownUsage?: Usage; usageComplete: boolean }) {
     super(message);
     this.name = "Error";
   }

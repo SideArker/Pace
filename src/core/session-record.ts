@@ -1,14 +1,99 @@
+import { createHash } from "node:crypto";
 import { EFFORTS, isRecord } from "../shared/config.js";
-import type { Session } from "../shared/types.js";
+import type { OperationIntent, QueuedOperation, Session } from "../shared/types.js";
 import type { Usage } from "@openai/codex-sdk";
 import { parseCheckpoint } from "./checkpoint.js";
+import { validOperation } from "./operations.js";
 
 function isUsage(value: unknown): value is Usage {
   if (!isRecord(value)) return false;
   const record = value;
-  return ["input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens", "reasoning_output_tokens"].every(key => typeof record[key] === "number");
+  return ["input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens", "reasoning_output_tokens"].every(key => typeof record[key] === "number" && Number.isFinite(record[key]) && (record[key] as number) >= 0);
 }
 const nonnegative = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && value >= 0;
+const integer = (value: unknown) => nonnegative(value) && Number.isInteger(value);
+const text = (value: unknown): value is string => typeof value === "string" && value.length > 0;
+const optionalText = (value: unknown) => value === undefined || typeof value === "string";
+const role = (value: unknown) => ["main", "scout", "verifier", "aside", "status"].includes(String(value));
+const assessment = (value: unknown) => ["closed", "partial", "unknown"].includes(String(value));
+function isIntent(value: unknown): value is OperationIntent {
+  return ["verify_plan", "execute_plan", "revise_plan", "continue_verify", "aside", "adopt_side"].includes(String(value));
+}
+function isRoute(value: unknown): boolean {
+  return isRecord(value) && optionalText(value.model) &&
+    (value.effort === undefined || EFFORTS.includes(value.effort as (typeof EFFORTS)[number]));
+}
+function isTask(value: unknown): boolean {
+  return isRecord(value) && typeof value.id === "string" && value.id.length <= 100 &&
+    typeof value.text === "string" && value.text.length <= 500 && typeof value.completed === "boolean" &&
+    ["user", "agent"].includes(String(value.source));
+}
+function isObservation(value: unknown): boolean {
+  return isRecord(value) && ["activity", "tasks", "answer", "artifacts"].includes(String(value.kind)) && optionalText(value.text) &&
+    (value.items === undefined || (Array.isArray(value.items) && value.items.every(item =>
+      isRecord(item) && typeof item.text === "string" && typeof item.completed === "boolean"))) &&
+    (value.paths === undefined || (Array.isArray(value.paths) && value.paths.every(path => typeof path === "string")));
+}
+function isAttempt(value: unknown): boolean {
+  return isRecord(value) && text(value.id) && text(value.taskId) && integer(value.generation) && text(value.stage) && role(value.role) &&
+    ["pending", "running", "completed", "failed", "cancelled", "awaiting_user"].includes(String(value.status)) &&
+    isRoute(value.route) && typeof value.startedAt === "string" &&
+    ["threadId", "turnId", "finishedAt", "result", "error", "handoff"].every(key => optionalText(value[key])) &&
+    ["durationMs", "estimatedCostUsd", "knownCostUsd"].every(key => value[key] === undefined || nonnegative(value[key])) &&
+    ["usage", "knownUsage"].every(key => value[key] === undefined || isUsage(value[key])) &&
+    (value.usageComplete === undefined || typeof value.usageComplete === "boolean") &&
+    Array.isArray(value.observations) && value.observations.every(isObservation) &&
+    (value.assessment === undefined || (isRecord(value.assessment) && assessment(value.assessment.value) &&
+      integer(value.assessment.evidence) && text(value.assessment.decisionId)));
+}
+function isControl(value: unknown): boolean {
+  return isRecord(value) && text(value.id) && ["taskId", "attemptId", "stage"].every(key => optionalText(value[key])) &&
+    role(value.role) && text(value.objective) && text(value.choice) && nonnegative(value.confidence) &&
+    (value.confidence as number) <= 1 && isRecord(value.probabilities) &&
+    Object.values(value.probabilities).every(probability => nonnegative(probability) && (probability as number) <= 1) &&
+    nonnegative(value.durationMs) && typeof value.at === "string" && ["vex", "user"].includes(String(value.source)) && value.contextAction === "continue";
+}
+function isSide(value: unknown): boolean {
+  return isRecord(value) && text(value.id) && optionalText(value.taskId) && text(value.attemptId) &&
+    typeof value.question === "string" && typeof value.snapshotAt === "string" && isRoute(value.route) &&
+    ["result", "error", "threadId"].every(key => optionalText(value[key])) &&
+    (value.adopted === undefined || typeof value.adopted === "boolean");
+}
+function isWorkflow(value: unknown): boolean {
+  return isRecord(value) && value.version === 1 && integer(value.generation) &&
+    ["single", "scout", "plan", "scout_plan"].includes(String(value.shape)) &&
+    ["scout", "plan", "final"].includes(String(value.stage)) &&
+    (value.mainRoute === undefined || isRoute(value.mainRoute)) && optionalText(value.mainThreadId) && optionalText(value.scoutHandoff) &&
+    ["vex", "user"].includes(String(value.source)) && (value.needsAssessment === undefined || typeof value.needsAssessment === "boolean");
+}
+function validNewFields(value: Record<string, unknown>): boolean {
+  const records = (field: string, validate: (item: unknown) => boolean) => value[field] === undefined ||
+    (Array.isArray(value[field]) && value[field].every(validate) &&
+      new Set((value[field] as Record<string, unknown>[]).map(item => item.id)).size === value[field].length);
+  return (value.revision === undefined || integer(value.revision)) && records("attempts", isAttempt) &&
+    records("controlDecisions", isControl) && records("sideAnswers", isSide) &&
+    (value.activeTask === undefined || (isRecord(value.activeTask) && optionalText(value.activeTask.id) &&
+      (value.activeTask.workflow === undefined || isWorkflow(value.activeTask.workflow)) &&
+      (value.activeTask.assessment === undefined || assessment(value.activeTask.assessment)))) &&
+    (value.verifier === undefined || (isRecord(value.verifier) && isRoute(value.verifier.route) && optionalText(value.verifier.threadId) &&
+      (value.verifier.threadTurnCount === undefined || integer(value.verifier.threadTurnCount)) &&
+      (value.verifier.context === undefined || isContextMeasurement(value.verifier.context)) &&
+      (value.verifier.tasks === undefined || (Array.isArray(value.verifier.tasks) && value.verifier.tasks.length <= 100 && value.verifier.tasks.every(isTask))))) &&
+    (value.executionSource === undefined || (isRecord(value.executionSource) && text(value.executionSource.sessionId) &&
+      optionalText(value.executionSource.taskId) && optionalText(value.executionSource.artifact) && typeof value.executionSource.plan === "string")) &&
+    (value.queuedPrompts === undefined || (Array.isArray(value.queuedPrompts) &&
+      value.queuedPrompts.every(item => typeof item === "string" || validOperation(item))));
+}
+/** Legacy text entries acquire deterministic IDs, preserving identity across repeated reads. */
+function queuedOperations(value: unknown, sessionId: string): QueuedOperation[] {
+  return Array.isArray(value) ? value.map((item, index) => {
+    if (typeof item !== "string") return structuredClone(item as QueuedOperation);
+    const digest = createHash("sha256").update(JSON.stringify([sessionId, index, item])).digest("hex");
+    const id = `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-8${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
+    return { id, text: item, sessionId, role: "main" };
+  }) : [];
+}
+
 function isStage(value: unknown): boolean {
   return isRecord(value) && typeof value.objective === 'string' && isRecord(value.route) &&
     (value.route.model === undefined || typeof value.route.model === 'string') &&
@@ -77,7 +162,7 @@ function isTurn(turn: unknown): boolean {
         (turn.fileEdits === undefined || turn.fileEdits === "none" || (typeof turn.fileEdits === "string" && /^[0-9a-f-]{36}$/.test(turn.fileEdits))) &&
         typeof turn.prompt === "string" &&
         (turn.displayPrompt === undefined || typeof turn.displayPrompt === "string") &&
-        (turn.intent === undefined || turn.intent === "verify_plan" || turn.intent === "execute_plan" || turn.intent === "revise_plan" || turn.intent === "continue_verify") &&
+        (turn.intent === undefined || isIntent(turn.intent)) &&
         typeof turn.result === "string" &&
         typeof turn.at === "string" &&
         (turn.route === undefined || (isRecord(turn.route) && (turn.route.model === undefined || typeof turn.route.model === "string") && (turn.route.effort === undefined || EFFORTS.includes(turn.route.effort as (typeof EFFORTS)[number])))) &&
@@ -108,6 +193,7 @@ export function parseSession(value: unknown, project: string): Session | undefin
     value.projectPath !== project ||
     typeof value.createdAt !== "string" ||
     typeof value.updatedAt !== "string" ||
+    !validNewFields(value) ||
     (value.threadId !== undefined && typeof value.threadId !== "string") ||
     (value.threadTurnCount !== undefined && (!Number.isInteger(value.threadTurnCount) || (value.threadTurnCount as number) < 0)) ||
     (value.contextByThread !== undefined && (!isRecord(value.contextByThread) ||
@@ -151,10 +237,8 @@ export function parseSession(value: unknown, project: string): Session | undefin
       typeof value.deferredTurn.retryAt !== "string" || !Number.isFinite(Date.parse(value.deferredTurn.retryAt)) ||
       !Number.isInteger(value.deferredTurn.attempt) || (value.deferredTurn.attempt as number) < 1 ||
       (value.deferredTurn.reason !== undefined && !["usage", "network", "capacity"].includes(String(value.deferredTurn.reason))) ||
-      (value.deferredTurn.intent !== undefined && value.deferredTurn.intent !== "verify_plan" && value.deferredTurn.intent !== "execute_plan" && value.deferredTurn.intent !== "revise_plan" && value.deferredTurn.intent !== "continue_verify") ||
+      (value.deferredTurn.intent !== undefined && !isIntent(value.deferredTurn.intent)) ||
       (value.deferredTurn.displayPrompt !== undefined && typeof value.deferredTurn.displayPrompt !== "string"))) ||
-    (value.queuedPrompts !== undefined && (!Array.isArray(value.queuedPrompts) ||
-      !value.queuedPrompts.every((prompt: unknown) => typeof prompt === "string"))) ||
     (value.kind !== undefined && value.kind !== "normal" && value.kind !== "planning") ||
     (value.plan !== undefined && (typeof value.plan !== "string" || value.plan.length > 50000)) ||
     (value.planArtifact !== undefined && (typeof value.planArtifact !== "string" || !/^(?:\.pace\/)?artifacts\/[^/\\]+\.pace-plan\.md$/.test(value.planArtifact))) ||
@@ -163,7 +247,7 @@ export function parseSession(value: unknown, project: string): Session | undefin
     || (value.manualWorkflow !== undefined && !isManualWorkflow(value.manualWorkflow))
   )
     return undefined;
-  return value as Session;
+  return { ...value, ...(value.queuedPrompts === undefined ? {} : { queuedPrompts: queuedOperations(value.queuedPrompts, value.id) }) } as Session;
 }
 
 export function parseSessionSummary(value: unknown, project: string): Session | undefined {
@@ -174,7 +258,7 @@ export function parseSessionSummary(value: unknown, project: string): Session | 
     (value.title !== undefined && (typeof value.title !== "string" || value.title.length > 120)) ||
     value.projectPath !== project ||
     typeof value.createdAt !== "string" ||
-    typeof value.updatedAt !== "string"
+    typeof value.updatedAt !== "string" || !validNewFields(value)
   ) {
     return undefined;
   }
@@ -201,7 +285,7 @@ export function parseSessionSummary(value: unknown, project: string): Session | 
           retryAt: value.deferredTurn.retryAt,
           attempt: value.deferredTurn.attempt,
           ...(value.deferredTurn.reason === "usage" || value.deferredTurn.reason === "network" || value.deferredTurn.reason === "capacity" ? { reason: value.deferredTurn.reason as "usage" | "network" | "capacity" } : {}),
-          ...(value.deferredTurn.intent === "verify_plan" || value.deferredTurn.intent === "execute_plan" || value.deferredTurn.intent === "revise_plan" || value.deferredTurn.intent === "continue_verify" ? { intent: value.deferredTurn.intent as "verify_plan" | "execute_plan" | "revise_plan" | "continue_verify" } : {}),
+          ...(isIntent(value.deferredTurn.intent) ? { intent: value.deferredTurn.intent } : {}),
           ...(typeof value.deferredTurn.displayPrompt === "string" ? { displayPrompt: value.deferredTurn.displayPrompt } : {}),
         }
       : undefined;
@@ -221,9 +305,9 @@ export function parseSessionSummary(value: unknown, project: string): Session | 
     } } : {}),
     ...(typeof value.verifierThreadId === "string" ? { verifierThreadId: value.verifierThreadId } : {}),
     deferredTurn,
-    queuedPrompts: Array.isArray(value.queuedPrompts)
-      ? value.queuedPrompts.filter((prompt: unknown): prompt is string => typeof prompt === "string")
-      : [],
+    queuedPrompts: queuedOperations(value.queuedPrompts, value.id),
+    ...Object.fromEntries(["revision", "attempts", "controlDecisions", "sideAnswers", "activeTask", "verifier", "executionSource"]
+      .filter(key => value[key] !== undefined).map(key => [key, structuredClone(value[key])])),
     turns: firstTurnPrompt ? [{ prompt: firstTurnPrompt, result: "", at: value.createdAt }] : [],
   };
 }

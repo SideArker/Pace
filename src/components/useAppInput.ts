@@ -279,7 +279,7 @@ export function useAppInput(options: {
         if (!targetTurn) return;
         rewindConversation(session, menuIndex);
         session.updatedAt = new Date().toISOString();
-        void store.save(session);
+        void store.saveChanges(session);
         setSession({ ...session });
         renderSessionTurns(session);
         setDraft(targetTurn.prompt);
@@ -290,7 +290,7 @@ export function useAppInput(options: {
         if (!session) return;
         deleteConversationTurn(session, menuIndex);
         session.updatedAt = new Date().toISOString();
-        void store.save(session);
+        void store.saveChanges(session);
         setSession({ ...session });
         renderSessionTurns(session);
         setHistory(session.turns.map((t) => t.prompt));

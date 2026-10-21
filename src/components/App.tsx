@@ -2,13 +2,14 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Box, Static, Text, useApp, useStdout } from "ink";
 import type { ApprovalDecision, Progress } from "../integrations/codex.js";
 import type { UserAnswers } from "../integrations/codex-types.js";
-import type { ApprovalMode, Config, ManualWorkflow, Route, Session } from "../shared/types.js";
+import type { ApprovalMode, Config, ManualWorkflow, OperationIntent, QueuedOperation, Route, Session } from "../shared/types.js";
 import { PaceStore, newSession, rewindConversation, deleteConversationTurn, retryableTurn } from "../core/sessions.js";
 import { changeConversationHistory } from "../core/file-history.js";
 import { FileDiffPanel } from "./FileDiffPanel.js";
 import { McpManager } from "./McpManager.js";
 import { Orchestrator, VexUnavailableError } from "../core/orchestrator.js";
 import { PromptQueue } from "../core/prompt-queue.js";
+import { adoptedSidePrompt, operation, preparePlanExecution } from "../core/operations.js";
 import { AppServerRunner } from "../integrations/codex.js";
 import { VexRouter } from "../core/vex/client.js";
 import { EFFORTS, withModels } from "../shared/config.js";
@@ -46,7 +47,7 @@ import { formatLatestRoute } from "./route-format.js";
 import { contextPercent, measuredContext } from "../core/context.js";
 import { networkReachable, transientRetryAt } from "../core/usage-retry.js";
 import { loadResumeChoices } from "./resume-choices.js";
-import { executePlanPrompt, tryReadPlanFile, verifyPlanPrompt } from "../core/orchestrator-helpers.js";
+import { tryReadPlanFile, verifyPlanPrompt } from "../core/orchestrator-helpers.js";
 import { latestNpmVersion } from "../core/npm-version.js";
 import { RemoteDomain } from "../remote/domain.js";
 import { startRemoteHost, type RemoteHost } from "../remote/server.js";
@@ -72,6 +73,7 @@ export const commands = [
   "/retry",
   "/cancelretry",
   "/btw",
+  "/adopt",
   "/artifacts",
   "/trust",
   "/skills",
@@ -242,7 +244,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const [approval, setApproval] = useState<Extract<Progress, { kind: "approval" }>>();
   const [question, setQuestion] = useState<PendingQuestion>();
   const [pendingRevision, setPendingRevision] = useState(0);
-  const runTurnRef = useRef<((text: string, turnSession: Session, turnConfig: Config, intent?: "verify_plan" | "execute_plan" | "revise_plan" | "continue_verify", displayPrompt?: string, automaticRetry?: boolean) => Promise<void>) | undefined>(undefined);
+  const runTurnRef = useRef<((text: string, turnSession: Session, turnConfig: Config, intent?: OperationIntent, displayPrompt?: string, automaticRetry?: boolean, operation?: QueuedOperation) => Promise<void>) | undefined>(undefined);
   const remoteHost = useRef<RemoteHost | undefined>(undefined);
   const [approvalMenu, setApprovalMenu] = useState(false);
   const [vexState, setVexState] = useState<
@@ -283,7 +285,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       if (record) record.queuedPrompts = queuedPrompts;
     }
     const previous = queueSaves.current.get(sessionId) ?? Promise.resolve();
-    const saving = previous.catch(() => {}).then(() => store.save(target, () => activeSessionId.current === sessionId));
+    const saving = previous.catch(() => {}).then(() => store.saveChanges(target, () => activeSessionId.current === sessionId));
     queueSaves.current.set(sessionId, saving);
     void saving.catch(error => addFor(sessionId, "error", `Could not save queued prompts: ${String(error)}`)).finally(() => {
       if (queueSaves.current.get(sessionId) === saving) queueSaves.current.delete(sessionId);
@@ -513,7 +515,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       await store.saveConfig(updatedConfig);
       latestConfig.current = updatedConfig;
       setConfig(updatedConfig);
-      await store.save(updatedSession);
+      await store.saveChanges(updatedSession);
       rememberSession(updatedSession);
       setSession(updatedSession);
       add("info", selected.length ? `ON-LAUNCH skills: ${selected.join(", ")}.` : "ON-LAUNCH skills cleared.");
@@ -770,7 +772,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         const updatedConfig = withModels(config, models);
         await store.saveConfig(updatedConfig);
         const updatedSession = { ...session, routingMode: "manual" as const, route: { model: menuModel, effort }, manualWorkflow: undefined };
-        await store.save(updatedSession);
+        await store.saveChanges(updatedSession);
         setConfig(updatedConfig);
         setSession(updatedSession);
         rememberSession(updatedSession);
@@ -786,7 +788,7 @@ export default function App({ onClear }: { onClear: () => void }) {
     if (!session) return;
     const updated = { ...session, routingMode: "manual" as const, route, manualWorkflow: undefined };
     try {
-      await store.save(updated);
+      await store.saveChanges(updated);
       setSession(updated);
       rememberSession(updated);
       const name =
@@ -916,7 +918,7 @@ export default function App({ onClear }: { onClear: () => void }) {
     rememberSession(target);
     setStatusFor(target.id, "Ready");
     addFor(target.id, "info", `Automatic retry cancelled${removed ? `; ${removed} queued prompt${removed === 1 ? "" : "s"} cleared` : ""}.`);
-    try { await store.save(target); }
+    try { await store.saveChanges(target); }
     catch (error) { addFor(target.id, "error", `Could not save retry cancellation: ${String(error)}`); }
   };
   const interrupt = () => {
@@ -969,7 +971,7 @@ export default function App({ onClear }: { onClear: () => void }) {
     if (!session) return;
     const updated = { ...session, routingMode: "manual" as const, manualWorkflow: { shape, routes } };
     try {
-      await store.save(updated);
+      await store.saveChanges(updated);
       setSession(updated);
       rememberSession(updated);
       setManualMenu(false);
@@ -992,7 +994,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       if (index === 0) {
         if (!session) return;
         const updated = { ...session, routingMode: "auto" as const, manualWorkflow: undefined };
-        void store.save(updated).then(() => {
+        void store.saveChanges(updated).then(() => {
           setSession(updated); rememberSession(updated); setManualMenu(false);
           add("info", "Workflow choice delegated to Vex.");
         }).catch(error => add("error", `Could not save routing mode: ${String(error)}`));
@@ -1040,7 +1042,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       };
       try {
         if (loadedPlan) updated.planArtifact = await savePlanArtifact(artifactDirectory(store, updated), updated.id, "imported plan", loadedPlan, updated.planArtifact);
-        await store.save(updated);
+        await store.saveChanges(updated);
         setSession(updated);
         rememberSession(updated);
         if (loadedPlan && planPath) {
@@ -1066,12 +1068,12 @@ export default function App({ onClear }: { onClear: () => void }) {
     if (previousId) {
       sessionDrafts.current.set(previousId, "");
       session.updatedAt = new Date().toISOString();
-      void store.save(session).catch(() => {});
+      void store.saveChanges(session).catch(() => {});
     }
     activeSessionId.current = fresh.id;
     try {
       if (loadedPlan) fresh.planArtifact = await savePlanArtifact(artifactDirectory(store, fresh), fresh.id, "imported plan", loadedPlan);
-      await store.save(fresh);
+      await store.saveChanges(fresh);
       stopSideQuestion();
       onClear();
       sessionLines.current.set(fresh.id, []);
@@ -1108,54 +1110,23 @@ export default function App({ onClear }: { onClear: () => void }) {
     }
   };
   const handleExecutePlan = async (arg?: string) => {
-    if (!session) return;
-    let targetPlan = session.planArtifact
-      ? tryReadPlanFile(artifactPath(store, session, session.planArtifact), session.projectPath)?.content
-      : session.plan;
-    let extraPrompt: string | undefined;
-    let loadedFromPath: string | undefined;
-
-    if (arg) {
-      const trimmed = arg.trim();
-      const wholeFile = tryReadPlanFile(trimmed, session.projectPath);
-      const parts = trimmed.split(/\s+/);
-      const firstFile = !wholeFile && parts.length > 1 ? tryReadPlanFile(parts[0]!, session.projectPath) : undefined;
-      if (wholeFile) {
-        targetPlan = wholeFile.content;
-        loadedFromPath = wholeFile.path;
-      } else if (firstFile) {
-        targetPlan = firstFile.content;
-        loadedFromPath = firstFile.path;
-        extraPrompt = parts.slice(1).join(" ").trim();
-      } else {
-        extraPrompt = trimmed;
-      }
-    }
-
-    if (!targetPlan) {
-      add("error", "No plan found to execute. Provide a plan file (e.g. /execute plan.md) or create one with /plan.");
-      return;
-    }
-
-    if (loadedFromPath) {
-      add("info", `◈ Loaded plan from ${basename(loadedFromPath)} (${targetPlan.split("\n").length} lines).`);
-    }
-    add("info", "◈ Dispatching plan to fresh execution session via Vex (Explore → Implement)...");
-    const fresh = newSession(project, "auto", "normal", config?.autoLaunchSkills);
-    fresh.title = loadedFromPath
-      ? `Exec: ${basename(loadedFromPath)}`
-      : session.title ? `Exec: ${session.title.replace(/^Exec:\s*/i, "")}` : "Plan Execution";
+    if (!session || !config) return;
+    let execution: Awaited<ReturnType<typeof preparePlanExecution>>;
+    try { execution = await preparePlanExecution(store, session, config, arg); }
+    catch (error) { add("error", `Could not dispatch plan: ${String(error)}`); return; }
+    const fresh = execution.session;
+    add("info", "◈ Dispatching latest saved plan to a fresh execution session via Vex...");
     thisPaceIds.current.add(fresh.id);
     switchingSession.current = true;
     const previousId = activeSessionId.current;
     if (previousId) {
       sessionDrafts.current.set(previousId, "");
       session.updatedAt = new Date().toISOString();
-      void store.save(session).catch(() => {});
+      void store.saveChanges(session).catch(() => {});
     }
     activeSessionId.current = fresh.id;
     try {
-      await store.save(fresh);
+      await store.saveChanges(fresh);
       stopSideQuestion();
       onClear();
       sessionLines.current.set(fresh.id, []);
@@ -1176,10 +1147,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       setShowHeader(true);
       setStatus("Starting…");
       setApproval(undefined);
-      const prompt = extraPrompt
-        ? `${executePlanPrompt(targetPlan)}\n\nAdditional user instructions:\n${extraPrompt}`
-        : executePlanPrompt(targetPlan);
-      if (config) void runTurnRef.current?.(prompt, fresh, config, "execute_plan", "Executing saved plan in a fresh agent session. The plan details are hidden from this chat.");
+      void runTurnRef.current?.(execution.prompt, fresh, config, "execute_plan", "Executing saved plan in a fresh agent session. The plan details are hidden from this chat.");
     } catch (error) {
       activeSessionId.current = previousId;
       if (previousId) setLines(sessionLines.current.get(previousId) ?? []);
@@ -1220,9 +1188,11 @@ export default function App({ onClear }: { onClear: () => void }) {
   };
   const continueVerifier = (message: string) => {
     if (!session || !config || !session.verifierThreadId || !message.trim()) return;
-    const verifierRoute = [...session.turns].reverse().find(turn => turn.intent === "verify_plan" || turn.intent === "continue_verify")?.route ?? session.route;
-    const verifierSession = { ...session, threadId: session.verifierThreadId, route: verifierRoute };
-    void runTurnRef.current?.(message, verifierSession, config, "continue_verify");
+    const item = { ...operation(message, session.id, session.activeTask?.id), intent: "continue_verify" as const, role: "verifier" as const };
+    if (jobs.current.has(session.id)) {
+      promptQueue.current.add(session.id, item); setQueueVersion(value => value + 1); return;
+    }
+    void runTurnRef.current?.(message, session, config, "continue_verify", undefined, false, item);
   };
   const changeHistory = async (direction: "undo" | "redo") => {
     if (!session || historyBusy.current) return;
@@ -1318,45 +1288,23 @@ export default function App({ onClear }: { onClear: () => void }) {
     if (!session || !config) return;
     if (!question.trim()) { add("error", "Type /btw <question> to ask a side question."); return; }
     if (sideBusy) { add("info", "A side question is already running."); return; }
-    const activeJob = jobs.current.get(session.id);
-    const activePrompt = activeJob?.prompt;
-    const history = session.turns
-      .filter(turn => !turn.failed)
-      .map(turn => `User: ${turn.prompt}\nPace: ${turn.result}`)
-      .join("\n\n");
-    const liveLines = (sessionLines.current.get(session.id) ?? [])
-      .filter(line => line.role !== "you" || line.text !== `/btw ${question}`)
-      .slice(-24)
-      .map(line => {
-        const speaker = line.role === "codex" ? "Pace" : line.role === "you" ? "User" : line.role === "activity" ? "Agent activity" : line.role === "system" ? "System" : line.role;
-        const detail = line.activity?.detail ? ` (${line.activity.detail})` : "";
-        return `${speaker}: ${line.text}${detail}`;
-      })
-      .join("\n");
-    const tasks = (activeJob?.session.tasks ?? session.tasks ?? [])
-      .map(task => `${task.completed ? "[x]" : "[ ]"} ${task.text}`)
-      .join("\n");
-    const context = [
-      history ? `Retained conversation:\n${history}` : "",
-      activePrompt ? `Current user request (still in progress):\n${activePrompt}` : "",
-      tasks ? `Current agent task plan:\n${tasks}` : "",
-      liveLines ? `Recent live transcript and progress:\n${liveLines}` : "",
-    ].filter(Boolean).join("\n\n");
-    const luna = config.models.find(model => model.enabled !== false && model.model === "gpt-6-luna");
-    const route = luna ? { model: luna.model, effort: luna.efforts.includes("low") ? "low" as const : luna.defaultEffort ?? luna.efforts[0] } : session.route.model ? session.route : config.defaultRoute;
     const controller = new AbortController();
     const sideId = ++turnSequence.current;
     sideAbort.current = controller;
     setSideBusy(true);
     add("you", `/btw ${question}`);
     try {
-      const prompt = `Answer the user's side question directly using the conversation context below. Start with the requested format (for example, yes or no when asked a yes/no question), then give only the explanation needed. Treat current progress as evidence about what has happened so far, and be clear if a task is still in progress. Do not edit files or take action. This is separate from the main conversation.\n\nConversation context:\n${context || "(No previous turns)"}\n\nUser's side question (answer this exact question):\n${question}`;
-      const result = await runner.run(prompt, session.projectPath, route, undefined, progress => {
+      const result = await orchestrator.aside(question, session, config, progress => {
         if (sideAbort.current !== controller) return;
         if (progress.kind === "activity") activity({ ...progress, id: `side-${sideId}-${progress.id}` });
         if (progress.kind === "error") add("error", progress.text);
-      }, controller.signal, "side");
-      if (sideAbort.current === controller) add("side", result.result);
+      }, controller.signal, () => activeSessionId.current === session.id);
+      rememberSession(session);
+      if (sideAbort.current === controller) {
+        const record = session.sideAnswers?.at(-1);
+        add("side", result.result);
+        add("meta", `Side: ${modelName(result.route)} ${result.route.effort ?? "default"} · Main: ${modelName(session.route)} ${session.route.effort ?? "default"}${record ? ` · /adopt ${record.id}` : ""}`);
+      }
     } catch (error) {
       if (controller.signal.aborted) {
         add("meta", "Side question cancelled");
@@ -1425,12 +1373,13 @@ export default function App({ onClear }: { onClear: () => void }) {
         const bridge = {
           session: (id: string) => jobs.current.get(id)?.session ?? sessionRecords.current.get(id) ?? (sessionRef.current?.id === id ? sessionRef.current : undefined),
           busy: (id: string) => jobs.current.has(id),
-          queue: async (target: Session, prompt: string) => {
+          queue: async (target: Session, prompt: QueuedOperation) => {
             if (promptQueue.current.list(target.id).length >= 20) return false;
-            promptQueue.current.add(target.id, prompt); setQueueVersion(value => value + 1); return true;
+            promptQueue.current.add(target.id, prompt); setQueueVersion(value => value + 1);
+            await queueSaves.current.get(target.id); return true;
           },
           cancel: (id: string) => { const job = jobs.current.get(id); if (!job) return false; job.controller.abort(); return true; },
-          submit: async (prompt: string, target: Session, intent?: "verify_plan" | "execute_plan") => { await runTurnRef.current?.(prompt, target, latestConfig.current ?? config!, intent); },
+          submit: async (prompt: string, target: Session, intent?: OperationIntent, item?: QueuedOperation) => { await runTurnRef.current?.(prompt, target, latestConfig.current ?? config!, intent, undefined, false, item); },
           changed: (target: Session) => { rememberSession(target); if (activeSessionId.current === target.id) setSession({ ...target }); },
         };
         const domain = new RemoteDomain(store, orchestrator, roots, bridge);
@@ -1441,12 +1390,28 @@ export default function App({ onClear }: { onClear: () => void }) {
       } catch (error) { add("error", `Could not start remote host: ${String(error)}`); }
       return;
     }
+    const commandOperation = operation(text, session.id, session.activeTask?.id);
+    const queuedCommand = /^\/(verify|execute|run-plan|adopt)(?:\s+([\s\S]*))?$/.exec(text);
+    if (queuedCommand) {
+      commandOperation.intent = queuedCommand[1] === "verify" ? "verify_plan" : queuedCommand[1] === "adopt" ? "adopt_side" : "execute_plan";
+      commandOperation.role = commandOperation.intent === "verify_plan" ? "verifier" : "main";
+      if (commandOperation.intent === "adopt_side") {
+        commandOperation.sourceSideId = queuedCommand[2]?.trim();
+        try { adoptedSidePrompt(session, commandOperation.sourceSideId ?? ""); }
+        catch (error) { add("error", String(error)); return; }
+      }
+    }
+    if ((jobs.current.has(session.id) || !!session.deferredTurn) && queuedCommand) {
+      const position = promptQueue.current.add(session.id, commandOperation);
+      setQueueVersion(value => value + 1); setDraft("");
+      add("info", `Queued operation ${position}: ${text}`); return;
+    }
     if (jobs.current.has(session.id) && !/^\/(?:new|clear|resume|help|exit|usage|stats|compact|context|route|artifacts|models|mcp|trust|skills|approval|tasks|remote)(?:\s|$)/.test(text)) {
       if (isRegisteredCommand(text, registeredCommands) && !skillCommand(text, enabledSkills(skills, config))) {
         add("info", "This conversation is working. Use /new or /resume to switch conversations.");
         return;
       }
-      const position = promptQueue.current.add(session.id, text);
+      const position = promptQueue.current.add(session.id, commandOperation);
       setQueueVersion(value => value + 1);
       setDraft("");
       add("info", `Queued prompt ${position}: ${text.replace(/\s+/g, " ").slice(0, 100)}`);
@@ -1470,12 +1435,12 @@ export default function App({ onClear }: { onClear: () => void }) {
           sessionDrafts.current.set(previousId, "");
           if (session) {
             session.updatedAt = new Date().toISOString();
-            void store.save(session).catch(() => {});
+            void store.saveChanges(session).catch(() => {});
           }
         }
         activeSessionId.current = fresh.id;
         try {
-          await store.save(fresh);
+          await store.saveChanges(fresh);
           stopSideQuestion();
           onClear();
           activeSessionId.current = fresh.id;
@@ -1516,6 +1481,10 @@ export default function App({ onClear }: { onClear: () => void }) {
         await handleExecutePlan(extraPrompt || undefined);
         return;
       }
+      if (command === "/adopt") {
+        void runTurnRef.current?.(text, session, config, "adopt_side", undefined, false, commandOperation);
+        return;
+      }
       if (command === "/verify") {
         const arg = text.replace(/^\/verify\s*/, "").trim();
         await handleVerifyPlan(arg || undefined);
@@ -1537,7 +1506,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         // Auto selection uses the enabled model list in the orchestrator.
         const updated = { ...session, routingMode: "auto" as const, manualWorkflow: undefined };
         try {
-          await store.save(updated);
+          await store.saveChanges(updated);
           setSession(updated);
           rememberSession(updated);
           add("info", "Auto routing enabled for the next turn.");
@@ -1560,7 +1529,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         if (requested === "auto" || requested === "vex") {
           const updated = { ...session, routingMode: "auto" as const, manualWorkflow: undefined };
           try {
-            await store.save(updated); setSession(updated); rememberSession(updated);
+            await store.saveChanges(updated); setSession(updated); rememberSession(updated);
             add("info", "Workflow choice delegated to Vex.");
           } catch (error) { add("error", `Could not save routing mode: ${String(error)}`); }
           return;
@@ -1589,7 +1558,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         if (parts[0] === "off" || parts[0] === "auto") {
           const updated = { ...session, routingMode: "auto" as const, manualWorkflow: undefined };
           try {
-            await store.save(updated);
+            await store.saveChanges(updated);
             setSession(updated);
             rememberSession(updated);
             add("info", "Auto routing enabled for the next turn.");
@@ -1628,7 +1597,7 @@ export default function App({ onClear }: { onClear: () => void }) {
           manualWorkflow: undefined,
         };
         try {
-          await store.save(updated);
+          await store.saveChanges(updated);
           setSession(updated);
           rememberSession(updated);
           const name = matched.model.replace(
@@ -1720,7 +1689,7 @@ export default function App({ onClear }: { onClear: () => void }) {
             };
             target.compactions = [...(target.compactions ?? []), record].slice(-50);
             if (target.contextByThread) delete target.contextByThread[threadId];
-            await store.save(target, () => activeSessionId.current === sessionId);
+            await store.saveChanges(target, () => activeSessionId.current === sessionId);
             rememberSession(target);
             if (activeSessionId.current === sessionId) setSession({ ...target });
             const detail = result.outcome === "completed" ? "Context compacted." :
@@ -1734,10 +1703,10 @@ export default function App({ onClear }: { onClear: () => void }) {
             jobs.current.delete(sessionId);
             if (activeSessionId.current !== sessionId) unreadCompletions.current.add(sessionId);
             setRunningIds([...jobs.current.keys()]);
-            const next = promptQueue.current.take(sessionId);
+            const next = promptQueue.current.takeOperation(sessionId);
             if (next !== undefined) {
               setQueueVersion(value => value + 1);
-              void runTurn(next, target, config);
+              void runTurn(next.text, target, config, next.intent, undefined, false, next);
             }
           }
         })();
@@ -1953,7 +1922,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         add("info", "That request is already saved for automatic retry.");
         return;
       }
-      const position = promptQueue.current.add(session.id, text);
+      const position = promptQueue.current.add(session.id, commandOperation);
       setQueueVersion(value => value + 1);
       add("info", `Queued prompt ${position} until the automatic retry finishes.`);
       return;

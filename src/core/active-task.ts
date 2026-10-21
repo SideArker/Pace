@@ -37,6 +37,7 @@ export function advanceTask(
     return { originalRequest: excerpt(prompt, 8000), instructions: [], latestOutcome: excerpt(result, 2000), failed };
   }
   return {
+    ...current,
     originalRequest: current.originalRequest,
     instructions: current.instructions.at(-1) === excerpt(prompt, 4000)
       ? current.instructions : [...current.instructions, excerpt(prompt, 4000)].slice(-12),

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { homedir } from "node:os";
 import { resolve, join } from "node:path";
 import {
@@ -32,9 +33,58 @@ export async function atomicJson(path: string, value: unknown): Promise<void> {
     throw error;
   }
 }
+type Activation = boolean | (() => boolean);
+type SessionIdentity = Pick<Session, "id" | "projectPath">;
+const writeQueues = new Map<string, Promise<unknown>>();
+const objectBaselines = new WeakMap<Session, Session>();
+const revisionBaselines = new Map<string, Session>();
+const keyedRecords = new Set(["attempts", "sideAnswers", "controlDecisions"]);
+
+export class SessionConflictError extends Error {
+  constructor(readonly field: string) {
+    super(`Session changed concurrently (${field}); reload and reapply the intended change`);
+    this.name = "SessionConflictError";
+  }
+}
+
+/** Apply only the caller's changes; concurrent edits to the same value fail closed. */
+function reapplyChanges(base: unknown, desired: unknown, latest: unknown, field: string): unknown {
+  if (isDeepStrictEqual(base, desired)) return structuredClone(latest);
+  if (isDeepStrictEqual(base, latest) || isDeepStrictEqual(desired, latest)) return structuredClone(desired);
+  if (keyedRecords.has(field) && (base === undefined || Array.isArray(base)) &&
+      Array.isArray(desired) && Array.isArray(latest)) {
+    const records = (items: unknown[]): Map<string, unknown> => {
+      const result = new Map<string, unknown>();
+      for (const item of items) {
+        if (!isRecord(item) || typeof item.id !== "string" || result.has(item.id)) throw new SessionConflictError(field);
+        result.set(item.id, item);
+      }
+      return result;
+    };
+    const before = records(base ?? []), after = records(desired), current = records(latest);
+    for (const id of new Set([...before.keys(), ...after.keys()])) {
+      if (isDeepStrictEqual(before.get(id), after.get(id))) continue;
+      if (!isDeepStrictEqual(before.get(id), current.get(id)) && !isDeepStrictEqual(after.get(id), current.get(id)))
+        throw new SessionConflictError(`${field}.${id}`);
+      if (after.has(id)) current.set(id, structuredClone(after.get(id)));
+      else current.delete(id);
+    }
+    return [...current.values()];
+  }
+  if (isRecord(base) && isRecord(desired) && isRecord(latest)) {
+    const result = structuredClone(latest);
+    for (const key of new Set([...Object.keys(base), ...Object.keys(desired)])) {
+      const value = reapplyChanges(base[key], desired[key], latest[key], field ? `${field}.${key}` : key);
+      if (value === undefined) delete result[key];
+      else result[key] = value;
+    }
+    return result;
+  }
+  throw new SessionConflictError(field);
+}
+
 export class PaceStore {
   private activationQueue: Promise<void> = Promise.resolve();
-  private readonly sessionSaveQueues = new Map<string, Promise<void>>();
   constructor(
     readonly baseDir = join(homedir(), ".pace"),
     readonly notice: Notice = () => {},
@@ -68,7 +118,9 @@ export class PaceStore {
     const path = join(this.sessionDir(project), `${sessionId}.json`);
     try {
       const raw: unknown = JSON.parse(await readFile(path, "utf8"));
-      return parseSession(raw, normalizeProject(project));
+      const session = parseSession(raw, normalizeProject(project));
+      if (session) this.track(session);
+      return session;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT")
         this.notice(`Session ${sessionId} unavailable: ${String(error)}`);
@@ -94,7 +146,7 @@ export class PaceStore {
           JSON.parse(await readFile(join(path, file), "utf8")),
           normalizeProject(project),
         );
-        if (session) sessions.push(session);
+        if (session) { this.track(session); sessions.push(session); }
         else this.notice(`Ignoring invalid session ${file}`);
       } catch {
         this.notice(`Ignoring unreadable session ${file}`);
@@ -253,20 +305,106 @@ export class PaceStore {
     this.activationQueue = pending.catch(() => {});
     await pending;
   }
-  async save(session: Session, activate: boolean | (() => boolean) = true): Promise<void> {
-    if (!/^[0-9a-f-]{36}$/.test(session.id))
-      throw new Error("Invalid Pace session ID");
-    session.updatedAt = new Date().toISOString();
-    const key = `${this.sessionDir(session.projectPath)}/${session.id}`;
-    const previous = this.sessionSaveQueues.get(key) ?? Promise.resolve();
-    const saving = previous.catch(() => {}).then(async () => {
-      await atomicJson(join(this.sessionDir(session.projectPath), `${session.id}.json`), session);
-      if (typeof activate === "function" ? activate() : activate) await this.activate(session);
-    });
-    this.sessionSaveQueues.set(key, saving);
-    try { await saving; }
-    finally {
-      if (this.sessionSaveQueues.get(key) === saving) this.sessionSaveQueues.delete(key);
+  private key(session: SessionIdentity): string {
+    if (!/^[0-9a-f-]{36}$/.test(session.id)) throw new Error("Invalid Pace session ID");
+    return resolve(this.sessionDir(session.projectPath), `${session.id}.json`);
+  }
+  private track(session: Session): void {
+    const baseline = structuredClone(session);
+    objectBaselines.set(session, baseline);
+    const key = `${this.key(session)}:${session.revision ?? 0}`;
+    revisionBaselines.set(key, baseline);
+    // Spread copies carry a revision; retain a bounded cache of their source snapshots.
+    while (revisionBaselines.size > 2000) revisionBaselines.delete(revisionBaselines.keys().next().value!);
+  }
+  private async readSaved(identity: SessionIdentity): Promise<Session | undefined> {
+    try {
+      const value: unknown = JSON.parse(await readFile(this.key(identity), "utf8"));
+      const session = parseSession(value, normalizeProject(identity.projectPath));
+      if (!session || session.id !== identity.id) throw new Error("Saved Pace session is invalid");
+      return session;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
     }
+  }
+  private async serial<T>(identity: SessionIdentity, operation: () => Promise<T>): Promise<T> {
+    const key = this.key(identity);
+    const previous = writeQueues.get(key) ?? Promise.resolve();
+    const pending = previous.catch(() => {}).then(operation);
+    writeQueues.set(key, pending);
+    try { return await pending; }
+    finally { if (writeQueues.get(key) === pending) writeQueues.delete(key); }
+  }
+  private async write(session: Session, revision: number, activate: Activation): Promise<Session> {
+    session.revision = revision + 1;
+    session.updatedAt = new Date().toISOString();
+    await atomicJson(this.key(session), session);
+    this.track(session);
+    if (typeof activate === "function" ? activate() : activate) await this.activate(session);
+    return session;
+  }
+  private refreshCaller(caller: Session, captured: Session, saved: Session): void {
+    const target = caller as unknown as Record<string, unknown>;
+    const before = captured as unknown as Record<string, unknown>;
+    const after = saved as unknown as Record<string, unknown>;
+    for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
+      // Keep mutations made while this write waited in the queue for their next save.
+      if (key !== "revision" && key !== "updatedAt" && !isDeepStrictEqual(target[key], before[key])) continue;
+      if (isDeepStrictEqual(target[key], after[key])) continue;
+      if (keyedRecords.has(key) && Array.isArray(target[key]) && Array.isArray(after[key])) {
+        const existing = new Map((target[key] as Record<string, unknown>[]).map(record => [record.id, record]));
+        target[key] = (after[key] as Record<string, unknown>[]).map(record => {
+          const current = existing.get(record.id);
+          return isDeepStrictEqual(current, record) ? current : structuredClone(record);
+        });
+      } else if (Object.hasOwn(after, key)) target[key] = structuredClone(after[key]);
+      else delete target[key];
+    }
+    objectBaselines.set(caller, structuredClone(saved));
+  }
+  /** Strict whole-snapshot write. Stale snapshots are never merged implicitly. */
+  async save(session: Session, activate: Activation = true): Promise<void> {
+    const captured = structuredClone(session);
+    await this.serial(captured, async () => {
+      const latest = await this.readSaved(captured);
+      if ((captured.revision ?? 0) !== (latest?.revision ?? 0)) throw new SessionConflictError("revision");
+      const saved = await this.write(captured, latest?.revision ?? 0, activate);
+      this.refreshCaller(session, captured, saved);
+    });
+  }
+  /** Reapply a tracked snapshot's concrete changes on the newest persisted revision. */
+  async saveChanges(session: Session, activate: Activation = true): Promise<void> {
+    const captured = structuredClone(session);
+    const baseline = objectBaselines.get(session) ?? revisionBaselines.get(`${this.key(captured)}:${captured.revision ?? 0}`);
+    await this.serial(captured, async () => {
+      const latest = await this.readSaved(captured);
+      if (!latest) {
+        if ((captured.revision ?? 0) !== 0) throw new SessionConflictError("revision");
+        const saved = await this.write(captured, 0, activate);
+        this.refreshCaller(session, captured, saved);
+        return;
+      }
+      if (!baseline) throw new SessionConflictError("unknown snapshot baseline");
+      const base = structuredClone(baseline), desired = structuredClone(captured);
+      // Metadata belongs to the store, not to a user change.
+      desired.revision = base.revision;
+      desired.updatedAt = base.updatedAt;
+      const merged = reapplyChanges(base, desired, latest, "") as Session;
+      const saved = await this.write(merged, latest.revision ?? 0, activate);
+      this.refreshCaller(session, captured, saved);
+    });
+  }
+  /** Serialized latest-state mutation, including callers using independent store instances. */
+  async update(identity: SessionIdentity, mutate: (latest: Session) => void | Promise<void>, activate: Activation = true): Promise<Session> {
+    return this.serial(identity, async () => {
+      const latest = await this.readSaved(identity);
+      if (!latest) throw new Error("Pace session not found");
+      const revision = latest.revision ?? 0;
+      await mutate(latest);
+      if (latest.id !== identity.id || latest.projectPath !== normalizeProject(identity.projectPath))
+        throw new Error("Session update cannot change identity");
+      return this.write(latest, revision, activate);
+    });
   }
 }

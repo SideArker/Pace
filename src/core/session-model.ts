@@ -38,7 +38,7 @@ export function rewindConversation(session: Session, index: number): TurnSummary
   session.threadId = undefined;
   session.threadTurnCount = undefined;
   session.checkpoint = undefined;
-  session.activeTask = undefined;
+  if (session.activeTask) { session.activeTask.assessment = "unknown"; if (session.activeTask.workflow) session.activeTask.workflow.needsAssessment = true; }
   session.deferredTurn = undefined;
   return turn;
 }
@@ -49,12 +49,12 @@ export function deleteConversationTurn(session: Session, index: number): void {
   session.threadId = undefined;
   session.threadTurnCount = undefined;
   session.checkpoint = undefined;
-  session.activeTask = undefined;
+  if (session.activeTask) { session.activeTask.assessment = "unknown"; if (session.activeTask.workflow) session.activeTask.workflow.needsAssessment = true; }
   session.deferredTurn = undefined;
 }
 export function undoConversationTurn(session: Session): TurnSummary | undefined {
   const turn = session.turns.pop();
-  if (turn) { session.threadId = undefined; session.threadTurnCount = undefined; session.checkpoint = undefined; session.activeTask = undefined; session.deferredTurn = undefined; }
+  if (turn) { session.threadId = undefined; session.threadTurnCount = undefined; session.checkpoint = undefined; if (session.activeTask) { session.activeTask.assessment = "unknown"; if (session.activeTask.workflow) session.activeTask.workflow.needsAssessment = true; } session.deferredTurn = undefined; }
   return turn;
 }
 

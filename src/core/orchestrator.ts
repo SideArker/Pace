@@ -108,7 +108,7 @@ export class Orchestrator {
         (name) => name !== "caveman",
       );
       if (session.skillOptions) delete session.skillOptions.caveman;
-      await this.store.save(session, activateOnSave);
+      await this.store.saveChanges(session, activateOnSave);
       return {
         session,
         result: "/caveman disabled for this conversation.",
@@ -135,7 +135,7 @@ export class Orchestrator {
         delete session.skillOptions[invoked.name];
       else if (option) session.skillOptions[invoked.name] = option;
       if (!request || request === "off" || option) {
-        await this.store.save(session, activateOnSave);
+        await this.store.saveChanges(session, activateOnSave);
         const result =
           "/" +
           invoked.name +
@@ -174,7 +174,7 @@ export class Orchestrator {
     };
     const save = async () => {
       try {
-        await this.store.save(session, activateOnSave);
+        await this.store.saveChanges(session, activateOnSave);
       } catch (error) {
         onProgress({
           kind: "error",
