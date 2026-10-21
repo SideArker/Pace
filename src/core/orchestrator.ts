@@ -24,7 +24,7 @@ import { retryableTurn } from "./session-model.js";
 import { verifyPlanPrompt, tryReadPlanFile, structuredHandoff, addUsage, awaitRouting, loadPlanningInstructions, planningPrompt, retainedConversationPrompt } from "./orchestrator-helpers.js";
 import { runPlanningStage } from "./workflow-stages.js";
 import { durableRunner, ensureTask, requiredSave, resolveAttempt, TransitionSaveError, UncertainAttemptError } from "./task-execution.js";
-import { operation, preparePlanExecution, adoptedSidePrompt, currentPlan } from "./operations.js";
+import { operation, preparePlanExecution, adoptedSidePrompt, currentPlan, validateOperationTarget } from "./operations.js";
 import { runAside } from "./side-answers.js";
 import { checkpointHandoff } from "./checkpoint.js";
 import { beginFileEdits } from "./file-edits.js";
@@ -118,8 +118,7 @@ export class Orchestrator {
       intent = "adopt_side";
     }
     if (queuedOperation) {
-      const target = session.executionSource?.sessionId ?? session.id;
-      if (queuedOperation.sessionId !== target || (queuedOperation.taskId && !session.executionSource && queuedOperation.taskId !== session.activeTask?.id)) throw new Error("Queued operation belongs to another task or session");
+      validateOperationTarget(session, queuedOperation);
       const operationId = queuedOperation.id;
       const completed = session.turns.find(turn => turn.operation?.id === operationId && !turn.failed);
       if (completed) return { session, role: completed.intent === "verify_plan" || completed.intent === "continue_verify" ? "verifier" : "main", result: completed.result, note: "Operation already completed", route: completed.route ?? session.route, durationMs: 0, artifacts: [], stages: [], routing: [] };
@@ -143,12 +142,7 @@ export class Orchestrator {
       if (!plan?.trim()) throw new Error("No saved plan to verify");
       prompt = verifyPlanPrompt(plan, session.activeTask?.originalRequest, file ? parts.slice(1).join(" ") : argument || undefined);
     }
-    if (queuedOperation) {
-      const target = session.executionSource?.sessionId ?? session.id;
-      if (queuedOperation.sessionId !== target) throw new Error("Queued operation belongs to another session");
-      if (queuedOperation.taskId && !session.executionSource && queuedOperation.taskId !== session.activeTask?.id)
-        throw new Error("Queued operation belongs to another task; resolve its target before running it");
-    }
+    if (queuedOperation) validateOperationTarget(session, queuedOperation);
     if (intent === "aside") return this.aside(prompt.replace(/^\/btw(?:\s+|$)/, ""), session, config, onProgress, signal, activateOnSave);
     if (intent === "adopt_side") {
       if (!queuedOperation?.sourceSideId) throw new Error("Choose the source side answer before forwarding it");
@@ -332,6 +326,7 @@ export class Orchestrator {
       } catch (error) { systemMessage(`File undo unavailable: ${String(error)}`); }
     };
     let auto = session.routingMode === "auto" || intent === "verify_plan" || intent === "revise_plan";
+    let workflowSource: "user" | "vex" = auto ? "vex" : "user";
     const manualWorkflow = !auto && intent !== "verify_plan" && intent !== "revise_plan" ? session.manualWorkflow : undefined;
     const delegated = !!manualWorkflow && Object.values(manualWorkflow.routes).some(value => value === "vex" || (value !== undefined && !value.effort));
     if (!auto) {
@@ -512,6 +507,9 @@ export class Orchestrator {
               answer: "Use manual route",
             });
           } else if (userDecision?.choice) {
+            workflowSource = "user";
+            session.controlDecisions = [...(session.controlDecisions ?? []), { id: randomUUID(), taskId: session.activeTask?.id, role: "main", objective: "workflow clarification", choice: userDecision.choice, confidence: 1, probabilities: { [userDecision.choice]: 1 }, durationMs: 0, at: new Date().toISOString(), source: "user", contextAction: "continue" }];
+            await save();
             shape = userDecision.choice;
             note = `User chose ${shape} workflow`;
             systemMessage(`User selected ${shape} workflow.`);
@@ -579,9 +577,9 @@ export class Orchestrator {
         if (control === "replan" && session.activeTask?.workflow) {
           const generation = session.activeTask.workflow.generation + 1;
           session.activeTask.workflow = undefined;
-          ensureTask(session, shape as WorkflowShape, auto ? "vex" : "user");
+          ensureTask(session, shape as WorkflowShape, auto ? workflowSource : "user");
           session.activeTask.workflow!.generation = generation;
-        } else ensureTask(session, shape as WorkflowShape, auto ? "vex" : "user");
+        } else ensureTask(session, shape as WorkflowShape, auto ? workflowSource : "user");
         if (!auto && session.activeTask?.workflow) {
           preserveWorkflow = taskRelation === "continue";
           shape = session.activeTask.workflow.shape;

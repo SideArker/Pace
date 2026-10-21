@@ -30,7 +30,10 @@ function recentConversation(turns: TurnSummary[]) {
     user: excerpt(turn.prompt, 1200),
     assistant: excerpt(turn.result, 1200),
     route: turn.route, stages: turn.stages, routing: turn.routing,
+    intent: turn.intent, operation: turn.operation, questions: turn.questions, artifacts: turn.artifacts,
+    role: turn.intent === "verify_plan" || turn.intent === "continue_verify" ? "verifier" : "main",
     ...(turn.failed ? { failed: true } : {}),
+    ...(turn.cancelled ? { cancelled: true } : {}),
   }));
 }
 function compactState(state: RoutingState): RoutingState {
@@ -145,5 +148,5 @@ export function controlRequest(prompt: string, session: Session, prompts = DEFAU
 export function assessmentRequest(session: Session, attemptId: string, prompts = DEFAULT_ROUTING_PROMPTS): VexRequest {
   const attempt = session.attempts?.find(item => item.id === attemptId);
   return { question: prompts.assessment.question, decisionType: "routing", options: Object.entries(prompts.assessment.choices).map(([id, description]) => ({ id, description })), constraints: prompts.assessment.constraints,
-    context: { goal: session.activeTask, attempt, priorAttempts: session.attempts?.filter(item => item.taskId === attempt?.taskId && item.id !== attemptId).slice(-10), recentConversation: recentConversation(session.turns), evidence: attempt?.observations, sideAnswers: session.sideAnswers?.filter(item => item.adopted) } };
+    context: { goal: session.activeTask, attempt, priorAttempts: session.attempts?.filter(item => item.taskId === attempt?.taskId && item.id !== attemptId).slice(-10), recentConversation: recentConversation(session.turns), evidence: attempt?.observations, sideAnswers: session.sideAnswers?.filter(item => item.adopted && item.taskId === attempt?.taskId) } };
 }

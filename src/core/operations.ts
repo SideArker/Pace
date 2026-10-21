@@ -17,7 +17,18 @@ export function validOperation(value: unknown): value is QueuedOperation {
     (item.taskId === undefined || typeof item.taskId === "string") &&
     (item.sourceSideId === undefined || typeof item.sourceSideId === "string") &&
     ["main", "scout", "verifier", "aside", "status"].includes(item.role) &&
+    item.role === (item.intent === "verify_plan" || item.intent === "continue_verify" ? "verifier" : item.intent === "aside" ? "aside" : "main") &&
     (item.intent === undefined || ["verify_plan", "execute_plan", "revise_plan", "continue_verify", "aside", "adopt_side"].includes(item.intent));
+}
+export function validateOperationTarget(session: Session, item: QueuedOperation): void {
+  if (item.sessionId === session.id) {
+    if (item.taskId && item.taskId !== session.activeTask?.id) throw new Error("Queued operation belongs to another task; resolve its original target");
+    return;
+  }
+  const source = session.executionSource;
+  if (item.intent !== "execute_plan" || item.sessionId !== source?.sessionId ||
+      (item.taskId && item.taskId !== source.taskId) || (source.operationId && item.id !== source.operationId))
+    throw new Error("Queued operation belongs to another session");
 }
 /** Explicit user selections update task ownership without interpreting user prose. */
 export function manualSelection(source: Session, selection: Route | ManualWorkflow): Session {

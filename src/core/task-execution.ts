@@ -115,7 +115,7 @@ export async function resolveAttempt(store: PaceStore, session: Session, id: str
   if (!attempt || !["running", "awaiting_user"].includes(attempt.status)) throw new Error("No uncertain attempt with that ID.");
   attempt.status = "completed"; attempt.result = result; attempt.finishedAt = new Date().toISOString();
   attempt.observations.push({ kind: "answer", text: `User reconciled thread, artifacts and file changes: ${result}` });
-  if (session.activeTask) { session.activeTask.assessment = "unknown"; if (session.activeTask.workflow) session.activeTask.workflow.needsAssessment = true; }
+  if ((attempt.role === "main" || attempt.role === "scout" || attempt.role === "status") && session.activeTask) { session.activeTask.assessment = "unknown"; if (session.activeTask.workflow) { session.activeTask.workflow.needsAssessment = true; session.activeTask.workflow.status = "pending"; } }
   await requiredSave(store, session);
 }
 export function taskAccounting(session: Session, taskId?: string) {
