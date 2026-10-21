@@ -50,6 +50,8 @@ function isAttempt(value: unknown): boolean {
 }
 function isControl(value: unknown): boolean {
   return isRecord(value) && text(value.id) && ["taskId", "attemptId", "stage"].every(key => optionalText(value[key])) &&
+    (value.requests === undefined || (integer(value.requests) && (value.requests as number) > 0)) &&
+    (value.failed === undefined || typeof value.failed === "boolean") && optionalText(value.error) &&
     role(value.role) && text(value.objective) && text(value.choice) && nonnegative(value.confidence) &&
     (value.confidence as number) <= 1 && isRecord(value.probabilities) &&
     Object.values(value.probabilities).every(probability => nonnegative(probability) && (probability as number) <= 1) &&

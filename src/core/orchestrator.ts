@@ -263,6 +263,7 @@ export class Orchestrator {
             id: randomUUID(), taskId: session.activeTask?.id, stage: session.activeTask?.workflow?.stage,
             role: verifierTurn ? "verifier" : request.context.stageObjective === prompts.objectives.scout ? "scout" : "main", objective, choice: decision.choice, confidence: decision.confidence,
             probabilities: decision.probabilities, durationMs: Math.round(performance.now() - decisionStarted), at: new Date().toISOString(), source: "vex", contextAction: "continue",
+            requests: attempt,
           }];
           await save();
           return decision;
@@ -272,6 +273,8 @@ export class Orchestrator {
           failure = error;
         }
       }
+      session.controlDecisions = [...(session.controlDecisions ?? []), { id: randomUUID(), taskId: session.activeTask?.id, stage: session.activeTask?.workflow?.stage, role: verifierTurn ? "verifier" : "main", objective, choice: "unavailable", confidence: 0, probabilities: {}, durationMs: Math.round(performance.now() - decisionStarted), at: new Date().toISOString(), source: "vex", contextAction: "continue", requests: 2, failed: true, error: String(failure) }];
+      await save();
       throw new VexUnavailableError(failure, "decision");
     };
     const previousPlanRoute = intent === "verify_plan" && session.planRoute

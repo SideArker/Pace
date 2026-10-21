@@ -136,6 +136,7 @@ export type StageAttempt = {
   assessment?: { value: TaskAssessment; evidence: number; decisionId: string };
 };
 export type ControlRecord = {
+  requests?: number; failed?: boolean; error?: string;
   id: string; taskId?: string; attemptId?: string; stage?: string; role: AgentRole;
   objective: string; choice: string; confidence: number; probabilities: Record<string, number>;
   durationMs: number; at: string; source: "vex" | "user"; contextAction: "continue";
