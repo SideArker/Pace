@@ -94,7 +94,7 @@ function validNewFields(value: Record<string, unknown>): boolean {
       (value.verifier.context === undefined || isContextMeasurement(value.verifier.context)) &&
       (value.verifier.tasks === undefined || (Array.isArray(value.verifier.tasks) && value.verifier.tasks.length <= 100 && value.verifier.tasks.every(isTask))))) &&
     (value.executionSource === undefined || (isRecord(value.executionSource) && text(value.executionSource.sessionId) &&
-      optionalText(value.executionSource.taskId) && optionalText(value.executionSource.artifact) && optionalText(value.executionSource.operationId) && typeof value.executionSource.plan === "string")) &&
+      optionalText(value.executionSource.taskId) && optionalText(value.executionSource.artifact) && optionalText(value.executionSource.operationId) && optionalText(value.executionSource.prompt) && typeof value.executionSource.plan === "string")) &&
     (value.queuedPrompts === undefined || (Array.isArray(value.queuedPrompts) &&
       value.queuedPrompts.every(item => typeof item === "string" || validOperation(item))));
 }

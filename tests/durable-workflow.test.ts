@@ -292,6 +292,30 @@ it("an execution session accepts later queued prompts addressed to its own task"
   expect(execution.session.turns.at(-1)?.operation?.sessionId).toBe(execution.session.id);
 });
 
+it("resumes a prepared execution with its exact additional instructions after restart", async () => {
+  const env = await setup();
+  env.session.plan = "# Full plan\nImplement the feature.";
+  const item = operation("Execute with constraints", env.session.id);
+  const prepared = await preparePlanExecution(env.store, env.session, config, "Preserve public API. Run the integration checks.", item.id);
+  const restarted = new PaceStore(env.store.baseDir);
+  env.session.plan = "# A later unrelated edit";
+  const resumed = await preparePlanExecution(restarted, env.session, config, undefined, item.id);
+  expect(resumed.session.id).toBe(prepared.session.id);
+  expect(resumed.prompt).toBe(prepared.prompt);
+  expect(resumed.prompt).toContain("Preserve public API. Run the integration checks.");
+  expect(resumed.prompt).not.toContain("A later unrelated edit");
+});
+
+it("executes an explicit plan file even when the source session artifact is missing", async () => {
+  const env = await setup();
+  env.session.planArtifact = "artifacts/missing.pace-plan.md";
+  const path = join(env.root, "replacement.md");
+  await writeFile(path, "# Replacement plan\nImplement and verify the API.");
+  const prepared = await preparePlanExecution(env.store, env.session, config, `${path} Keep the existing schema.`);
+  expect(prepared.session.executionSource).toMatchObject({ artifact: path, plan: "# Replacement plan\nImplement and verify the API." });
+  expect(prepared.prompt).toContain("Keep the existing schema.");
+});
+
 it("interactive clarification offers and executes a scout without Luna and records the user's choice", async () => {
   const env = await setup("clarify");
   const progress = Object.assign((event: import("../src/integrations/codex-types.js").Progress) => {

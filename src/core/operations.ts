@@ -58,9 +58,9 @@ export async function currentPlan(store: PaceStore, source: Session): Promise<st
 export async function preparePlanExecution(store: PaceStore, source: Session, config: Config, argument?: string, operationId?: string) {
   if (operationId) {
     const existing = (await store.list(source.projectPath)).find(item => item.executionSource?.sessionId === source.id && item.executionSource.operationId === operationId);
-    if (existing) return { session: existing, prompt: executePlanPrompt(existing.executionSource!.plan), completed: existing.turns.some(turn => turn.operation?.id === operationId && !turn.failed) };
+    if (existing) return { session: existing, prompt: existing.executionSource!.prompt ?? executePlanPrompt(existing.executionSource!.plan), completed: existing.turns.some(turn => turn.operation?.id === operationId && !turn.failed) };
   }
-  let plan = await currentPlan(store, source);
+  let plan: string | undefined;
   let artifact = source.planArtifact;
   let extra: string | undefined;
   if (argument?.trim()) {
@@ -71,12 +71,14 @@ export async function preparePlanExecution(store: PaceStore, source: Session, co
     if (first) { plan = first.content; artifact = first.path; extra = whole ? undefined : parts.slice(1).join(" "); }
     else extra = text;
   }
+  if (plan === undefined) plan = await currentPlan(store, source);
   if (!plan?.trim()) throw new Error("No plan found to execute. Provide a plan file or create one with /plan.");
   const session = newSession(source.projectPath, "auto", "normal", config.autoLaunchSkills);
   session.title = artifact ? `Exec: ${basename(artifact)}` : `Exec: ${source.title ?? "Plan Execution"}`;
-  session.executionSource = { sessionId: source.id, taskId: source.activeTask?.id, artifact, plan, ...(operationId ? { operationId } : {}) };
+  const prompt = executePlanPrompt(plan) + (extra ? `\n\nAdditional user instructions:\n${extra}` : "");
+  session.executionSource = { sessionId: source.id, taskId: source.activeTask?.id, artifact, plan, prompt, ...(operationId ? { operationId } : {}) };
   await store.saveChanges(session);
-  return { session, prompt: executePlanPrompt(plan) + (extra ? `\n\nAdditional user instructions:\n${extra}` : ""), completed: false };
+  return { session, prompt, completed: false };
 }
 export function adoptedSidePrompt(session: Session, sourceSideId: string): string {
   const answer = session.sideAnswers?.find(item => item.id === sourceSideId);

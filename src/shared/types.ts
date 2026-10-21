@@ -157,7 +157,7 @@ export type Session = {
   controlDecisions?: ControlRecord[];
   sideAnswers?: SideAnswer[];
   verifier?: RoleState;
-  executionSource?: { sessionId: string; taskId?: string; artifact?: string; plan: string; operationId?: string };
+  executionSource?: { sessionId: string; taskId?: string; artifact?: string; plan: string; prompt?: string; operationId?: string };
   id: string;
   kind?: SessionKind;
   plan?: string;
