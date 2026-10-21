@@ -36,8 +36,8 @@ it('restores queued prompts from full sessions and startup summaries', async () 
   session.queuedPrompts = ['first', 'second'];
   await store.save(session);
   const restarted = new PaceStore(dir);
-  expect((await restarted.load(session.projectPath, session.id))?.queuedPrompts).toEqual(['first', 'second']);
-  expect((await restarted.listSummaries(session.projectPath))[0]?.queuedPrompts).toEqual(['first', 'second']);
+  expect((await restarted.load(session.projectPath, session.id))?.queuedPrompts).toMatchObject([{ text: 'first', role: 'main' }, { text: 'second', role: 'main' }]);
+  expect((await restarted.listSummaries(session.projectPath))[0]?.queuedPrompts).toMatchObject([{ text: 'first', role: 'main' }, { text: 'second', role: 'main' }]);
 });
 it('reloads a manual planning and verification workflow', async () => {
   dir = await mkdtemp(join(tmpdir(), 'pace-test-'));

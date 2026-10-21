@@ -128,3 +128,17 @@ it("queued adoption preserves its source through restart and records only that f
   const saved = (await env.store.load(env.root, env.session.id))!;
   expect(saved.turns[0]?.operation).toEqual(item); expect(saved.sideAnswers?.[0]?.adopted).toBe(true);
 });
+
+it("restart acknowledges an executed operation without launching a second implementation session", async () => {
+  const env = await fixture();
+  const item = { ...operation("/execute", env.session.id, "plan-task"), intent: "execute_plan" as const };
+  const { preparePlanExecution } = await import("../src/core/operations.js");
+  const execution = await preparePlanExecution(env.store, env.session, config, undefined, item.id);
+  await env.orchestrator.turn(execution.prompt, execution.session, config, () => {}, undefined, true, item.intent, undefined, item);
+  expect(env.calls).toHaveLength(1);
+  env.session.queuedPrompts = [item]; await env.store.saveChanges(env.session);
+  await env.create().resumeQueues();
+  await vi.waitFor(async () => expect((await env.store.load(env.root, env.session.id))?.queuedPrompts).toEqual([]));
+  expect(env.calls).toHaveLength(1);
+  expect((await env.store.list(env.root)).filter(session => session.executionSource)).toHaveLength(1);
+});

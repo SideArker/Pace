@@ -8,7 +8,7 @@ import { FileEdits } from "../core/file-edits.js";
 import { changeFileHistory } from "../core/file-history.js";
 import { artifactDirectory, artifactPath } from "../core/system/artifacts.js";
 import { verifyPlanPrompt, tryReadPlanFile } from "../core/orchestrator-helpers.js";
-import { operation, preparePlanExecution, currentPlan } from "../core/operations.js";
+import { operation, preparePlanExecution, currentPlan, manualSelection } from "../core/operations.js";
 import { configuredSkills, enabledSkills } from "../core/system/skills.js";
 import { readAvailableModels } from "../integrations/models.js";
 import { readUsageLimits } from "../integrations/usage.js";
@@ -206,7 +206,8 @@ export class RemoteDomain {
   private async routing(projectId: string, sessionId: string, mode: "auto" | "manual", route: Route) {
     const session = await this.session(projectId, sessionId); if (this.active.has(sessionId) || this.bridge?.busy(sessionId)) throw new Error("Wait for active turn before changing routing.");
     const config = await this.store.loadConfig(); if (mode === "manual" && !validRoute(route, config.models)) throw new Error("Choose model and effort available in Pace settings.");
-    session.routingMode = mode; session.route = mode === "manual" ? route : config.defaultRoute; await this.store.saveChanges(session); this.emit(session); return { routingMode: mode, route: session.route };
+    if (mode === "manual") Object.assign(session, manualSelection(session, route));
+    else { session.routingMode = "auto"; session.manualWorkflow = undefined; } await this.store.saveChanges(session); this.emit(session); return { routingMode: mode, route: session.route };
   }
   private async artifacts(projectId: string, sessionId: string) {
     const s = await this.session(projectId, sessionId); const files = await readdir(artifactDirectory(this.store, s), { withFileTypes: true }).catch(e => missing(e) ? [] : Promise.reject(e));

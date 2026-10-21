@@ -279,3 +279,29 @@ it("manual delegation chooses a lead once and retains it on the next ordinary st
   expect(env.calls.map(item => item[6])).toEqual(["side", "main", "main"]);
   expect(env.requests.slice(before).map(item => item.options[0]?.id)).toEqual(["closed"]);
 });
+
+it("an execution session accepts later queued prompts addressed to its own task", async () => {
+  const env = await setup("plan"); await env.orchestrator.turn("Plan", env.session, config, () => {});
+  const execution = await preparePlanExecution(env.store, env.session, config);
+  env.setShape("single");
+  await env.orchestrator.turn(execution.prompt, execution.session, config, () => {}, undefined, true, "execute_plan");
+  const followup = operation("Continue unfinished execution", execution.session.id, execution.session.activeTask?.id);
+  const thread = execution.session.threadId;
+  await env.orchestrator.turn(followup.text, execution.session, config, () => {}, undefined, true, undefined, undefined, followup);
+  expect(env.calls.at(-1)?.[3]).toBe(thread);
+  expect(execution.session.turns.at(-1)?.operation?.sessionId).toBe(execution.session.id);
+});
+
+it("interactive clarification offers and executes a scout without Luna and records the user's choice", async () => {
+  const env = await setup("clarify");
+  const progress = Object.assign((event: import("../src/integrations/codex-types.js").Progress) => {
+    if (event.kind === "question") {
+      expect(event.questions[0]?.options.some(item => item.label === "Scout codebase first")).toBe(true);
+      event.respond({ workflow: { answers: ["Scout codebase first"] } });
+    }
+  }, { interactive: true });
+  await env.orchestrator.turn("Help with the repository", env.session, config, progress);
+  expect(env.calls.map(item => item[6])).toEqual(["side", "main"]);
+  expect(env.session.activeTask?.workflow?.source).toBe("user");
+  expect(env.session.controlDecisions?.some(item => item.source === "user" && item.choice === "scout")).toBe(true);
+});
