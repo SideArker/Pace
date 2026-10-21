@@ -13,6 +13,10 @@ import { CodexRunError } from "../src/integrations/codex-types.js";
 import type { VexRequest } from "../src/core/vex/requests.js";
 import { decision } from "./routing-fixture.js";
 
+vi.mock("../src/core/routing/pricing.js", async original => {
+  const module = await original<typeof import("../src/core/routing/pricing.js")>();
+  return { ...module, refreshVersionManifest: async () => module.currentVersionManifest() };
+});
 const roots: string[] = [];
 afterEach(async () => { vi.restoreAllMocks(); await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 const config: Config = { routingMode: "auto", defaultRoute: { model: "gpt-6.1-sol", effort: "medium" }, models: [{ model: "gpt-6.1-sol", efforts: ["medium", "high"] }] };
@@ -123,10 +127,14 @@ for (const cancel of [false, true]) it(`retains ${cancel ? "cancelled" : "failed
 it("isolates verifier tasks, thread, route, count, context, checkpoint and task even when checkpoint is due", async () => {
   const env = await setup("plan"); await env.orchestrator.turn("Plan", env.session, config, () => {});
   env.session.threadTurnCount = 16;
+  env.session.autoLaunchSkills = ["sample-skill"]; env.session.autoLaunchThreadId = "main-skills-thread";
+  env.session.undoneTurns = [{ prompt: "Undone", result: "Retained redo", at: "before" }];
+  const ownership = structuredClone({ autoLaunchThreadId: env.session.autoLaunchThreadId, undoneTurns: env.session.undoneTurns });
   const main = { threadId: env.session.threadId, route: structuredClone(env.session.route), tasks: structuredClone(env.session.tasks), count: env.session.threadTurnCount, context: structuredClone(env.session.contextByThread), task: structuredClone(env.session.activeTask), checkpoint: env.session.checkpoint };
   await env.orchestrator.turn("Verify full plan", env.session, config, () => {}, undefined, true, "verify_plan");
   await env.orchestrator.turn("Check again", env.session, config, () => {}, undefined, true, "continue_verify");
   expect({ threadId: env.session.threadId, route: env.session.route, tasks: env.session.tasks, count: env.session.threadTurnCount, context: env.session.contextByThread, task: env.session.activeTask, checkpoint: env.session.checkpoint }).toEqual(main);
+  expect({ autoLaunchThreadId: env.session.autoLaunchThreadId, undoneTurns: env.session.undoneTurns }).toEqual(ownership);
   expect(env.session.verifier?.threadTurnCount).toBe(2); expect(env.session.verifier?.tasks?.[0]?.text).toBe("side task");
 });
 
@@ -235,4 +243,39 @@ it("a concurrent side completion cannot receive the main answer's assessment or 
   expect(completion.assessment).toBeDefined();
   expect(completion.observations.at(-1)?.kind).toBe("artifacts");
   expect(side.observations.some(item => item.kind === "artifacts")).toBe(false);
+});
+
+it("all repeated failed attempts survive visible-error deduplication and retain unknown full cost", async () => {
+  const env = await setup(); let invocation = 0;
+  const original = env.runner.run;
+  env.runner.run = async () => { invocation++; throw new CodexRunError("capacity after partial inference", invocation % 3 === 0 ? undefined : usage); };
+  for (let index = 0; index < 24; index++) await expect(env.orchestrator.turn("Implement", env.session, config, () => {})).rejects.toThrow("capacity");
+  expect(env.session.turns).toHaveLength(1);
+  expect(env.session.attempts).toHaveLength(24);
+  const subtotal = taskAccounting(env.session).knownSubtotalUsd;
+  expect(subtotal).toBeGreaterThan(0); expect(taskAccounting(env.session).complete).toBe(false);
+  env.runner.run = original; await env.orchestrator.turn("Implement", env.session, config, () => {});
+  expect(env.session.attempts).toHaveLength(25);
+  expect(taskAccounting(env.session).knownSubtotalUsd).toBeGreaterThan(subtotal);
+  expect(taskAccounting(env.session).totalUsd).toBeUndefined();
+});
+
+it("a failed side answer records its usage and error without failing or altering the main task", async () => {
+  const env = await setup(); await env.orchestrator.turn("Implement", env.session, config, () => {});
+  const before = structuredClone({ task: env.session.activeTask, route: env.session.route, thread: env.session.threadId, count: env.session.threadTurnCount, context: env.session.contextByThread, checkpoint: env.session.checkpoint, tasks: env.session.tasks });
+  env.runner.run = async () => { throw new CodexRunError("side inference failed", usage); };
+  await expect(env.orchestrator.aside("Explain", env.session, config, () => {})).rejects.toThrow("side inference failed");
+  expect({ task: env.session.activeTask, route: env.session.route, thread: env.session.threadId, count: env.session.threadTurnCount, context: env.session.contextByThread, checkpoint: env.session.checkpoint, tasks: env.session.tasks }).toEqual(before);
+  expect(env.session.sideAnswers?.[0]?.error).toContain("side inference failed");
+  expect(env.session.attempts?.find(item => item.role === "aside")).toMatchObject({ status: "failed", usage });
+});
+
+it("manual delegation chooses a lead once and retains it on the next ordinary stage continuation", async () => {
+  const env = await setup(); env.session.routingMode = "manual";
+  env.session.manualWorkflow = { shape: "scout", routes: { scout: "vex", final: "vex" } };
+  await env.orchestrator.turn("Implement", env.session, config, () => {});
+  const before = env.requests.length;
+  await env.orchestrator.turn("Continue", env.session, config, () => {});
+  expect(env.calls.map(item => item[6])).toEqual(["side", "main", "main"]);
+  expect(env.requests.slice(before).map(item => item.options[0]?.id)).toEqual(["closed"]);
 });

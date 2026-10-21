@@ -59,3 +59,10 @@ it('returns cancellation status after SIGINT and removes its signal handler', as
   expect(stdout).not.toHaveBeenCalled();
   expect(process.listenerCount('SIGINT')).toBe(before);
 });
+
+it('reports required workflow clarification as an explicit noninteractive result', async () => {
+  const { stdout } = stubServices();
+  vi.spyOn(Orchestrator.prototype, 'turn').mockResolvedValue({ result: 'Select the intended workflow.', note: 'Vex requested clarification' } as never);
+  expect(await execTurn('ambiguous request')).toBe(2);
+  expect(stdout).toHaveBeenCalledWith('Select the intended workflow.');
+});

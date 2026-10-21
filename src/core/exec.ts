@@ -34,7 +34,7 @@ export async function execTurn(prompt: string, project = process.cwd()): Promise
     }, controller.signal);
     controller.signal.throwIfAborted();
     console.log(outcome.result);
-    return 0;
+    return outcome.note === "Vex requested clarification" ? 2 : 0;
   } catch (error) {
     if (controller.signal.aborted) console.error("Turn cancelled by user");
     else if (String(error) !== lastProgressError) console.error(String(error));

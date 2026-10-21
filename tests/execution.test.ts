@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,11 +8,15 @@ import { AppServerRunner, appServerThreadParams, appServerTurnParams, appUsage, 
 import { serverArgs } from '../src/integrations/app-server-process.js';
 import type { Config, Route } from '../src/shared/types.js';
 import type { VexRequest } from '../src/core/vex/client.js';
-import { decision } from './routing-fixture.js';
+import { decision, singleVex } from './routing-fixture.js';
 import { checkpointDue } from '../src/core/checkpoint.js';
 import { sdkThreadOptions } from '../src/integrations/sdk-runner.js';
 import { executePlanPrompt } from '../src/core/orchestrator-helpers.js';
 
+vi.mock("../src/core/routing/pricing.js", async original => {
+  const module = await original<typeof import("../src/core/routing/pricing.js")>();
+  return { ...module, refreshVersionManifest: async () => module.currentVersionManifest() };
+});
 let dir: string;
 afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true }); });
 const config: Config = { routingMode: 'auto', defaultRoute: { model: 'gpt-6-sol', effort: 'high' }, models: [
@@ -182,7 +186,7 @@ it('runs a read-only scout, reroutes after handoff, and sums stage costs', async
     if (progress.kind === 'system') notices.push(progress.text);
   });
   expect(notices).toEqual([
-    "Vex chose scout: A read-only agent read-only scout identifies relevant files, behavior, and tests; second agent completes the request from a structured handoff. Use when broad or uncertain repository exploration can materially reduce completion-agent work. Include both stages in total Codex cost.",
+    "Vex chose scout: A read-only scout identifies relevant files, behavior, and tests; second agent completes the request from a structured handoff. Use when broad or uncertain repository exploration can materially reduce completion-agent work. Include both stages in total Codex cost.",
     "Vex routed to gpt-6-luna at low reasoning",
     "Vex routed to gpt-6-sol at high reasoning",
   ]);
@@ -256,7 +260,7 @@ it('starts a fresh main thread from a valid checkpoint and counts turns per thre
   const store = new PaceStore(dir);
   await store.save(session);
   session = (await store.latest(session.projectPath))!;
-  const orchestrator = new Orchestrator(store, runner);
+  const orchestrator = new Orchestrator(store, runner, singleVex("0:high"));
   const manual = { ...config, routingMode: 'manual' as const };
   await orchestrator.turn('Add tests', session, manual, () => {});
   expect(calls[0]?.threadId).toBeUndefined();
@@ -284,7 +288,7 @@ it('does not resume the old thread when a fresh run omits its new ID', async () 
     expect(threadId).toBeUndefined();
     return { result: 'done', completed: true };
   } };
-  await new Orchestrator(new PaceStore(dir), runner).turn('Test', session, { ...config, routingMode: 'manual' }, () => {});
+  await new Orchestrator(new PaceStore(dir), runner, singleVex("0:high")).turn('Test', session, { ...config, routingMode: 'manual' }, () => {});
   expect(session.threadId).toBeUndefined();
   expect(session.threadTurnCount).toBe(1);
 });
