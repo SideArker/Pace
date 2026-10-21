@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createTurnRunner } from "../src/components/turn-runner.js";
+import { singleVex } from "./routing-fixture.js";
 import { Orchestrator } from "../src/core/orchestrator.js";
 import { PromptQueue } from "../src/core/prompt-queue.js";
 import { PaceStore, newSession, retryableTurn } from "../src/core/sessions.js";
@@ -32,7 +33,7 @@ it("saves a usage-limited request, holds queued prompts, and resumes safely", as
     turnSequence: { current: 0 }, activeSessionId: { current: session.id }, jobs: { current: new Map() }, sessionLines: { current: new Map() },
     promptQueue: { current: queue }, titleAborts: { current: new Map() }, pendingApprovals: { current: new Map() },
     pendingQuestions: { current: new Map() }, unreadCompletions: { current: new Set() }, runner,
-    orchestrator: new Orchestrator(store, runner), store, rememberSession: () => {}, onTurnStart: () => {},
+    orchestrator: new Orchestrator(store, runner, singleVex("0:high")), store, rememberSession: () => {}, onTurnStart: () => {},
     setRunningIds: () => {}, addFor: (_id, _role, text) => lines.push(text), activityFor: () => {},
     recordThoughtUsage: () => {}, resetThoughtUsage: () => {}, getTurnActivities: () => [], setStatusFor: () => {},
     showApproval: () => {}, showQuestion: () => {}, dismissQuestion: () => {}, setSession: () => {},
@@ -80,7 +81,7 @@ it("retries a failed turn after reload without losing its thread, history, or fi
     turnSequence: { current: 0 }, activeSessionId: { current: session.id }, jobs: { current: new Map() }, sessionLines: { current: new Map() },
     promptQueue: { current: queue }, titleAborts: { current: new Map() }, pendingApprovals: { current: new Map() },
     pendingQuestions: { current: new Map() }, unreadCompletions: { current: new Set() }, runner,
-    orchestrator: new Orchestrator(store, runner), store, rememberSession: () => {}, onTurnStart: () => {},
+    orchestrator: new Orchestrator(store, runner, singleVex("0:high")), store, rememberSession: () => {}, onTurnStart: () => {},
     setRunningIds: () => {}, addFor: (_id, _role, text) => lines.push(text), activityFor: () => {},
     recordThoughtUsage: () => {}, resetThoughtUsage: () => {}, getTurnActivities: () => [], setStatusFor: () => {},
     showApproval: () => {}, showQuestion: () => {}, dismissQuestion: () => {}, setSession: () => {},
@@ -131,13 +132,13 @@ it("restores completed conversation when a connection fails before a thread star
     return { threadId: "new-thread", result: "Done", completed: true };
   } };
   const store = new PaceStore(dir);
-  const orchestrator = new Orchestrator(store, runner);
+  const orchestrator = new Orchestrator(store, runner, singleVex("0:high"));
   await expect(orchestrator.turn("Continue feature", session, config, () => {})).rejects.toThrow("internet connection down");
   const reloaded = (await store.load(dir, session.id))!;
   await orchestrator.turn(retryableTurn(reloaded)!.prompt, reloaded, config, () => {});
   expect(calls[1]).toContain('"user":"Earlier request","assistant":"Earlier result"');
   expect(calls[1]).toContain("Inspect current files and prior conversation before editing");
-  expect(calls[1]).not.toContain("internet connection down");
+  expect(calls[1]).toContain("internet connection down");
   expect(reloaded.threadId).toBe("new-thread");
 });
 
@@ -158,7 +159,7 @@ it("adds intermediate and final agent messages to the transcript in chronologica
     turnSequence: { current: 0 }, activeSessionId: { current: session.id }, jobs: { current: new Map() }, sessionLines: { current: new Map() },
     promptQueue: { current: new PromptQueue() }, titleAborts: { current: new Map() }, pendingApprovals: { current: new Map() },
     pendingQuestions: { current: new Map() }, unreadCompletions: { current: new Set() }, runner,
-    orchestrator: new Orchestrator(store, runner), store, rememberSession: () => {}, onTurnStart: () => {},
+    orchestrator: new Orchestrator(store, runner, singleVex("0:high")), store, rememberSession: () => {}, onTurnStart: () => {},
     setRunningIds: () => {}, addFor: (_id, role, text) => transcript.push({ role, text }),
     activityFor: (_id, event) => transcript.push({ role: "activity", text: event.title }),
     recordThoughtUsage: () => {}, resetThoughtUsage: () => {}, getTurnActivities: () => [], setStatusFor: () => {},

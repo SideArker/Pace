@@ -48,7 +48,7 @@ function fixture(overrides: Partial<Options> = {}) {
     manualRoutes: [{ model: "gpt-6-sol", effort: "high" }, { model: "gpt-6-luna", effort: "low" }],
     menuModels: ["first", "second", "third"], menuEfforts: ["medium", "ultra"], menuIndex: 0,
     resumeMenu: false, resumeChoices: [session, second], missingProjectPaths: [],
-    convoMenu: false, session, store: { save: vi.fn(async () => {}) },
+    convoMenu: false, session, store: { saveChanges: vi.fn(async () => {}) },
     queueMenu: false, promptQueue: { current: queue },
     ...overrides,
   } as unknown as Options;

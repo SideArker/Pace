@@ -45,7 +45,7 @@ describe("PromptQueue", () => {
 
   it("reports each queue change and restores saved prompts without rewriting them", () => {
     const changes: string[][] = [];
-    const queue = new PromptQueue((_id, prompts) => changes.push([...prompts]));
+    const queue = new PromptQueue((_id, prompts) => changes.push(prompts.map(item => item.text)));
     queue.restore("sess", ["one"]);
     expect(changes).toEqual([]);
     queue.add("sess", "two");

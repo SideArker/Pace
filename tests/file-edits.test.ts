@@ -140,7 +140,7 @@ it("rolls files and edit flags back when session persistence fails", async () =>
   await writeFile(file("a"), "agent");
   const id = (await edits.record(before, await edits.capture()))!;
   session.turns.push({ prompt: "edit", result: "done", at: new Date().toISOString(), fileEdits: id });
-  vi.spyOn(store, "save").mockRejectedValue(new Error("disk full"));
+  vi.spyOn(store, "saveChanges").mockRejectedValue(new Error("disk full"));
   await expect(changeConversationHistory(store, session, "undo")).rejects.toThrow("disk full");
   expect(await text("a")).toBe("agent");
   expect((await edits.load(id)).changes[0]?.undone).toBe(false);
