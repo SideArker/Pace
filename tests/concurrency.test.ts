@@ -27,8 +27,9 @@ it("runs separate conversations concurrently and keeps background saves from cha
   const runner: CodexRunner = {
     run(prompt) {
       return new Promise<Execution>(resolve => {
-        pending.set(prompt, resolve);
-        if (prompt === "first") firstReady();
+        const request = prompt.split("\n")[0]!;
+        pending.set(request, resolve);
+        if (prompt.startsWith("first\n") || prompt === "first") firstReady();
         if (pending.size === 2) started();
       });
     },
@@ -68,8 +69,8 @@ it("cancels one conversation without stopping another", async () => {
   const runner: CodexRunner = {
     run(prompt, _project, _route, _thread, _progress, signal) {
       return new Promise<Execution>((resolve, reject) => {
-        if (prompt === "second") completeSecond = resolve;
-        if (prompt === "first") signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+        if (prompt.startsWith("second\n") || prompt === "second") completeSecond = resolve;
+        if (prompt.startsWith("first\n") || prompt === "first") signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
         if (++started === 2) ready();
       });
     },

@@ -5,5 +5,5 @@ export function decision(request: VexRequest, choice: string) {
   return { contractVersion: '1', abstained: false, choice, confidence: 0.9, probabilities };
 }
 export function singleVex(route: string) {
-  return { verify: async () => {}, choose: async (request: VexRequest) => decision(request, request.options[0]?.id === 'continue' ? 'replace' : request.options[0]?.id === 'single' ? 'single' : route) };
+  return { verify: async () => {}, choose: async (request: VexRequest) => decision(request, request.options.some(option => option.id === 'closed') ? 'unknown' : request.options[0]?.id === 'continue' ? 'replace' : request.options[0]?.id === 'single' ? 'single' : route) };
 }

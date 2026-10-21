@@ -58,6 +58,7 @@ it('lets Vex route paraphrased implementation follow-ups using conversation stat
   } };
   const vex = { choose: async (request: VexRequest) => {
     requests.push(request);
+    if (request.options.some(option => option.id === 'closed')) return decision(request, 'unknown');
     return decision(request, request.options[0]?.id === 'continue' ? 'continue' : request.options[0]?.id === 'single' ? 'single' : '1:high');
   } };
   const orchestrator = new Orchestrator(new PaceStore(dir), runner, vex);
@@ -88,13 +89,14 @@ it('continues a saved task when Vex would otherwise ask for the deliverable agai
   } };
   const vex = { choose: async (request: VexRequest) => {
     requests.push(request);
-    return decision(request, request.options.some(option => option.id === 'clarify') ? 'clarify' : request.options[0]?.id ?? '1:high');
+    if (request.options.some(option => option.id === 'closed')) return decision(request, 'unknown');
+    return decision(request, request.options[0]?.id === 'continue' ? 'continue' : request.options.some(option => option.id === 'closed') ? 'partial' : request.options[0]?.id ?? '1:high');
   } };
   const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('BRO CONTINUE', session, config, () => {});
-  expect(requests[0]?.options.map(option => option.id)).not.toContain('clarify');
+  expect(requests[0]?.options.map(option => option.id)).toContain('clarify');
   expect(requests[0]?.context.conversationState).toMatchObject({ activeTask: { originalRequest: 'Implement CSV export and tests' } });
-  expect(JSON.stringify(requests)).not.toContain('Usage limit before completion');
-  expect(JSON.stringify(requests)).not.toContain('"assistant":"Usage limit"');
+  expect(JSON.stringify(requests)).toContain('Usage limit before completion');
+  expect(JSON.stringify(requests)).toContain('"assistant":"Usage limit"');
   expect(executionPrompt).toContain("Use this Codex thread's earlier conversation and tool history");
   expect(executionPrompt).not.toContain("Pace's saved task brief");
   expect(outcome.result).toBe('Implemented CSV export and tests');
@@ -116,15 +118,16 @@ it('routes a continuation into the Codex thread when Pace lacks the original tas
   } };
   const vex = { choose: async (request: VexRequest) => {
     requests.push(request);
-    return decision(request, request.options.some(option => option.id === 'clarify') ? 'clarify' : request.options[0]?.id ?? '1:high');
+    if (request.options.some(option => option.id === 'closed')) return decision(request, 'unknown');
+    return decision(request, request.options[0]?.id === 'continue' ? 'continue' : request.options.some(option => option.id === 'closed') ? 'partial' : request.options[0]?.id ?? '1:high');
   } };
   const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('BRO CONTINUE', session, config, () => {});
-  expect(requests[0]?.options.map(option => option.id)).toEqual(['continue', 'replace', 'aside']);
+  expect(requests[0]?.options.map(option => option.id)).toEqual(['continue', 'aside', 'reroute', 'replan', 'replace', 'clarify']);
   expect(requests[1]?.options.map(option => option.id)).toEqual(['single', 'plan', 'scout_plan']);
   expect(sentThread).toBe('thread-with-history');
   expect(sentPrompt).toContain("Use this Codex thread's earlier conversation and tool history");
   expect(outcome.result).toBe('Continued original work');
-  expect(session.activeTask).toBeUndefined();
+  expect(session.activeTask?.assessment).toBe('unknown');
 });
 
 it('replays only retained turns after undo starts a new Codex thread', async () => {
@@ -168,6 +171,7 @@ it('runs a read-only scout, reroutes after handoff, and sums stage costs', async
   const requests: VexRequest[] = [];
   const vex = { choose: async (request: VexRequest) => {
     requests.push(request);
+    if (request.options.some(option => option.id === 'closed')) return decision(request, 'unknown');
     return decision(request, request.options[0]?.id === 'continue' ? 'replace' : request.options[0]?.id === 'single' ? 'scout' : request.context.stageObjective === 'Read-only repository scout' ? '0:low' : '1:high');
   } };
   const session = newSession(dir, 'auto');
@@ -178,7 +182,7 @@ it('runs a read-only scout, reroutes after handoff, and sums stage costs', async
     if (progress.kind === 'system') notices.push(progress.text);
   });
   expect(notices).toEqual([
-    "Vex chose scout: Luna read-only scout identifies relevant files, behavior, and tests; second agent completes the request from a structured handoff. Use when broad or uncertain repository exploration can materially reduce completion-agent work. Include both stages in total Codex cost.",
+    "Vex chose scout: A read-only agent read-only scout identifies relevant files, behavior, and tests; second agent completes the request from a structured handoff. Use when broad or uncertain repository exploration can materially reduce completion-agent work. Include both stages in total Codex cost.",
     "Vex routed to gpt-6-luna at low reasoning",
     "Vex routed to gpt-6-sol at high reasoning",
   ]);
@@ -187,18 +191,18 @@ it('runs a read-only scout, reroutes after handoff, and sums stage costs', async
   expect(calls.map(call => call.id)).toEqual([undefined, 'existing-main-thread']);
   expect(calls[0]?.prompt).toContain('We discussed the parser in src/a.ts');
   expect(calls[0]?.route).toEqual({ model: 'gpt-6-luna', effort: 'low' });
-  expect(requests[2]?.options.map(option => option.id)).toEqual(['0:low']);
+  expect(requests[2]?.options.map(option => option.id)).toEqual(['0:low', '1:medium', '1:high']);
   expect((requests[2]?.context.availableModels as { id: string }[]).map(model => model.id)).toContain('gpt-6-sol');
   expect(calls[1]?.prompt).toContain('Parser is defined here');
   expect(calls[1]?.prompt).not.toContain('Retained conversation:');
   expect(calls[1]?.prompt).not.toContain('unshared scout history');
-  expect(requests[3]?.context.priorStageHandoff).toContain('src/a.ts');
-  expect(requests[3]?.context.priorStageHandoff).not.toContain('unshared scout history');
+  expect(requests.find(item => item.context.priorStageHandoff)?.context.priorStageHandoff).toContain('src/a.ts');
+  expect(requests.find(item => item.context.priorStageHandoff)?.context.priorStageHandoff).not.toContain('unshared scout history');
   expect(outcome.stages[0]?.handoff).toContain('Parser is defined here');
   expect((await new PaceStore(dir).latest(dir))?.turns.at(-1)?.stages?.[0]?.handoff).toContain('Parser is defined here');
   expect(outcome.usage).toMatchObject({ input_tokens: 300, output_tokens: 25 });
   expect(outcome.estimatedCostUsd).toBeCloseTo(outcome.stages[0]!.estimatedCostUsd! + outcome.stages[1]!.estimatedCostUsd!, 12);
-  expect(outcome.routing).toHaveLength(4);
+  expect(outcome.routing).toHaveLength(6);
 });
 
 it('passes scout findings to a terminal artifact plan', async () => {
@@ -215,6 +219,7 @@ it('passes scout findings to a terminal artifact plan', async () => {
   const requests: VexRequest[] = [];
   const vex = { choose: async (request: VexRequest) => {
     requests.push(request);
+    if (request.options.some(option => option.id === 'closed')) return decision(request, 'unknown');
     return decision(request, request.options[0]?.id === 'single' ? 'scout_plan' : '0:low');
   } };
   const session = newSession('/example/project', 'auto');
@@ -223,9 +228,9 @@ it('passes scout findings to a terminal artifact plan', async () => {
   expect(calls[1]?.prompt).toContain('Scout found parser');
   expect(calls[1]?.prompt).toContain('pace-planning');
   expect(calls.map(call => call.threadId)).toEqual([undefined, undefined]);
-  expect(requests[2]?.context.priorStageHandoff).toContain('Scout found parser');
+  expect(requests.find(item => item.context.priorStageHandoff)?.context.priorStageHandoff).toContain('Scout found parser');
   expect(outcome.stages).toHaveLength(2);
-  expect(outcome.routing).toHaveLength(3);
+  expect(outcome.routing).toHaveLength(5);
   expect(outcome.usage?.input_tokens).toBe(200);
   expect(outcome.estimatedCostUsd).toBeCloseTo(outcome.stages.reduce((sum, stage) => sum + stage.estimatedCostUsd!, 0), 12);
   expect(session.kind).toBe('planning');
@@ -441,6 +446,7 @@ it('keeps explicit plan execution on writable completion routes', async () => {
   } };
   const vex = { choose: async (request: VexRequest) => {
     requests.push(request);
+    if (request.options.some(option => option.id === 'closed')) return decision(request, 'unknown');
     return decision(request, request.options[0]?.id === 'single' ? 'single' : '1:high');
   } };
   const fullPlan = '# Parser plan\n\n## Implementation steps\n\n1. Update src/parser.ts.\n\n## Verification\n\n- Run npm test.\n';
@@ -493,15 +499,16 @@ it('verifies an existing plan in a fresh read-only thread with a stronger route'
   const requests: VexRequest[] = [];
   const vex = { choose: async (request: VexRequest) => {
     requests.push(request);
+    if (request.options.some(option => option.id === 'closed')) return decision(request, 'unknown');
     return decision(request, request.options.at(-1)!.id);
   } };
   const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('Review this plan', session, config, () => {}, undefined, true, 'verify_plan');
-  expect(requests).toHaveLength(1);
-  expect(requests[0]?.options.map(option => option.id)).toEqual(['0:high']);
+  expect(requests.filter(item => item.context.stageObjective)).toHaveLength(1);
+  expect(requests[0]?.options.map(option => option.id)).toEqual(['0:low', '1:medium', '1:high']);
   expect(calls).toHaveLength(1);
   expect(calls[0]).toMatchObject({ route: { model: 'gpt-6-sol', effort: 'high' }, mode: 'side', threadId: undefined });
   expect(calls[0]?.prompt).toContain('Independently verify the plan');
-  expect(session.threadId).toBeUndefined();
+  expect(session.threadId).toBe('draft-thread');
   expect(session.plan).toBe(originalPlan);
   expect(session.route).toEqual({});
   expect(outcome.result).toBe('Problem: parser path is wrong. See src/parser.ts:12.');
@@ -519,10 +526,11 @@ it('lets Vex choose effort within a manually selected model', async () => {
   session.manualWorkflow = { shape: 'single', routes: { final: { model: 'gpt-6-sol' } } };
   const vex = { choose: async (request: VexRequest) => {
     requests.push(request);
+    if (request.options.some(option => option.id === 'closed')) return decision(request, 'unknown');
     return decision(request, '0:high');
   } };
   await new Orchestrator(new PaceStore(dir), runner, vex).turn('Work', session, config, () => {});
-  expect(requests).toHaveLength(1);
+  expect(requests.filter(item => item.context.stageObjective)).toHaveLength(1);
   expect(requests[0]?.options.map(option => option.id)).toEqual(['0:medium', '0:high']);
 });
 
@@ -666,7 +674,7 @@ it('declines a destructive Codex command before showing an approval prompt', asy
       notify() {}, kill() {},
       respond(_id, decision) {
         decisions.push(decision);
-        queueMicrotask(() => onMessage({ method: 'turn/completed', params: { turn: { status: 'completed' } } }));
+        queueMicrotask(() => onMessage({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } }));
       },
       async request(method: string) {
         if (method === 'thread/start') return { thread: { id: 'thread-1' } };
@@ -674,7 +682,7 @@ it('declines a destructive Codex command before showing an approval prompt', asy
           id: 7, method: 'item/commandExecution/requestApproval',
           params: { itemId: 'cmd-1', command: 'rm -rf /' },
         }));
-        return {};
+        return method === 'turn/start' ? { turn: { id: 'turn-1' } } : {};
       },
     };
   });
@@ -698,12 +706,12 @@ it('declines planning approval requests without prompting', async () => {
       notify() {}, kill() {},
       respond(_id, decision) {
         decisions.push(decision);
-        queueMicrotask(() => onMessage({ method: 'turn/completed', params: { turn: { status: 'completed' } } }));
+        queueMicrotask(() => onMessage({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } }));
       },
       async request(method: string) {
         if (method === 'thread/start') return { thread: { id: 'thread-1' } };
         if (method === 'turn/start') queueMicrotask(() => onRequest({ id: 7, method: 'item/fileChange/requestApproval', params: {} }));
-        return {};
+        return method === 'turn/start' ? { turn: { id: 'turn-1' } } : {};
       },
     };
   });
@@ -725,7 +733,7 @@ it('keeps a Codex turn open until an agent question is answered', async () => {
       notify() {}, kill() {},
       respond(_id, answer) {
         replies.push(answer);
-        queueMicrotask(() => onMessage({ method: 'turn/completed', params: { turn: { status: 'completed' } } }));
+        queueMicrotask(() => onMessage({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } }));
       },
       async request(method: string) {
         if (method === 'thread/start') return { thread: { id: 'thread-1' } };
@@ -735,7 +743,7 @@ it('keeps a Codex turn open until an agent question is answered', async () => {
             { id: 'note', header: 'Note', question: 'Any note?', options: null, isOther: false, isSecret: false },
           ] },
         }));
-        return {};
+        return method === 'turn/start' ? { turn: { id: 'turn-1' } } : {};
       },
     };
   });
@@ -769,9 +777,9 @@ it('dismisses a question when Codex resolves it without an answer', async () => 
       if (method === 'thread/start') return { thread: { id: 'thread-1' } };
       if (method === 'turn/start') queueMicrotask(() => {
         onMessage({ method: 'serverRequest/resolved', params: { requestId: 10 } });
-        onMessage({ method: 'turn/completed', params: { turn: { status: 'completed' } } });
+        onMessage({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
       });
-      return {};
+      return method === 'turn/start' ? { turn: { id: 'turn-1' } } : {};
     },
   }));
   await runner.run('work', process.cwd(), {}, undefined, event => { progress.push(event); });
@@ -795,7 +803,7 @@ it('releases an unanswered agent question when a turn is cancelled', async () =>
           { id: 'note', question: 'Continue?', options: null },
         ] },
       }));
-      return {};
+      return method === 'turn/start' ? { turn: { id: 'turn-1' } } : {};
     },
   }));
   const running = runner.run('work', process.cwd(), {}, undefined, event => {
@@ -839,7 +847,7 @@ it('ends an active turn when Codex app-server exits', async () => {
     async request(method: string) {
       if (method === 'thread/start') return { thread: { id: 'thread-1' } };
       if (method === 'turn/start') queueMicrotask(() => exit(new Error('App Server exited')));
-      return {};
+      return method === 'turn/start' ? { turn: { id: 'turn-1' } } : {};
     },
   };
   const runner = new AppServerRunner((_message, onExit) => {
@@ -858,11 +866,11 @@ it('shows file path and diff as soon as app-server updates the patch', async () 
     async request(method: string) {
       if (method === 'thread/start') return { thread: { id: 'thread-1' } };
       if (method === 'turn/start') queueMicrotask(() => {
-        onMessage({ method: 'item/fileChange/patchUpdated', params: { itemId: 'edit-1', changes } });
-        onMessage({ method: 'item/completed', params: { item: { type: 'fileChange', id: 'edit-1', changes, status: 'completed' } } });
-        onMessage({ method: 'turn/completed', params: { turn: { status: 'completed' } } });
+        onMessage({ method: 'item/fileChange/patchUpdated', params: { threadId: 'thread-1', turnId: 'turn-1', itemId: 'edit-1', changes } });
+        onMessage({ method: 'item/completed', params: { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'fileChange', id: 'edit-1', changes, status: 'completed' } } });
+        onMessage({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
       });
-      return {};
+      return method === 'turn/start' ? { turn: { id: 'turn-1' } } : {};
     },
   }));
   await runner.run('edit', process.cwd(), { model: 'gpt-6-sol', effort: 'high' }, undefined, event => { progress.push(event); });
@@ -879,15 +887,15 @@ it('reads current context from the raw App Server usage event', async () => {
       if (method === 'thread/start') return { thread: { id: 'thread-1' } };
       if (method === 'turn/start') queueMicrotask(() => {
         onMessage({ method: 'thread/tokenUsage/updated', params: {
-          threadId: 'thread-1', tokenUsage: {
+          threadId: 'thread-1', turnId: 'turn-1', tokenUsage: {
             total: { totalTokens: 600_000 },
-            last: { totalTokens: 130_000, inputTokens: 120_000, cachedInputTokens: 50_000, outputTokens: 10_000 },
+            last: { totalTokens: 130_000, inputTokens: 120_000, cachedInputTokens: 50_000, cacheWriteInputTokens: 0, outputTokens: 10_000, reasoningOutputTokens: 0 },
             modelContextWindow: 250_000,
           },
         } });
-        onMessage({ method: 'turn/completed', params: { turn: { status: 'completed' } } });
+        onMessage({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
       });
-      return {};
+      return method === 'turn/start' ? { turn: { id: 'turn-1' } } : {};
     },
   }));
   const execution = await runner.run('work', process.cwd(), { model: 'gpt-6-sol', effort: 'high' }, undefined, () => {});
@@ -896,9 +904,9 @@ it('reads current context from the raw App Server usage event', async () => {
 });
 
 it('sums distinct model requests without counting resumed history or duplicate usage events', async () => {
-  const usageEvent = (totalTokens: number, inputTokens: number, outputTokens: number) => ({
-    method: 'thread/tokenUsage/updated', params: { tokenUsage: {
-      total: { totalTokens }, last: { totalTokens: inputTokens + outputTokens, inputTokens, outputTokens },
+  const usageEvent = (totalTokens: number, inputTokens: number, outputTokens: number, turnId = 'turn-1') => ({
+    method: 'thread/tokenUsage/updated', params: { threadId: 'thread-1', turnId, tokenUsage: {
+      total: { totalTokens }, last: { totalTokens: inputTokens + outputTokens, inputTokens, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens, reasoningOutputTokens: 0 },
       modelContextWindow: 1000,
     } },
   });
@@ -906,17 +914,17 @@ it('sums distinct model requests without counting resumed history or duplicate u
     setRequestHandler() {}, notify() {}, respond() {}, kill() {},
     async request(method: string) {
       if (method === 'thread/resume') {
-        onMessage(usageEvent(1000, 700, 100));
+        onMessage(usageEvent(1000, 700, 100, 'previous-turn'));
         return { thread: { id: 'thread-1' } };
       }
       if (method === 'turn/start') queueMicrotask(() => {
-        onMessage(usageEvent(1000, 700, 100));
+        onMessage(usageEvent(1000, 700, 100, 'previous-turn'));
         onMessage(usageEvent(1100, 80, 20));
         onMessage(usageEvent(1100, 80, 20));
         onMessage(usageEvent(1200, 90, 10));
-        onMessage({ method: 'turn/completed', params: { turn: { status: 'completed' } } });
+        onMessage({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
       });
-      return {};
+      return method === 'turn/start' ? { turn: { id: 'turn-1' } } : {};
     },
   }));
   const progress: Progress[] = [];
@@ -924,6 +932,7 @@ it('sums distinct model requests without counting resumed history or duplicate u
   expect(execution.usage).toMatchObject({ input_tokens: 170, output_tokens: 30 });
   expect(execution.context).toEqual({ tokens: 100, windowTokens: 1000, model: 'gpt-6-sol' });
   expect(progress.filter(event => event.kind === 'usage').map(event => event.usage)).toMatchObject([
+    { input_tokens: 80, output_tokens: 20 },
     { input_tokens: 80, output_tokens: 20 },
     { input_tokens: 170, output_tokens: 30 },
   ]);
@@ -935,13 +944,13 @@ it('retains observed usage when a turn fails after model work', async () => {
     async request(method: string) {
       if (method === 'thread/start') return { thread: { id: 'thread-1' } };
       if (method === 'turn/start') queueMicrotask(() => {
-        onMessage({ method: 'thread/tokenUsage/updated', params: { tokenUsage: {
-          total: { totalTokens: 120 }, last: { totalTokens: 120, inputTokens: 100, outputTokens: 20 },
+        onMessage({ method: 'thread/tokenUsage/updated', params: { threadId: 'thread-1', turnId: 'turn-1', tokenUsage: {
+          total: { totalTokens: 120 }, last: { totalTokens: 120, inputTokens: 100, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 20, reasoningOutputTokens: 0 },
           modelContextWindow: 1000,
         } } });
-        onMessage({ method: 'turn/completed', params: { turn: { status: 'failed', error: { message: 'limit' } } } });
+        onMessage({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'failed', error: { message: 'limit' } } } });
       });
-      return {};
+      return method === 'turn/start' ? { turn: { id: 'turn-1' } } : {};
     },
   }));
   await expect(runner.run('work', process.cwd(), { model: 'gpt-6-sol' }, undefined, () => {}))
@@ -975,11 +984,11 @@ it('preserves all completed agent messages across multiple turn steps in AppServ
     async request(method: string) {
       if (method === 'thread/start') return { thread: { id: 'thread-1' } };
       if (method === 'turn/start') queueMicrotask(() => {
-        onMessage({ method: 'item/completed', params: { item: { type: 'agentMessage', id: 'msg-1', text: 'Step 1 starting' } } });
-        onMessage({ method: 'item/completed', params: { item: { type: 'agentMessage', id: 'msg-2', text: 'Step 2 done' } } });
-        onMessage({ method: 'turn/completed', params: { turn: { status: 'completed' } } });
+        onMessage({ method: 'item/completed', params: { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'agentMessage', id: 'msg-1', text: 'Step 1 starting' } } });
+        onMessage({ method: 'item/completed', params: { threadId: 'thread-1', turnId: 'turn-1', item: { type: 'agentMessage', id: 'msg-2', text: 'Step 2 done' } } });
+        onMessage({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } });
       });
-      return {};
+      return method === 'turn/start' ? { turn: { id: 'turn-1' } } : {};
     },
   }));
   const execution = await runner.run('work', process.cwd(), { model: 'gpt-6-sol', effort: 'high' }, undefined, event => { progress.push(event); });
