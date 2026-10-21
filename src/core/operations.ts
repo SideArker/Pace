@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
-import type { Config, QueuedOperation, Session } from "../shared/types.js";
+import type { Config, ManualWorkflow, QueuedOperation, Route, Session, WorkflowShape } from "../shared/types.js";
 import { newSession, type PaceStore } from "./sessions.js";
 import { artifactPath } from "./system/artifacts.js";
 import { executePlanPrompt, tryReadPlanFile } from "./orchestrator-helpers.js";
@@ -18,6 +18,27 @@ export function validOperation(value: unknown): value is QueuedOperation {
     (item.sourceSideId === undefined || typeof item.sourceSideId === "string") &&
     ["main", "scout", "verifier", "aside", "status"].includes(item.role) &&
     (item.intent === undefined || ["verify_plan", "execute_plan", "revise_plan", "continue_verify", "aside", "adopt_side"].includes(item.intent));
+}
+/** Explicit user selections update task ownership without interpreting user prose. */
+export function manualSelection(source: Session, selection: Route | ManualWorkflow): Session {
+  const session = structuredClone(source);
+  session.routingMode = "manual";
+  let choice: string;
+  if ("shape" in selection) {
+    session.manualWorkflow = selection;
+    const shape: WorkflowShape = selection.shape === "scout_plan_execute" ? "scout_plan" : ["plan_execute", "plan_verify"].includes(selection.shape) ? "plan" : selection.shape as WorkflowShape;
+    if (session.activeTask) session.activeTask.workflow = {
+      version: 1, generation: (source.activeTask?.workflow?.generation ?? 0) + 1, shape,
+      stage: shape === "scout" || shape === "scout_plan" ? "scout" : shape === "plan" ? "plan" : "final", source: "user",
+    };
+    choice = shape;
+  } else {
+    session.route = { ...selection }; session.manualWorkflow = undefined;
+    if (session.activeTask?.workflow) { session.activeTask.workflow.mainRoute = { ...selection }; session.activeTask.workflow.source = "user"; }
+    choice = `${selection.model ?? "default"}:${selection.effort ?? "default"}`;
+  }
+  session.controlDecisions = [...(session.controlDecisions ?? []), { id: randomUUID(), taskId: session.activeTask?.id, stage: session.activeTask?.workflow?.stage, role: "main", objective: "shape" in selection ? "manual workflow" : "manual route", choice, confidence: 1, probabilities: { [choice]: 1 }, durationMs: 0, at: new Date().toISOString(), source: "user", contextAction: "continue" }];
+  return session;
 }
 export async function currentPlan(store: PaceStore, source: Session): Promise<string | undefined> {
   if (source.planArtifact) return readFile(artifactPath(store, source, source.planArtifact), "utf8");

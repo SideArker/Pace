@@ -9,7 +9,8 @@ import { FileDiffPanel } from "./FileDiffPanel.js";
 import { McpManager } from "./McpManager.js";
 import { Orchestrator, VexUnavailableError } from "../core/orchestrator.js";
 import { PromptQueue } from "../core/prompt-queue.js";
-import { adoptedSidePrompt, operation, preparePlanExecution } from "../core/operations.js";
+import { resolveAttempt, taskAccounting } from "../core/task-execution.js";
+import { adoptedSidePrompt, operation, preparePlanExecution, manualSelection } from "../core/operations.js";
 import { AppServerRunner } from "../integrations/codex.js";
 import { VexRouter } from "../core/vex/client.js";
 import { EFFORTS, withModels } from "../shared/config.js";
@@ -74,6 +75,7 @@ export const commands = [
   "/cancelretry",
   "/btw",
   "/adopt",
+  "/resolve",
   "/artifacts",
   "/trust",
   "/skills",
@@ -112,6 +114,8 @@ export const commandArguments: Record<string, string> = {
   "/mcp": "[list]",
   "/skills": "[folder|enable|disable|auto|off]",
   "/btw": "<question>",
+  "/adopt": "<side-answer-id>",
+  "/resolve": "<attempt-id> <reconciled outcome>",
 };
 export const skillArguments = (skillName: string): string => {
   if (skillName === "caveman") return "[mode]";
@@ -136,7 +140,9 @@ const commandDescriptions: Record<string, string> = {
   "/usage": "Show Codex account usage and rate limits",
   "/retry": "Retry the latest failed request in this conversation",
   "/cancelretry": "Cancel automatic retry and clear its queue",
-  "/btw": "Ask a side question without adding to context",
+  "/btw": "Ask a read-only side question with a separate agent",
+  "/adopt": "Forward a selected side answer to the active task",
+  "/resolve": "Record an inspected outcome of an interrupted attempt",
   "/artifacts": "Show generated artifacts",
   "/trust": "Manage trusted project folders",
   "/skills": "Discover and manage agent skills",
@@ -244,7 +250,7 @@ export default function App({ onClear }: { onClear: () => void }) {
   const [approval, setApproval] = useState<Extract<Progress, { kind: "approval" }>>();
   const [question, setQuestion] = useState<PendingQuestion>();
   const [pendingRevision, setPendingRevision] = useState(0);
-  const runTurnRef = useRef<((text: string, turnSession: Session, turnConfig: Config, intent?: OperationIntent, displayPrompt?: string, automaticRetry?: boolean, operation?: QueuedOperation) => Promise<void>) | undefined>(undefined);
+  const runTurnRef = useRef<((text: string, turnSession: Session, turnConfig: Config, intent?: OperationIntent, displayPrompt?: string, automaticRetry?: boolean, operation?: QueuedOperation) => Promise<boolean>) | undefined>(undefined);
   const remoteHost = useRef<RemoteHost | undefined>(undefined);
   const [approvalMenu, setApprovalMenu] = useState(false);
   const [vexState, setVexState] = useState<
@@ -771,7 +777,7 @@ export default function App({ onClear }: { onClear: () => void }) {
           : [...config.models, { model: menuModel, efforts: [effort], defaultEffort: effort, enabled: true }];
         const updatedConfig = withModels(config, models);
         await store.saveConfig(updatedConfig);
-        const updatedSession = { ...session, routingMode: "manual" as const, route: { model: menuModel, effort }, manualWorkflow: undefined };
+        const updatedSession = manualSelection(session, { model: menuModel, effort });
         await store.saveChanges(updatedSession);
         setConfig(updatedConfig);
         setSession(updatedSession);
@@ -786,7 +792,7 @@ export default function App({ onClear }: { onClear: () => void }) {
     const route = target;
     setManualMenu(false);
     if (!session) return;
-    const updated = { ...session, routingMode: "manual" as const, route, manualWorkflow: undefined };
+    const updated = manualSelection(session, route);
     try {
       await store.saveChanges(updated);
       setSession(updated);
@@ -960,16 +966,16 @@ export default function App({ onClear }: { onClear: () => void }) {
     m.efforts.map((e) => ({ model: m.model, effort: e })),
   );
   const availableWorkflows = workflowChoices.filter(choice =>
-    !["scout", "scout_plan"].includes(choice.shape) || enabledModels.some(model => model.model === "gpt-6-luna"));
+    !["scout", "scout_plan"].includes(choice.shape) || enabledModels.some(model => model.efforts.length > 0));
   const manualStage = manualWizard.shape ? workflowStages(manualWizard.shape)[manualWizard.stageIndex] : undefined;
   const manualOptions = manualWizard.step === "workflow"
     ? ["Delegate choice to Vex", ...availableWorkflows.map(choice => choice.label)]
     : manualWizard.step === "model"
-      ? ["Delegate choice to Vex", ...(manualStage === "scout" ? enabledModels.filter(m => m.model === "gpt-6-luna") : enabledModels).map(m => m.model)]
+      ? ["Delegate choice to Vex", ...enabledModels.filter(m => m.efforts.length > 0).map(m => m.model)]
       : ["Delegate choice to Vex", ...(enabledModels.find(m => m.model === manualWizard.model)?.efforts ?? [])];
   const saveWorkflow = async (shape: WorkflowShape, routes: ManualWorkflow["routes"]) => {
     if (!session) return;
-    const updated = { ...session, routingMode: "manual" as const, manualWorkflow: { shape, routes } };
+    const updated = manualSelection(session, { shape, routes });
     try {
       await store.saveChanges(updated);
       setSession(updated);
@@ -1299,7 +1305,8 @@ export default function App({ onClear }: { onClear: () => void }) {
         if (progress.kind === "activity") activity({ ...progress, id: `side-${sideId}-${progress.id}` });
         if (progress.kind === "error") add("error", progress.text);
       }, controller.signal, () => activeSessionId.current === session.id);
-      rememberSession(session);
+      rememberSession(result.session);
+      if (activeSessionId.current === session.id) setSession({ ...session });
       if (sideAbort.current === controller) {
         const record = session.sideAnswers?.at(-1);
         add("side", result.result);
@@ -1379,7 +1386,7 @@ export default function App({ onClear }: { onClear: () => void }) {
             await queueSaves.current.get(target.id); return true;
           },
           cancel: (id: string) => { const job = jobs.current.get(id); if (!job) return false; job.controller.abort(); return true; },
-          submit: async (prompt: string, target: Session, intent?: OperationIntent, item?: QueuedOperation) => { await runTurnRef.current?.(prompt, target, latestConfig.current ?? config!, intent, undefined, false, item); },
+          submit: async (prompt: string, target: Session, intent?: OperationIntent, item?: QueuedOperation) => { const success = await runTurnRef.current?.(prompt, target, latestConfig.current ?? config!, intent, undefined, false, item); if (!success) throw new Error("UI operation did not finish; queue remains paused."); },
           changed: (target: Session) => { rememberSession(target); if (activeSessionId.current === target.id) setSession({ ...target }); },
         };
         const domain = new RemoteDomain(store, orchestrator, roots, bridge);
@@ -1481,6 +1488,16 @@ export default function App({ onClear }: { onClear: () => void }) {
         await handleExecutePlan(extraPrompt || undefined);
         return;
       }
+      if (command === "/resolve") {
+        const [attemptId, ...outcome] = parts;
+        if (!attemptId || !outcome.length) { add("error", "Use /resolve <attempt-id> <reconciled outcome after inspecting the thread, artifacts and file changes>."); return; }
+        try {
+          await resolveAttempt(store, session, attemptId, outcome.join(" "));
+          rememberSession(session); setSession({ ...session });
+          add("info", `Reconciled attempt ${attemptId}. Its usage remains unchanged; continue the task when ready.`);
+        } catch (error) { add("error", `Could not reconcile attempt: ${String(error)}`); }
+        return;
+      }
       if (command === "/adopt") {
         void runTurnRef.current?.(text, session, config, "adopt_side", undefined, false, commandOperation);
         return;
@@ -1497,7 +1514,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       if (command === "/help") {
         add(
           "info",
-          "/plan [prompt] · /execute · /verify [file] [prompt] · /models · /mcp [list] · /auto · /manual [model] [effort] · /workflow [name|auto] · /approval [full-access|request-approval|limited] · /remote · /tasks · /new · /resume · /convo · /diff · /undo · /redo · /compact · /context · /usage · /retry · /cancelretry · /btw <q> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /stats · /route · /clear · /exit · Esc cancels automatic retry; Esc twice/Ctrl+C cancels other turns · Ctrl+Z undo · Ctrl+Y redo · Alt+P/Ctrl+P plan · Alt+E/Ctrl+E execute · ! Bash · Ctrl+O toggle command, diff, and reasoning details · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
+          "/plan [prompt] · /execute · /verify [file] [prompt] · /models · /mcp [list] · /auto · /manual [model] [effort] · /workflow [name|auto] · /approval [full-access|request-approval|limited] · /remote · /tasks · /new · /resume · /convo · /diff · /undo · /redo · /compact · /context · /usage · /retry · /cancelretry · /btw <q> · /adopt <side-answer-id> · /resolve <attempt-id> <outcome> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /stats · /route · /clear · /exit · Esc cancels automatic retry; Esc twice/Ctrl+C cancels other turns · Ctrl+Z undo · Ctrl+Y redo · Alt+P/Ctrl+P plan · Alt+E/Ctrl+E execute · ! Bash · Ctrl+O toggle command, diff, and reasoning details · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
         );
         add("info", "With multiple open conversations, press Down from the input to focus the picker. Use arrows and Enter to switch; Esc returns to input. Ctrl+C cancels the selected turn. /exit quits.");
         return;
@@ -1590,12 +1607,7 @@ export default function App({ onClear }: { onClear: () => void }) {
           );
           return;
         }
-        const updated = {
-          ...session,
-          routingMode: "manual" as const,
-          route: { model: matched.model, effort },
-          manualWorkflow: undefined,
-        };
+        const updated = manualSelection(session, { model: matched.model, effort });
         try {
           await store.saveChanges(updated);
           setSession(updated);
@@ -1678,6 +1690,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         setRunningIds([...jobs.current.keys()]);
         addFor(sessionId, "info", "Compacting Codex context…");
         void (async () => {
+          let completed = false;
           try {
             const result = await runner.compact(threadId, target.projectPath, target.route,
               progress => { if (progress.kind === "status") setStatusFor(sessionId, progress.text); }, controller.signal);
@@ -1691,6 +1704,7 @@ export default function App({ onClear }: { onClear: () => void }) {
             if (target.contextByThread) delete target.contextByThread[threadId];
             await store.saveChanges(target, () => activeSessionId.current === sessionId);
             rememberSession(target);
+            completed = result.outcome === "completed";
             if (activeSessionId.current === sessionId) setSession({ ...target });
             const detail = result.outcome === "completed" ? "Context compacted." :
               result.outcome === "cancelled" ? "Compaction cancelled." : `Compaction failed: ${result.error ?? "unknown error"}`;
@@ -1703,7 +1717,7 @@ export default function App({ onClear }: { onClear: () => void }) {
             jobs.current.delete(sessionId);
             if (activeSessionId.current !== sessionId) unreadCompletions.current.add(sessionId);
             setRunningIds([...jobs.current.keys()]);
-            const next = promptQueue.current.takeOperation(sessionId);
+            const next = completed ? promptQueue.current.peekOperation(sessionId) : undefined;
             if (next !== undefined) {
               setQueueVersion(value => value + 1);
               void runTurn(next.text, target, config, next.intent, undefined, false, next);
@@ -1747,17 +1761,22 @@ export default function App({ onClear }: { onClear: () => void }) {
         return;
       }
       if (command === "/stats") {
-        const turns = session.turns;
+        const attempts = session.attempts ?? [];
         const compactions = session.compactions ?? [];
         const generations = session.checkpointGenerations ?? [];
-        if (!turns.length && !compactions.length && !generations.length) { add("info", "No recorded turns or context actions yet."); return; }
-        const total = (key: "input_tokens" | "cached_input_tokens" | "cache_write_input_tokens" | "output_tokens") => turns.reduce((sum, turn) => sum + (turn.usage?.[key] ?? 0), 0);
-        const elapsed = turns.reduce((sum, turn) => sum + (turn.durationMs ?? 0), 0);
-        const reported = turns.filter(turn => turn.usage).length;
-        const cost = turns.reduce((sum, turn) => sum + (turn.estimatedCostUsd ?? 0), 0);
-        const priced = turns.filter(turn => turn.estimatedCostUsd !== undefined).length;
-        add("info", `Codex usage: ${total("input_tokens")} input (${total("cached_input_tokens")} cached, ${total("cache_write_input_tokens")} cache write), ${total("output_tokens")} output; ${priced ? `~$${cost.toFixed(4)} estimated API equivalent (${priced} priced turns)` : 'API-equivalent cost unavailable'}`);
-        add("info", `Current conversation, last ${turns.length} turns · ${turns.filter(turn => turn.failed).length} failed · ${(elapsed / 1000).toFixed(1)}s elapsed · ${total("input_tokens")} input / ${total("output_tokens")} output tokens (${reported} turns reported usage)`);
+        const controls = session.controlDecisions ?? [];
+        if (!attempts.length && !session.turns.length && !compactions.length && !generations.length && !controls.length) { add("info", "No recorded attempts or context actions yet."); return; }
+        const accounting = taskAccounting(session);
+        const total = (key: "input_tokens" | "cached_input_tokens" | "cache_write_input_tokens" | "output_tokens") => attempts.reduce((sum, attempt) => sum + ((attempt.knownUsage ?? attempt.usage)?.[key] ?? 0), 0);
+        add("info", `Codex attempt ledger: ${accounting.attempts} attempts · ${attempts.filter(attempt => attempt.status === "failed").length} failed · ${attempts.filter(attempt => attempt.status === "cancelled").length} cancelled · ${(accounting.durationMs / 1000).toFixed(1)}s. Known subtotal ~$${accounting.knownSubtotalUsd.toFixed(4)}; full attempt cost ${accounting.complete ? `~$${accounting.totalUsd!.toFixed(4)}` : "unknown (incomplete usage or pricing)"}.`);
+        add("info", `Attributed usage: ${total("input_tokens")} input (${total("cached_input_tokens")} cached, ${total("cache_write_input_tokens")} cache write), ${total("output_tokens")} output. Estimates use the recorded source routes and Pace API price catalog; they do not measure Codex subscription allowance. Context actions are shown separately.`);
+        if (session.activeTask?.id) {
+          const task = taskAccounting(session, session.activeTask.id);
+          add("info", `Active task ${session.activeTask.id}: ${task.attempts} attempts · known subtotal ~$${task.knownSubtotalUsd.toFixed(4)} · full cost ${task.complete ? `~$${task.totalUsd!.toFixed(4)}` : "unknown"} · assessment ${session.activeTask.assessment ?? "unknown"}.`);
+        }
+        if (!attempts.length && session.turns.length) add("info", "Legacy turns have no durable attempt ledger; full historical task cost is unknown.");
+        const vexCalls = controls.filter(item => item.source === "vex");
+        add("info", `Vex separately: ${vexCalls.length} recorded control calls · ${(vexCalls.reduce((sum, item) => sum + item.durationMs, 0) / 1000).toFixed(1)}s · token usage and cost unavailable in the choice contract.`);
         if (compactions.length) {
           const input = compactions.reduce((sum, item) => sum + (item.usage?.input_tokens ?? 0), 0);
           const output = compactions.reduce((sum, item) => sum + (item.usage?.output_tokens ?? 0), 0);
@@ -1778,6 +1797,10 @@ export default function App({ onClear }: { onClear: () => void }) {
       }
       if (command === "/route") {
         if (parts.length) { add("error", "Type /route without arguments."); return; }
+        const workflow = session.activeTask?.workflow;
+        add("info", `Task ${session.activeTask?.id ?? "legacy/unknown"} · workflow ${workflow ? `${workflow.shape} v${workflow.version} generation ${workflow.generation}, stage ${workflow.stage}` : "unknown"} · main ${modelName(session.route)} ${session.route.effort ?? "default"} · thread ${session.threadId ?? "none"} · context: continue existing checkpoint policy.`);
+        for (const decision of session.controlDecisions ?? []) add("info", `${decision.at} · ${decision.source} ${decision.objective}: ${decision.choice} · task ${decision.taskId ?? "unknown"} · stage ${decision.stage ?? "unknown"} · role ${decision.role} · attempt ${decision.attemptId ?? "none"} · context ${decision.contextAction} · ${(decision.durationMs / 1000).toFixed(2)}s`);
+        for (const answer of session.sideAnswers ?? []) add("info", `Side ${answer.id} · task ${answer.taskId ?? "unknown"} · attempt ${answer.attemptId} · ${modelName(answer.route)} ${answer.route.effort ?? "default"} · ${answer.error ? "failed" : answer.adopted ? "forwarded to main" : "available via /adopt"}`);
         for (const line of formatLatestRoute(session.turns, config.models)) add("info", line);
         return;
       }
@@ -1959,6 +1982,18 @@ export default function App({ onClear }: { onClear: () => void }) {
     const check = () => {
       for (const target of openSessions) {
         const pending = target.deferredTurn;
+        if (!pending && !jobs.current.has(target.id) && !checking.has(target.id) && !target.turns.at(-1)?.failed &&
+            !target.attempts?.some(item => ["running", "awaiting_user"].includes(item.status))) {
+          const item = promptQueue.current.peekOperation(target.id);
+          if (item) {
+            checking.add(target.id);
+            void (async () => {
+              const full = await store.load(target.projectPath, target.id);
+              if (!active || !full || jobs.current.has(target.id) || full.deferredTurn || full.turns.at(-1)?.failed || full.attempts?.some(attempt => ["running", "awaiting_user"].includes(attempt.status))) return;
+              await runTurn(item.text, full, latestConfig.current ?? config, item.intent, undefined, false, item);
+            })().catch(error => addFor(target.id, "error", `Could not resume queued operation: ${String(error)}`)).finally(() => checking.delete(target.id));
+          }
+        }
         if (!pending || jobs.current.has(target.id)) continue;
         if (Date.parse(pending.retryAt) > Date.now()) continue;
         if (checking.has(target.id)) continue;
@@ -1978,7 +2013,7 @@ export default function App({ onClear }: { onClear: () => void }) {
           if (!active || target.deferredTurn !== pending || jobs.current.has(target.id)) return;
           if (!sessionLines.current.has(full.id)) renderSessionTurns(full);
           addFor(full.id, "meta", saved.reason === "network" ? "Connection restored. Resuming saved request…" : "Retry time reached. Resuming saved request…");
-          void runTurn(saved.prompt, full, latestConfig.current ?? config, saved.intent, saved.displayPrompt, true);
+          void runTurn(saved.prompt, full, latestConfig.current ?? config, saved.intent, saved.displayPrompt, true, saved.operation);
         })().catch(error => addFor(target.id, "error", `Could not resume automatic retry: ${String(error)}`))
           .finally(() => checking.delete(target.id));
       }

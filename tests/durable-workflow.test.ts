@@ -207,3 +207,32 @@ it("side result refreshes the calling snapshot for immediate explicit adoption",
   await env.orchestrator.aside("Explain", env.session, config, () => {});
   expect(adoptedSidePrompt(env.session, env.session.sideAnswers![0]!.id)).toContain("Source side answer:");
 });
+
+it("explicit manual workflow changes are recorded and take effect on the existing task", async () => {
+  const env = await setup(); await env.orchestrator.turn("Implement", env.session, config, () => {});
+  const { manualSelection } = await import("../src/core/operations.js");
+  const changed = manualSelection(env.session, { shape: "scout", routes: { scout: "vex", final: "vex" } });
+  await env.store.saveChanges(changed);
+  await env.orchestrator.turn("Continue with selected workflow", changed, config, () => {});
+  expect(env.calls.map(item => item[6])).toEqual(["main", "side", "main"]);
+  expect(changed.activeTask?.id).toBe(env.session.activeTask?.id);
+  expect(changed.controlDecisions?.some(item => item.source === "user" && item.choice === "scout")).toBe(true);
+});
+
+it("a concurrent side completion cannot receive the main answer's assessment or artifacts", async () => {
+  const env = await setup(); await env.orchestrator.turn("Implement", env.session, config, () => {});
+  let release!: () => void;
+  const wait = new Promise<void>(resolve => { release = resolve; });
+  const original = env.runner.run;
+  env.runner.run = async (...args) => { if (args[6] === "main") await wait; return original(...args); };
+  const main = env.orchestrator.turn("Continue", env.session, config, () => {});
+  await vi.waitFor(() => expect(env.session.attempts?.at(-1)?.status).toBe("running"));
+  await env.orchestrator.aside("Independent fact", env.session, config, () => {});
+  release(); await main;
+  const attempts = (await env.store.load(env.root, env.session.id))!.attempts!;
+  const completion = attempts.filter(item => item.role === "main").at(-1)!;
+  const side = attempts.find(item => item.role === "aside")!;
+  expect(completion.assessment).toBeDefined();
+  expect(completion.observations.at(-1)?.kind).toBe("artifacts");
+  expect(side.observations.some(item => item.kind === "artifacts")).toBe(false);
+});
