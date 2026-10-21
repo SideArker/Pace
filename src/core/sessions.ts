@@ -339,10 +339,13 @@ export class PaceStore {
   private async write(session: Session, revision: number, activate: Activation): Promise<Session> {
     session.revision = revision + 1;
     session.updatedAt = new Date().toISOString();
-    await atomicJson(this.key(session), session);
-    this.track(session);
-    if (typeof activate === "function" ? activate() : activate) await this.activate(session);
-    return session;
+    // Track exactly the JSON shape readers see, including legacy normalization.
+    const persisted = parseSession(JSON.parse(JSON.stringify(session)), normalizeProject(session.projectPath));
+    if (!persisted) throw new Error("Cannot save invalid Pace session");
+    await atomicJson(this.key(persisted), persisted);
+    this.track(persisted);
+    if (typeof activate === "function" ? activate() : activate) await this.activate(persisted);
+    return persisted;
   }
   private refreshCaller(caller: Session, captured: Session, saved: Session): void {
     const target = caller as unknown as Record<string, unknown>;

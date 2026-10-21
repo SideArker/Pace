@@ -38,6 +38,7 @@ export type Config = {
   autoLaunchSkills?: string[];
 };
 export type TurnSummary = {
+  operation?: QueuedOperation;
   /** A saved file edit record, or "none" when a snapshot found no changes. */
   fileEdits?: string;
   prompt: string;
@@ -171,7 +172,7 @@ export type Session = {
   autoLaunchThreadId?: string;
   tasks?: Task[];
   activeTask?: ActiveTask;
-  deferredTurn?: { prompt: string; retryAt: string; attempt: number; reason?: "usage" | "network" | "capacity"; intent?: OperationIntent; displayPrompt?: string };
+  deferredTurn?: { operation?: QueuedOperation; prompt: string; retryAt: string; attempt: number; reason?: "usage" | "network" | "capacity"; intent?: OperationIntent; displayPrompt?: string };
   queuedPrompts?: (string | QueuedOperation)[];
   skillOptions?: Record<string, string>;
   turns: TurnSummary[];

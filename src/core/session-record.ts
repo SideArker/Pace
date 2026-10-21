@@ -14,10 +14,11 @@ const nonnegative = (value: unknown) => typeof value === 'number' && Number.isFi
 const integer = (value: unknown) => nonnegative(value) && Number.isInteger(value);
 const text = (value: unknown): value is string => typeof value === "string" && value.length > 0;
 const optionalText = (value: unknown) => value === undefined || typeof value === "string";
-const role = (value: unknown) => ["main", "scout", "verifier", "aside", "status"].includes(String(value));
-const assessment = (value: unknown) => ["closed", "partial", "unknown"].includes(String(value));
+const oneOf = (value: unknown, choices: readonly string[]) => typeof value === "string" && choices.includes(value);
+const role = (value: unknown) => oneOf(value, ["main", "scout", "verifier", "aside", "status"]);
+const assessment = (value: unknown) => oneOf(value, ["closed", "partial", "unknown"]);
 function isIntent(value: unknown): value is OperationIntent {
-  return ["verify_plan", "execute_plan", "revise_plan", "continue_verify", "aside", "adopt_side"].includes(String(value));
+  return oneOf(value, ["verify_plan", "execute_plan", "revise_plan", "continue_verify", "aside", "adopt_side"]);
 }
 function isRoute(value: unknown): boolean {
   return isRecord(value) && optionalText(value.model) &&
@@ -26,17 +27,17 @@ function isRoute(value: unknown): boolean {
 function isTask(value: unknown): boolean {
   return isRecord(value) && typeof value.id === "string" && value.id.length <= 100 &&
     typeof value.text === "string" && value.text.length <= 500 && typeof value.completed === "boolean" &&
-    ["user", "agent"].includes(String(value.source));
+    oneOf(value.source, ["user", "agent"]);
 }
 function isObservation(value: unknown): boolean {
-  return isRecord(value) && ["activity", "tasks", "answer", "artifacts"].includes(String(value.kind)) && optionalText(value.text) &&
+  return isRecord(value) && oneOf(value.kind, ["activity", "tasks", "answer", "artifacts"]) && optionalText(value.text) &&
     (value.items === undefined || (Array.isArray(value.items) && value.items.every(item =>
       isRecord(item) && typeof item.text === "string" && typeof item.completed === "boolean"))) &&
     (value.paths === undefined || (Array.isArray(value.paths) && value.paths.every(path => typeof path === "string")));
 }
 function isAttempt(value: unknown): boolean {
   return isRecord(value) && text(value.id) && text(value.taskId) && integer(value.generation) && text(value.stage) && role(value.role) &&
-    ["pending", "running", "completed", "failed", "cancelled", "awaiting_user"].includes(String(value.status)) &&
+    oneOf(value.status, ["pending", "running", "completed", "failed", "cancelled", "awaiting_user"]) &&
     isRoute(value.route) && typeof value.startedAt === "string" &&
     ["threadId", "turnId", "finishedAt", "result", "error", "handoff"].every(key => optionalText(value[key])) &&
     ["durationMs", "estimatedCostUsd", "knownCostUsd"].every(key => value[key] === undefined || nonnegative(value[key])) &&
@@ -51,7 +52,7 @@ function isControl(value: unknown): boolean {
     role(value.role) && text(value.objective) && text(value.choice) && nonnegative(value.confidence) &&
     (value.confidence as number) <= 1 && isRecord(value.probabilities) &&
     Object.values(value.probabilities).every(probability => nonnegative(probability) && (probability as number) <= 1) &&
-    nonnegative(value.durationMs) && typeof value.at === "string" && ["vex", "user"].includes(String(value.source)) && value.contextAction === "continue";
+    nonnegative(value.durationMs) && typeof value.at === "string" && oneOf(value.source, ["vex", "user"]) && value.contextAction === "continue";
 }
 function isSide(value: unknown): boolean {
   return isRecord(value) && text(value.id) && optionalText(value.taskId) && text(value.attemptId) &&
@@ -61,16 +62,24 @@ function isSide(value: unknown): boolean {
 }
 function isWorkflow(value: unknown): boolean {
   return isRecord(value) && value.version === 1 && integer(value.generation) &&
-    ["single", "scout", "plan", "scout_plan"].includes(String(value.shape)) &&
-    ["scout", "plan", "final"].includes(String(value.stage)) &&
+    oneOf(value.shape, ["single", "scout", "plan", "scout_plan"]) &&
+    oneOf(value.stage, ["scout", "plan", "final"]) &&
     (value.mainRoute === undefined || isRoute(value.mainRoute)) && optionalText(value.mainThreadId) && optionalText(value.scoutHandoff) &&
-    ["vex", "user"].includes(String(value.source)) && (value.needsAssessment === undefined || typeof value.needsAssessment === "boolean");
+    oneOf(value.source, ["vex", "user"]) && (value.needsAssessment === undefined || typeof value.needsAssessment === "boolean");
+}
+function isDeferred(value: unknown): boolean {
+  return isRecord(value) && typeof value.prompt === "string" && !!value.prompt.trim() &&
+    typeof value.retryAt === "string" && Number.isFinite(Date.parse(value.retryAt)) && integer(value.attempt) && (value.attempt as number) >= 1 &&
+    (value.reason === undefined || oneOf(value.reason, ["usage", "network", "capacity"])) &&
+    (value.intent === undefined || isIntent(value.intent)) && optionalText(value.displayPrompt) &&
+    (value.operation === undefined || validOperation(value.operation));
 }
 function validNewFields(value: Record<string, unknown>): boolean {
   const records = (field: string, validate: (item: unknown) => boolean) => value[field] === undefined ||
     (Array.isArray(value[field]) && value[field].every(validate) &&
       new Set((value[field] as Record<string, unknown>[]).map(item => item.id)).size === value[field].length);
-  return (value.revision === undefined || integer(value.revision)) && records("attempts", isAttempt) &&
+  return (value.revision === undefined || integer(value.revision)) &&
+    (value.deferredTurn === undefined || isDeferred(value.deferredTurn)) && records("attempts", isAttempt) &&
     records("controlDecisions", isControl) && records("sideAnswers", isSide) &&
     (value.activeTask === undefined || (isRecord(value.activeTask) && optionalText(value.activeTask.id) &&
       (value.activeTask.workflow === undefined || isWorkflow(value.activeTask.workflow)) &&
@@ -163,6 +172,7 @@ function isTurn(turn: unknown): boolean {
         typeof turn.prompt === "string" &&
         (turn.displayPrompt === undefined || typeof turn.displayPrompt === "string") &&
         (turn.intent === undefined || isIntent(turn.intent)) &&
+        (turn.operation === undefined || validOperation(turn.operation)) &&
         typeof turn.result === "string" &&
         typeof turn.at === "string" &&
         (turn.route === undefined || (isRecord(turn.route) && (turn.route.model === undefined || typeof turn.route.model === "string") && (turn.route.effort === undefined || EFFORTS.includes(turn.route.effort as (typeof EFFORTS)[number])))) &&
@@ -287,6 +297,7 @@ export function parseSessionSummary(value: unknown, project: string): Session | 
           ...(value.deferredTurn.reason === "usage" || value.deferredTurn.reason === "network" || value.deferredTurn.reason === "capacity" ? { reason: value.deferredTurn.reason as "usage" | "network" | "capacity" } : {}),
           ...(isIntent(value.deferredTurn.intent) ? { intent: value.deferredTurn.intent } : {}),
           ...(typeof value.deferredTurn.displayPrompt === "string" ? { displayPrompt: value.deferredTurn.displayPrompt } : {}),
+          ...(validOperation(value.deferredTurn.operation) ? { operation: structuredClone(value.deferredTurn.operation) } : {}),
         }
       : undefined;
 
