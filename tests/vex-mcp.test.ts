@@ -24,7 +24,7 @@ it('uses one persistent MCP connection and selects a validated route before Code
   server.setRequestHandler(CallToolRequestSchema, async request => {
     calls.push(request.params);
     const ids = (request.params.arguments?.options as { id: string }[]).map(option => option.id);
-    const choice = ids.includes('single') ? 'single' : '1:high';
+    const choice = ids.includes('closed') ? 'unknown' : ids.includes('single') ? 'single' : '1:high';
     return { content: [{ type: 'text', text: 'decision' }], structuredContent: { contractVersion: '1', choice, abstained: false, confidence: .9, probabilities: Object.fromEntries(ids.map(id => [id, id === choice ? .9 : .1 / (ids.length - 1)])) } };
   });
   await server.connect(serverTransport);
@@ -37,7 +37,7 @@ it('uses one persistent MCP connection and selects a validated route before Code
     await vex.start();
     await orchestrator.turn('first task', newSession('/project', 'auto'), config, () => {});
     await orchestrator.turn('second task', newSession('/project', 'auto'), config, () => {});
-    expect(calls).toHaveLength(4);
+    expect(calls).toHaveLength(6);
     expect(calls[0]).toMatchObject({ name: 'vex_choose', arguments: { options: [{ id: 'single' }, { id: 'scout' }, { id: 'plan' }, { id: 'scout_plan' }, { id: 'clarify' }] } });
     expect(calls[1]).toMatchObject({ name: 'vex_choose', arguments: { options: [{ id: '0:medium' }, { id: '1:high' }] } });
     expect(seen).toEqual([{ model: 'gpt-6-sol', effort: 'high' }, { model: 'gpt-6-sol', effort: 'high' }]);

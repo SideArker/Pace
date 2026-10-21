@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,8 +9,9 @@ import { PaceStore, newSession } from "../src/core/sessions.js";
 import { decision } from "./routing-fixture.js";
 import type { Config } from "../src/shared/types.js";
 
+import * as pricing from "../src/core/routing/pricing.js";
 let dir: string | undefined;
-afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true }); dir = undefined; });
+afterEach(async () => { vi.restoreAllMocks(); if (dir) await rm(dir, { recursive: true, force: true }); dir = undefined; });
 
 it("creates an editable routing file and applies changes to Vex requests", async () => {
   dir = await mkdtemp(join(tmpdir(), "pace-routing-prompts-"));
@@ -84,6 +85,7 @@ it("rejects malformed routing text with the field name", async () => {
 
 it("passes customized routing and handoff instructions through a turn", async () => {
   dir = await mkdtemp(join(tmpdir(), "pace-routing-prompts-"));
+  vi.spyOn(pricing, "refreshVersionManifest").mockResolvedValue(pricing.currentVersionManifest());
   const prompts = structuredClone(DEFAULT_ROUTING_PROMPTS);
   prompts.workflow.question = "Custom workflow question";
   prompts.objectives.scout = "Custom scout stage";
