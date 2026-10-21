@@ -121,6 +121,7 @@ export type AttemptObservation = {
   text?: string; items?: Pick<Task, "text" | "completed">[]; paths?: string[];
 };
 export type StageAttempt = {
+  pricing?: import("../core/routing/pricing.js").PriceSnapshot;
   id: string; taskId: string; generation: number; stage: string; role: AgentRole;
   status: "pending" | "running" | "completed" | "failed" | "cancelled" | "awaiting_user";
   route: Route; threadId?: string; turnId?: string; startedAt: string; finishedAt?: string;
@@ -149,7 +150,7 @@ export type Session = {
   controlDecisions?: ControlRecord[];
   sideAnswers?: SideAnswer[];
   verifier?: RoleState;
-  executionSource?: { sessionId: string; taskId?: string; artifact?: string; plan: string };
+  executionSource?: { sessionId: string; taskId?: string; artifact?: string; plan: string; operationId?: string };
   id: string;
   kind?: SessionKind;
   plan?: string;

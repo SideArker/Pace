@@ -3,7 +3,7 @@ import type { AgentRole, Session, StageAttempt, WorkflowShape } from "../shared/
 import type { CodexRunner, Execution, Progress } from "../integrations/codex-types.js";
 import { CodexRunError } from "../integrations/codex-types.js";
 import type { PaceStore } from "./sessions.js";
-import { costForUsage } from "./routing/pricing.js";
+import { costForUsage, PRICE_SNAPSHOT } from "./routing/pricing.js";
 import { updateAgentTasks } from "./tasks.js";
 
 export class TransitionSaveError extends Error {
@@ -37,6 +37,7 @@ export function durableRunner(
     const id = randomUUID();
     const taskId = session.activeTask?.id ?? session.id;
     const record: StageAttempt = {
+      pricing: structuredClone(PRICE_SNAPSHOT),
       id, taskId, generation: session.activeTask?.workflow?.generation ?? 0, role, stage,
       status: "running", route: { ...route }, threadId, startedAt: new Date().toISOString(), observations: [],
     };
@@ -98,8 +99,8 @@ export function durableRunner(
 }
 function finish(attempt: StageAttempt, started: number) {
   attempt.finishedAt = new Date().toISOString(); attempt.durationMs = Math.round(performance.now() - started);
-  attempt.estimatedCostUsd = attempt.usageComplete ? costForUsage(attempt.route, attempt.usage) : undefined;
-  attempt.knownCostUsd = costForUsage(attempt.route, attempt.knownUsage);
+  attempt.estimatedCostUsd = attempt.usageComplete ? costForUsage(attempt.route, attempt.usage, attempt.pricing) : undefined;
+  attempt.knownCostUsd = costForUsage(attempt.route, attempt.knownUsage, attempt.pricing);
 }
 /** Human reconciliation is explicit; unknown execution is never interpreted as no work. */
 export async function resolveAttempt(store: PaceStore, session: Session, id: string, result: string) {

@@ -37,6 +37,7 @@ function isObservation(value: unknown): boolean {
 }
 function isAttempt(value: unknown): boolean {
   return isRecord(value) && text(value.id) && text(value.taskId) && integer(value.generation) && text(value.stage) && role(value.role) &&
+    (value.pricing === undefined || (isRecord(value.pricing) && text(value.pricing.checkedAt) && text(value.pricing.source) && value.pricing.processing === "standard" && text(value.pricing.context) && isRecord(value.pricing.rates) && Object.values(value.pricing.rates).every(rates => isRecord(rates) && ["input", "cachedInput", "cacheWriteInput", "output"].every(key => nonnegative(rates[key]))))) &&
     oneOf(value.status, ["pending", "running", "completed", "failed", "cancelled", "awaiting_user"]) &&
     isRoute(value.route) && typeof value.startedAt === "string" &&
     ["threadId", "turnId", "finishedAt", "result", "error", "handoff"].every(key => optionalText(value[key])) &&
@@ -89,7 +90,7 @@ function validNewFields(value: Record<string, unknown>): boolean {
       (value.verifier.context === undefined || isContextMeasurement(value.verifier.context)) &&
       (value.verifier.tasks === undefined || (Array.isArray(value.verifier.tasks) && value.verifier.tasks.length <= 100 && value.verifier.tasks.every(isTask))))) &&
     (value.executionSource === undefined || (isRecord(value.executionSource) && text(value.executionSource.sessionId) &&
-      optionalText(value.executionSource.taskId) && optionalText(value.executionSource.artifact) && typeof value.executionSource.plan === "string")) &&
+      optionalText(value.executionSource.taskId) && optionalText(value.executionSource.artifact) && optionalText(value.executionSource.operationId) && typeof value.executionSource.plan === "string")) &&
     (value.queuedPrompts === undefined || (Array.isArray(value.queuedPrompts) &&
       value.queuedPrompts.every(item => typeof item === "string" || validOperation(item))));
 }
