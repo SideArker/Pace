@@ -41,6 +41,7 @@ export class RemoteDomain {
   private readonly sessions = new Map<string, PaceSession>();
   private readonly active = new Map<string, Active>();
   private readonly pendingLaunch = new Set<string>();
+  private readonly launches = new Set<Promise<void>>();
   private readonly launchErrors = new Map<string, string>();
   private readonly controllers = new Map<string, AbortController>();
   private readonly interactions = new Map<string, Interaction>();
@@ -75,7 +76,8 @@ export class RemoteDomain {
         if (controller) this.controllers.delete(session.id);
         this.active.delete(session.id);
         for (const [id, item] of this.interactions) if (item.sessionId === session.id) this.removeInteraction(id);
-        this.sessions.set(session.id, session); this.bridge?.changed(session); this.emit(session); if (completed) void this.drain(session);
+        this.sessions.set(session.id, session); this.bridge?.changed(session); this.emit(session);
+        if (completed && !this.pendingLaunch.has(session.id)) await this.drain(session);
       }
     }) as Orchestrator["turn"];
     orchestrator.turn = this.observedTurn;
@@ -95,6 +97,7 @@ export class RemoteDomain {
     this.disposed = true;
     if (this.orchestrator.turn === this.observedTurn) this.orchestrator.turn = this.previousTurn;
     for (const controller of this.controllers.values()) controller.abort();
+    while (this.launches.size) await Promise.allSettled([...this.launches]);
     for (const item of this.interactions.values()) clearTimeout(item.timer);
     this.interactions.clear(); this.listeners.clear();
   }
@@ -258,17 +261,19 @@ export class RemoteDomain {
     this.pendingLaunch.add(source.id);
     this.launchErrors.delete(source.id);
     this.sessions.set(source.id, source);
-    void (async () => {
+    const work = (async () => {
       let completed = false;
       try {
         if (item.sessionId !== source.id || (item.taskId && item.taskId !== source.activeTask?.id)) throw new Error("Queued operation target changed; select its original task before running it.");
         const config = await this.store.loadConfig();
         let session = source;
         let prompt = item.text;
+        let alreadyCompleted = false;
         if (item.intent === "execute_plan") {
           const argument = item.text.replace(/^\/(?:execute|run-plan)(?:\s+|$)/, "").trim();
-          const execution = await preparePlanExecution(this.store, source, config, argument || undefined);
+          const execution = await preparePlanExecution(this.store, source, config, argument || undefined, item.id);
           session = execution.session; prompt = execution.prompt;
+          alreadyCompleted = execution.completed;
           this.sessions.set(session.id, session); this.bridge?.changed(session); this.emit(session);
         } else if (item.intent === "verify_plan") {
           const argument = item.text.replace(/^\/verify(?:\s+|$)/, "").trim();
@@ -277,15 +282,20 @@ export class RemoteDomain {
           if (!plan?.trim()) throw new Error("Conversation has no saved plan.");
           prompt = verifyPlanPrompt(plan, source.turns[0]?.prompt, file ? parts.slice(1).join(" ") : argument || undefined);
         } else if (item.intent === "aside") prompt = item.text.replace(/^\/btw(?:\s+|$)/, "").trim();
-        if (this.bridge) await this.bridge.submit(prompt, session, item.intent, item);
-        else await this.orchestrator.turn(prompt, session, config, () => {}, undefined, true, item.intent, undefined, item);
+        if (this.disposed) throw new Error("Remote host is stopping.");
+        if (!alreadyCompleted) {
+          if (this.bridge) await this.bridge.submit(prompt, session, item.intent, item);
+          else await this.orchestrator.turn(prompt, session, config, () => {}, undefined, true, item.intent, undefined, item);
+        }
         if (queued) await this.store.update(source, latest => {
           latest.queuedPrompts = latest.queuedPrompts?.filter(value => typeof value === "string" || value.id !== item.id);
         }, false);
         completed = true;
       } catch (error) { this.launchErrors.set(source.id, String(error)); this.emit(source); }
-      finally { this.pendingLaunch.delete(source.id); if (completed) void this.drain(source); }
+      finally { this.pendingLaunch.delete(source.id); if (completed && !this.disposed) await this.drain(source); }
     })();
+    this.launches.add(work);
+    void work.finally(() => this.launches.delete(work)).catch(() => {});
   }
   private async queue(session: PaceSession, item: QueuedOperation) {
     const latest = await this.store.update(session, current => {

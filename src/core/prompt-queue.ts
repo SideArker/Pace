@@ -10,6 +10,11 @@ export class PromptQueue {
   }
   private changed(sessionId: string) { this.onChange?.(sessionId, [...this.operations(sessionId)]); }
   operations(sessionId: string): readonly QueuedOperation[] { return this.prompts.get(sessionId) ?? []; }
+  peekOperation(sessionId: string): QueuedOperation | undefined { return this.operations(sessionId)[0]; }
+  acknowledge(sessionId: string, operationId: string): void {
+    const index = this.operations(sessionId).findIndex(item => item.id === operationId);
+    if (index >= 0) this.remove(sessionId, index);
+  }
   list(sessionId: string): readonly string[] { return this.operations(sessionId).map(item => item.text); }
   add(sessionId: string, prompt: string | QueuedOperation): number {
     const pending = this.prompts.get(sessionId) ?? [];

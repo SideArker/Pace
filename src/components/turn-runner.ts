@@ -1,9 +1,11 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
-import type { Config, Route, Session, TurnActivity } from "../shared/types.js";
+import type { Config, Route, Session, TurnActivity, OperationIntent, QueuedOperation } from "../shared/types.js";
 import type { CodexRunner, Progress } from "../integrations/codex.js";
 import { Orchestrator, VexUnavailableError } from "../core/orchestrator.js";
 import { artifactPath } from "../core/system/artifacts.js";
 import { PaceStore } from "../core/sessions.js";
+import { preparePlanExecution } from "../core/operations.js";
+import { durableRunner } from "../core/task-execution.js";
 import { PromptQueue } from "../core/prompt-queue.js";
 import { checkpointDue, createCheckpointIfDue } from "../core/checkpoint.js";
 import { formatLiveUsage, formatTurnFooter, modelName } from "./turn-format.js";
@@ -62,7 +64,25 @@ export function createTurnRunner({
   getConfig: () => Config;
   readLimits?: () => Promise<UsageLimits | undefined>;
 }) {
-  const runTurn = async (text: string, turnSession: Session, turnConfig: Config, intent?: "verify_plan" | "execute_plan" | "revise_plan" | "continue_verify", displayPrompt?: string, automaticRetry = false) => {
+  const runTurn = async (text: string, turnSession: Session, turnConfig: Config, intent?: OperationIntent, displayPrompt?: string, automaticRetry = false, queuedOperation?: QueuedOperation): Promise<boolean> => {
+    if (intent === "execute_plan" && !turnSession.executionSource && (turnSession.kind === "planning" || turnSession.plan || turnSession.planArtifact)) {
+      const owner = new AbortController();
+      jobs.current.set(turnSession.id, { session: turnSession, controller: owner, prompt: text });
+      setRunningIds([...jobs.current.keys()]);
+      try {
+      const argument = (queuedOperation?.text ?? "").replace(/^\/(?:execute|run-plan)(?:\s+|$)/, "").trim();
+      const execution = await preparePlanExecution(store, turnSession, turnConfig, argument || undefined, queuedOperation?.id);
+      if (activeSessionId.current === turnSession.id) { activeSessionId.current = execution.session.id; setSession(execution.session); }
+      rememberSession(execution.session);
+      const success = execution.completed || await runTurn(execution.prompt, execution.session, turnConfig, intent, displayPrompt, automaticRetry, queuedOperation);
+      if (success && queuedOperation) promptQueue.current.acknowledge(turnSession.id, queuedOperation.id);
+      const next = success ? promptQueue.current.peekOperation(turnSession.id) : undefined;
+      if (next) void runTurn(next.text, turnSession, getConfig(), next.intent, undefined, false, next);
+      return success;
+      } catch (error) { addFor(turnSession.id, "error", String(error)); return false; }
+      finally { if (jobs.current.get(turnSession.id)?.controller === owner) jobs.current.delete(turnSession.id); setRunningIds([...jobs.current.keys()]); }
+    }
+    let succeeded = false;
     let tasksChanged = false;
     let deferredForRetry = false;
     let failedForRetry = false;
@@ -128,8 +148,7 @@ export function createTurnRunner({
             setStatusFor(sessionId, progress.category === "command" ? formatCommandStatus(progress.title) : progress.title);
           }
           if (progress.kind === "tasks") {
-            turnSession.tasks = updateAgentTasks(turnSession.tasks, progress.items);
-            tasksChanged = true;
+            tasksChanged = false;
             rememberSession(turnSession);
             if (activeSessionId.current === sessionId) setSession({ ...turnSession });
           }
@@ -156,7 +175,9 @@ export function createTurnRunner({
         () => activeSessionId.current === sessionId,
         intent,
         displayPrompt,
+        queuedOperation,
       );
+      succeeded = outcome.note !== "Vex requested clarification";
       if (turnSession.deferredTurn?.prompt === text) {
         turnSession.deferredTurn = undefined;
         await store.saveChanges(turnSession, () => activeSessionId.current === sessionId);
@@ -185,9 +206,9 @@ export function createTurnRunner({
       );
       for (const artifact of outcome.artifacts) addFor(sessionId, "artifact", artifactPath(store, outcome.session, artifact));
       addFor(sessionId, "divider", "");
-      if (!turnSession.deferredTurn && checkpointDue(turnSession)) {
+      if (!turnSession.deferredTurn && outcome.role !== "aside" && outcome.role !== "verifier" && intent !== "verify_plan" && intent !== "continue_verify" && intent !== "aside" && outcome.session.id === sessionId && checkpointDue(turnSession)) {
         try {
-          const checkpoint = await createCheckpointIfDue(turnSession, runner, progress => {
+          const checkpoint = await createCheckpointIfDue(turnSession, durableRunner(runner, store, turnSession, "status", "checkpoint", () => activeSessionId.current === sessionId), progress => {
             if (progress.kind === "status") setStatusFor(sessionId, progress.text);
             if (progress.kind === "approval") showApproval(progress, sessionId, controller);
             if (progress.kind === "question") showQuestion(progress, sessionId, controller);
@@ -222,7 +243,7 @@ export function createTurnRunner({
         const retryAt = reason === "usage"
           ? usageRetryAt(error, await readLimits().catch(() => undefined))
           : transientRetryAt(reason, attempt);
-        turnSession.deferredTurn = { prompt: text, retryAt: retryAt.toISOString(), attempt, reason, intent, displayPrompt };
+        turnSession.deferredTurn = { prompt: text, retryAt: retryAt.toISOString(), attempt, reason, intent, displayPrompt, ...(queuedOperation ? { operation: queuedOperation } : {}) };
         try {
           await store.saveChanges(turnSession, () => activeSessionId.current === sessionId);
           deferredForRetry = true;
@@ -277,12 +298,14 @@ export function createTurnRunner({
       if (typeof performance !== "undefined" && typeof performance.clearMeasures === "function") {
         try { performance.clearMeasures(); } catch {}
       }
-      const next = deferredForRetry || failedForRetry || turnSession.deferredTurn ? undefined : promptQueue.current.take(sessionId);
+      if (succeeded && queuedOperation) promptQueue.current.acknowledge(sessionId, queuedOperation.id);
+      const next = !succeeded || deferredForRetry || failedForRetry || turnSession.deferredTurn ? undefined : promptQueue.current.peekOperation(sessionId);
       if (next !== undefined) {
         setQueueVersion(value => value + 1);
-        void runTurn(next, turnSession, getConfig());
+        void runTurn(next.text, turnSession, getConfig(), next.intent, undefined, false, next);
       }
     }
+    return succeeded;
   };
   return runTurn;
 }

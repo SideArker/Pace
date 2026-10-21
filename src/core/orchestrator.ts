@@ -107,6 +107,13 @@ export class Orchestrator {
   ): Promise<TurnOutcome> {
     const startedAt = performance.now();
     const prompts = loadRoutingPrompts(this.store.baseDir);
+    if (queuedOperation) {
+      const target = session.executionSource?.sessionId ?? session.id;
+      if (queuedOperation.sessionId !== target || (queuedOperation.taskId && !session.executionSource && queuedOperation.taskId !== session.activeTask?.id)) throw new Error("Queued operation belongs to another task or session");
+      const operationId = queuedOperation.id;
+      const completed = session.turns.find(turn => turn.operation?.id === operationId && !turn.failed);
+      if (completed) return { session, role: completed.intent === "verify_plan" || completed.intent === "continue_verify" ? "verifier" : "main", result: completed.result, note: "Operation already completed", route: completed.route ?? session.route, durationMs: 0, artifacts: [], stages: [], routing: [] };
+    }
     if (!queuedOperation && !intent && /^\/btw(?:\s|$)/.test(prompt)) return this.aside(prompt.replace(/^\/btw\s*/, ""), session, config, onProgress, signal, activateOnSave);
     if (!queuedOperation && !intent && /^\/(?:execute|run-plan)(?:\s|$)/.test(prompt)) {
       queuedOperation = { ...operation(prompt, session.id, session.activeTask?.id), intent: "execute_plan" }; intent = "execute_plan";
@@ -116,7 +123,7 @@ export class Orchestrator {
     }
     if (intent === "execute_plan" && !session.executionSource && (session.kind === "planning" || session.plan || session.planArtifact)) {
       const argument = (queuedOperation?.text ?? prompt).replace(/^\/(?:execute|run-plan)(?:\s+|$)/, "").trim();
-      const execution = await preparePlanExecution(this.store, session, config, argument || undefined);
+      const execution = await preparePlanExecution(this.store, session, config, argument || undefined, queuedOperation?.id);
       return this.turn(execution.prompt, execution.session, config, onProgress, signal, activateOnSave, intent, displayPrompt, queuedOperation);
     }
     if (intent === "verify_plan" && queuedOperation?.text.startsWith("/verify")) {
