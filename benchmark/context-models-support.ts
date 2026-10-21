@@ -57,21 +57,38 @@ export class Capture {
   };
   audit(runnerUsage?: Usage) {
     const updates = this.events.filter(e => e.direction === 'in' && e.message.method === 'thread/tokenUsage/updated');
-    let started = false; let previous: number | undefined; let summed: Record<string, number | null> | undefined;
-    let calls = 0; const contexts: unknown[] = [];
-    const keys = ['inputTokens', 'cachedInputTokens', 'cacheWriteInputTokens', 'outputTokens', 'reasoningOutputTokens'];
+    // Resume notifications can arrive after turn/start. Attribute usage by turn ID,
+    // not by notification arrival time, before summing distinct model requests.
+    const activeTurnIds = new Set<string>();
     for (const event of this.events) {
-      if (event.direction === 'out' && ['turn/start', 'thread/compact/start'].includes(event.message.method ?? '')) started = true;
-      if (event.direction !== 'in' || event.message.method !== 'thread/tokenUsage/updated') continue;
+      const message = event.message;
+      const value = event.direction === 'response' && message.method === 'turn/start'
+        ? message.result : event.direction === 'in' && ['turn/started', 'turn/completed'].includes(message.method ?? '') ? message.params : undefined;
+      if (isRecord(value) && isRecord(value.turn) && typeof value.turn.id === 'string') activeTurnIds.add(value.turn.id);
+    }
+    let previous: number | undefined; let summed: Record<string, number | null> | undefined;
+    let calls = 0; let ignoredOtherTurnEvents = 0; let unknownTurnEvents = 0;
+    let compactionPlaceholder = false;
+    const contexts: unknown[] = [];
+    const keys = ['inputTokens', 'cachedInputTokens', 'cacheWriteInputTokens', 'outputTokens', 'reasoningOutputTokens'];
+    for (const event of updates) {
       const p = event.message.params as any; const u = p.tokenUsage; const total = u?.total?.totalTokens;
-      if (!started) { previous = total; continue; }
+      if (typeof p.turnId !== 'string' || activeTurnIds.size !== 1) { unknownTurnEvents++; continue; }
+      if (!activeTurnIds.has(p.turnId)) { ignoredOtherTurnEvents++; continue; }
       if (typeof total !== 'number' || (previous !== undefined && total <= previous)) continue;
-      previous = total; calls++; contexts.push({last: u.last, modelContextWindow: u.modelContextWindow});
+      previous = total;
+      contexts.push({last: u.last, modelContextWindow: u.modelContextWindow});
+      // Native compaction reports remaining context in last.totalTokens while
+      // billing fields are zero. This is not a measured zero-cost inference.
+      if (u.last?.totalTokens > 0 && u.last?.inputTokens === 0 && u.last?.outputTokens === 0) {
+        compactionPlaceholder = true; continue;
+      }
+      calls++;
       summed ??= Object.fromEntries(keys.map(key => [key, 0]));
       for (const key of keys) summed[key] = summed[key] === null || typeof u.last?.[key] !== 'number' ? null : summed[key]! + u.last[key];
     }
     const mapping = { inputTokens: 'input_tokens', cachedInputTokens: 'cached_input_tokens', cacheWriteInputTokens: 'cache_write_input_tokens', outputTokens: 'output_tokens', reasoningOutputTokens: 'reasoning_output_tokens' } as const;
-    const usage = summed ? Object.fromEntries(Object.entries(mapping).map(([camel, snake]) => [snake, summed![camel] ?? null])) : undefined;
+    const usage = summed && !compactionPlaceholder && !unknownTurnEvents ? Object.fromEntries(Object.entries(mapping).map(([camel, snake]) => [snake, summed![camel] ?? null])) : undefined;
     const aggregationMatches = usage && runnerUsage ? Object.entries(usage).every(([key, value]) => value === null || runnerUsage[key as keyof Usage] === value) : null;
     const rates = PRICES.rates[this.route.model as keyof typeof PRICES.rates];
     let estimateNoUnreportedWritesUsd: number | undefined; let upperBoundUnknownWritesUsd: number | undefined;
@@ -84,6 +101,6 @@ export class Capture {
     const threads = this.events.filter(e => e.direction === 'response' && ['thread/start','thread/resume'].includes(e.message.method ?? '')).map(e => {
       const r = e.message.result as any; return {method:e.message.method, threadId:r?.thread?.id, model:r?.model, effort:r?.reasoningEffort, instructionSources:r?.instructionSources, configurationDurationMs: Date.parse(e.at)-Date.parse(this.events.find(x=>x.direction==='out'&&x.message.method===e.message.method)!.at)};
     });
-    return {usage, runnerUsage, aggregationMatches, modelRequests: calls, rawUsageEvents: updates.length, contexts, threads, reroutes: this.events.filter(e => e.message.method === 'model/rerouted'), estimateNoUnreportedWritesUsd, upperBoundUnknownWritesUsd};
+    return {usage, runnerUsage, aggregationMatches, activeTurnIds: [...activeTurnIds], ignoredOtherTurnEvents, unknownTurnEvents, compactionPlaceholder, modelRequests: compactionPlaceholder ? null : calls, rawUsageEvents: updates.length, contexts, threads, reroutes: this.events.filter(e => e.message.method === 'model/rerouted'), estimateNoUnreportedWritesUsd, upperBoundUnknownWritesUsd};
   }
 }

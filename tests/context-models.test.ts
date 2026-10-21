@@ -11,13 +11,27 @@ vi.mock('../src/integrations/app-server-runner.js',()=>({AppServerRunner:class {
 describe('context/model study measurement boundaries',()=>{
  it('aggregates multiple requests once, ignores resume baseline and duplicate events, and does not double-price reasoning',async()=>{
   const root=await mkdtemp(join(tmpdir(),'pace-study-test-'));const c=new Capture(join(root,'events.jsonl'),{model:'gpt-6.1-sol',effort:'medium'});
-  const emit=(total:number,input:number,cached:number,output:number)=>c.log('in',{method:'thread/tokenUsage/updated',params:{tokenUsage:{total:{totalTokens:total},last:{inputTokens:input,cachedInputTokens:cached,cacheWriteInputTokens:0,outputTokens:output,reasoningOutputTokens:4}}}});
-  emit(1000,900,0,100);c.log('out',{method:'turn/start'});emit(1000,900,0,100);emit(1110,100,40,10);emit(1110,100,40,10);emit(1230,110,50,10);
+  const emit=(total:number,input:number,cached:number,output:number)=>c.log('in',{method:'thread/tokenUsage/updated',params:{turnId:'current',tokenUsage:{total:{totalTokens:total},last:{inputTokens:input,cachedInputTokens:cached,cacheWriteInputTokens:0,outputTokens:output,reasoningOutputTokens:4}}}});
+  c.log('in',{method:'thread/tokenUsage/updated',params:{turnId:'previous',tokenUsage:{total:{totalTokens:1000},last:{inputTokens:900,outputTokens:100}}}});c.log('out',{method:'turn/start'});c.log('response',{method:'turn/start',result:{turn:{id:'current'}}});c.log('in',{method:'thread/tokenUsage/updated',params:{turnId:'previous',tokenUsage:{total:{totalTokens:1000},last:{inputTokens:900,outputTokens:100}}}});emit(1110,100,40,10);emit(1110,100,40,10);emit(1230,110,50,10);
   const a=c.audit({input_tokens:210,cached_input_tokens:90,cache_write_input_tokens:0,output_tokens:20,reasoning_output_tokens:8});
   expect(a.modelRequests).toBe(2);expect(a.aggregationMatches).toBe(true);expect(a.usage).toMatchObject({input_tokens:210,reasoning_output_tokens:8});expect(a.estimateNoUnreportedWritesUsd).toBeCloseTo((120*2+90*0.1+20*10)/1e6);
  });
  it('preserves unknown measurements rather than converting absent fields to zero',async()=>{
-  const root=await mkdtemp(join(tmpdir(),'pace-study-test-'));const c=new Capture(join(root,'events.jsonl'),{model:'gpt-6-luna',effort:'low'});c.log('out',{method:'turn/start'});c.log('in',{method:'thread/tokenUsage/updated',params:{tokenUsage:{total:{totalTokens:11},last:{inputTokens:10,outputTokens:1}}}});expect(c.audit().usage?.cached_input_tokens).toBeNull();expect(c.audit().usage?.cache_write_input_tokens).toBeNull();expect(c.audit().estimateNoUnreportedWritesUsd).toBeUndefined();
+  const root=await mkdtemp(join(tmpdir(),'pace-study-test-'));const c=new Capture(join(root,'events.jsonl'),{model:'gpt-6-luna',effort:'low'});c.log('out',{method:'turn/start'});c.log('response',{method:'turn/start',result:{turn:{id:'current'}}});c.log('in',{method:'thread/tokenUsage/updated',params:{turnId:'current',tokenUsage:{total:{totalTokens:11},last:{inputTokens:10,outputTokens:1}}}});expect(c.audit().usage?.cached_input_tokens).toBeNull();expect(c.audit().usage?.cache_write_input_tokens).toBeNull();expect(c.audit().estimateNoUnreportedWritesUsd).toBeUndefined();
+ });
+ it('excludes late usage from another model turn even when its total exceeds the previous baseline',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'pace-study-test-'));const c=new Capture(join(root,'events.jsonl'),{model:'gpt-6.1-sol',effort:'medium'});
+  c.log('out',{method:'turn/start'});
+  const update=(turnId:string,total:number,input:number,output:number)=>c.log('in',{method:'thread/tokenUsage/updated',params:{turnId,tokenUsage:{total:{totalTokens:total},last:{inputTokens:input,cachedInputTokens:0,cacheWriteInputTokens:0,outputTokens:output,reasoningOutputTokens:0}}}});
+  update('luna-previous',20000,19800,200);
+  c.log('response',{method:'turn/start',result:{turn:{id:'sol-current'}}});update('sol-current',44600,24500,100);update('sol-current',69200,24500,100);
+  const audit=c.audit();expect(audit.usage?.input_tokens).toBe(49000);expect(audit.modelRequests).toBe(2);expect(audit.ignoredOtherTurnEvents).toBe(1);
+ });
+ it('marks native compaction billing placeholders unknown and still records context',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'pace-study-test-'));const c=new Capture(join(root,'events.jsonl'),{model:'gpt-6.1-sol',effort:'medium'});
+  c.log('out',{method:'thread/compact/start'});c.log('in',{method:'turn/started',params:{turn:{id:'compact'}}});
+  c.log('in',{method:'thread/tokenUsage/updated',params:{turnId:'compact',tokenUsage:{total:{totalTokens:50000},last:{totalTokens:7000,inputTokens:0,outputTokens:0,cachedInputTokens:0,cacheWriteInputTokens:0,reasoningOutputTokens:0}}}});
+  const audit=c.audit();expect(audit.compactionPlaceholder).toBe(true);expect(audit.usage).toBeUndefined();expect(audit.estimateNoUnreportedWritesUsd).toBeUndefined();expect(audit.modelRequests).toBeNull();expect(audit.contexts).toHaveLength(1);
  });
  it('copies btw retained exchanges and last 24 visible lines, without inventing tool history',()=>{
   const history=[{user:'correction: throw',assistant:'unfinished'}];const lines=Array.from({length:30},(_,i)=>({role:'activity',text:`visible ${i}`,detail:`detail ${i}`}));const p=btw(history,lines,[{text:'pending',completed:false}],'summary','active');expect(p).toContain('User: correction: throw\nPace: unfinished');expect(p).not.toContain('visible 5 (');expect(p).toContain('visible 6 (detail 6)');expect(p).toContain('Current user request (still in progress):\nactive');expect(p).toContain('[ ] pending');expect(p).toContain('Do not edit files or take action.');expect(replay(history,'next')).toContain(JSON.stringify(history));

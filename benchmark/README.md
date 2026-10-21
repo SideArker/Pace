@@ -92,3 +92,51 @@ The first coding comparison and its limitations are in [the 2026-09-29 context q
 Codex dollar values are **estimated Standard API equivalents**, since actual account billing is unavailable to the SDK. Stage cost uses its own model's ordinary, cached, cache-write, and output rates; reasoning output is already in output. Workflow cost sums all recorded stages. Vex cost is measured separately and never enters routing optimization. Compare quality-passing pairs for policy decisions, and report all-attempt cost, failures, latency, and raw tokens separately; mark cost unknown when usage was not reported.
 
 Runs are sequential and consume Codex account allowance. They use the existing Codex login. The baseline disables MCP servers; routed arms may call Vex, and those agent-initiated calls are counted separately from Pace routing calls. A repository under test can still invoke installed programs through shell commands. Review raw event logs before sharing them because they may contain source text or command output.
+
+## 6. Context and model continuation study (2026-10-20)
+
+The extended study is available through both existing entry points. It uses the
+production App Server transport directly from TypeScript source, independent
+fixtures and initial threads, fixed Sol Medium/Luna Low routes, and two coding
+follow-ups after each intervention. Production routing is unchanged.
+
+```bash
+npm run benchmark:context-quality -- --study --help
+npm run benchmark:thread-switch -- --study --phase pilot --list
+npm run benchmark:context-quality -- --study --phase pilot --out benchmark/results/my-context-model-pilot
+```
+
+The pilot contains 16 scenario executions, 83 model turns and two native
+compactions, plus at most four checkpoint-repair turns. Family A compares four
+context strategies. Family B compares Sol-only, Luna in the main thread, and a
+separate Luna side answer using the current `/btw` prompt format. Family C compares
+Sol and Luna checkpoint authors before an identical fresh Sol continuation.
+
+The preregistered matrix, quality criteria and selection rule are in
+[`protocol/context-models-2026-10-20.md`](protocol/context-models-2026-10-20.md).
+After reviewing the pilot, freeze the implementation and explicitly select one
+comparison per family for the two held-out cases, for example:
+
+```bash
+npm run benchmark:context-quality -- --study --phase confirmation --family A --variants resume,fresh_checkpoint --repeat 3 --out benchmark/results/my-context-confirmation-A
+npm run benchmark:thread-switch -- --study --phase confirmation --family B --variants sol,luna_main --repeat 3 --out benchmark/results/my-context-confirmation-B
+npm run benchmark:context-quality -- --study --phase confirmation --family C --variants checkpoint_sol,checkpoint_luna --repeat 3 --out benchmark/results/my-context-confirmation-C
+```
+
+These are command examples, not predetermined winning variants. Each output
+folder must be new. `--case`, `--suite`, and `--timeout-minutes` restrict runs.
+The list mode never starts a model. `context-models-probe.ts OUTPUT_DIRECTORY`
+checks actual model access and multi-request usage aggregation. Raw JSON-RPC,
+requested and observed models/efforts, thread transitions, prompts, responses,
+usage categories, durations, diffs, final files, and external checks are saved.
+Neutral-ID review bundles are under `blind/`; automated checks do not constitute
+manual quality grades. Missing usage remains unknown. Cache-write uncertainty,
+if present, is explicit rather than silently reported as zero.
+
+```bash
+python3 benchmark/context-models-analyze.py benchmark/results/context-models-2026-10-20
+```
+
+The analyzer writes `analysis.json` and includes failed and partial attempts.
+It does not grade quality or select policy. Existing non-study benchmark flags
+and behavior remain available.
