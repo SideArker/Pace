@@ -12,6 +12,7 @@ import { costForUsage } from "./routing/pricing.js";
 /** Separate read-only context snapshot; never transfers ownership of the main task. */
 export async function runAside(orchestrator: Orchestrator, question: string, source: Session, config: Config, progress: (event: Progress) => void, signal?: AbortSignal, activate: boolean | (() => boolean) = true): Promise<TurnOutcome> {
   if (!question.trim()) throw new Error("Type /btw <question> to ask a side question.");
+  await requiredSave(orchestrator.store, source, activate);
   const session = structuredClone(source);
   const snapshotAt = new Date().toISOString();
   const prompts = loadRoutingPrompts(orchestrator.store.baseDir);
@@ -27,14 +28,19 @@ export async function runAside(orchestrator: Orchestrator, question: string, sou
       const decision = validateDecision(await awaitRouting(orchestrator.vex.choose(request), signal), request.options);
       route = chosenRoute(decision.choice, enabled);
       routing.push({ objective: prompts.side.objective, ...decision, attempts: attempt });
-      session.controlDecisions = [...(session.controlDecisions ?? []), { id: randomUUID(), taskId: session.activeTask?.id, role: "aside", stage: "aside", objective: prompts.side.objective, choice: decision.choice, confidence: decision.confidence, probabilities: decision.probabilities, durationMs: Math.round(performance.now() - started), at: snapshotAt, source: "vex", contextAction: "continue" }];
+      session.controlDecisions = [...(session.controlDecisions ?? []), { id: randomUUID(), taskId: session.activeTask?.id, role: "aside", stage: "aside", objective: prompts.side.objective, choice: decision.choice, confidence: decision.confidence, probabilities: decision.probabilities, durationMs: Math.round(performance.now() - started), at: snapshotAt, source: "vex", contextAction: "continue", requests: attempt }];
       await requiredSave(orchestrator.store, session, activate);
       break;
     } catch (error) { if (error instanceof TransitionSaveError || signal?.aborted) throw error; failure = error; }
   }
-  if (!route) throw new Error(`Vex could not choose a side route after two attempts: ${String(failure)}`);
+  if (!route) {
+    session.controlDecisions = [...(session.controlDecisions ?? []), { id: randomUUID(), taskId: session.activeTask?.id, role: "aside", stage: "aside", objective: prompts.side.objective, choice: "unavailable", confidence: 0, probabilities: {}, durationMs: Math.round(performance.now() - started), at: snapshotAt, source: "vex", contextAction: "continue", requests: 2, failed: true, error: String(failure) }];
+    await requiredSave(orchestrator.store, session, activate);
+    await requiredSave(orchestrator.store, source, activate);
+    throw new Error(`Vex could not choose a side route after two attempts: ${String(failure)}`);
+  }
   const id = randomUUID();
-  const firstAttempt = session.attempts?.length ?? 0;
+  let asideAttemptId: string | undefined;
   const snapshot = {
     snapshotAt, scope: "Retained exchanges, task brief and recorded observations; not the full tool history",
     turns: session.turns, task: session.activeTask, tasks: session.tasks,
@@ -42,11 +48,11 @@ export async function runAside(orchestrator: Orchestrator, question: string, sou
   };
   progress({ kind: "route", route, role: "aside", taskId: session.activeTask?.id });
   try {
-    const execution = await durableRunner(orchestrator.runner, orchestrator.store, session, "aside", "aside", activate).run(
+    const execution = await durableRunner(orchestrator.runner, orchestrator.store, session, "aside", "aside", activate, undefined, id => { asideAttemptId = id; }).run(
       `${prompts.side.instruction}\n\nContext snapshot:\n${JSON.stringify(snapshot)}\n\nUser side question:\n${question}`,
       session.projectPath, route, undefined, progress, signal, "side", [], config.approvalMode,
     );
-    const attempt = session.attempts!.slice(firstAttempt).find(item => item.role === "aside")!;
+    const attempt = session.attempts!.find(item => item.id === asideAttemptId)!;
     session.sideAnswers = [...(session.sideAnswers ?? []), { id, taskId: session.activeTask?.id, attemptId: attempt.id, question, snapshotAt, route, result: execution.result, threadId: execution.threadId }];
     await requiredSave(orchestrator.store, session, activate);
     // Refresh the caller through its concrete changes, preserving any main work
@@ -55,7 +61,7 @@ export async function runAside(orchestrator: Orchestrator, question: string, sou
     return { session, role: "aside", result: execution.result, note: `Side answer ${id}; lead remains ${session.route.model ?? "default"} ${session.route.effort ?? "default"}`, route, durationMs: Math.round(performance.now() - started), artifacts: [], usage: execution.usage, estimatedCostUsd: costForUsage(route, execution.usage), stages: [{ objective: prompts.side.objective, route, durationMs: attempt.durationMs ?? 0, usage: execution.usage, estimatedCostUsd: costForUsage(route, execution.usage) }], routing };
   } catch (error) {
     if (error instanceof TransitionSaveError) throw error;
-    const attempt = session.attempts!.slice(firstAttempt).find(item => item.role === "aside");
+    const attempt = session.attempts!.find(item => item.id === asideAttemptId);
     if (attempt) { session.sideAnswers = [...(session.sideAnswers ?? []), { id, taskId: session.activeTask?.id, attemptId: attempt.id, question, snapshotAt, route, error: String(error), threadId: attempt.threadId }]; await requiredSave(orchestrator.store, session, activate); await requiredSave(orchestrator.store, source, activate); }
     throw error;
   }

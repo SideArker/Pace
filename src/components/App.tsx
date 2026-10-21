@@ -1768,7 +1768,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         }
         if (!attempts.length && session.turns.length) add("info", "Legacy turns have no durable attempt ledger; full historical task cost is unknown.");
         const vexCalls = controls.filter(item => item.source === "vex");
-        add("info", `Vex separately: ${vexCalls.length} recorded control calls · ${(vexCalls.reduce((sum, item) => sum + item.durationMs, 0) / 1000).toFixed(1)}s · token usage and cost unavailable in the choice contract.`);
+        add("info", `Vex separately: ${vexCalls.reduce((sum, item) => sum + (item.requests ?? 1), 0)} recorded calls (${vexCalls.filter(item => item.failed).length} failed decisions) · ${(vexCalls.reduce((sum, item) => sum + item.durationMs, 0) / 1000).toFixed(1)}s · token usage and cost unavailable in the choice contract.`);
         if (compactions.length) {
           const input = compactions.reduce((sum, item) => sum + ((item.knownUsage ?? item.usage)?.input_tokens ?? 0), 0);
           const output = compactions.reduce((sum, item) => sum + ((item.knownUsage ?? item.usage)?.output_tokens ?? 0), 0);
@@ -1791,7 +1791,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         if (parts.length) { add("error", "Type /route without arguments."); return; }
         const workflow = session.activeTask?.workflow;
         add("info", `Task ${session.activeTask?.id ?? "legacy/unknown"} · workflow ${workflow ? `${workflow.shape} v${workflow.version} generation ${workflow.generation}, stage ${workflow.stage}` : "unknown"} · main ${modelName(session.route)} ${session.route.effort ?? "default"} · thread ${session.threadId ?? "none"} · context: continue existing checkpoint policy.`);
-        for (const decision of session.controlDecisions ?? []) add("info", `${decision.at} · ${decision.source} ${decision.objective}: ${decision.choice} · task ${decision.taskId ?? "unknown"} · stage ${decision.stage ?? "unknown"} · role ${decision.role} · attempt ${decision.attemptId ?? "none"} · context ${decision.contextAction} · ${(decision.durationMs / 1000).toFixed(2)}s`);
+        for (const decision of session.controlDecisions ?? []) add("info", `${decision.at} · ${decision.source} ${decision.objective}: ${decision.failed ? `failed (${decision.error ?? "invalid decision"})` : decision.choice} · task ${decision.taskId ?? "unknown"} · stage ${decision.stage ?? "unknown"} · role ${decision.role} · attempt ${decision.attemptId ?? "none"} · context ${decision.contextAction} · ${(decision.durationMs / 1000).toFixed(2)}s`);
         for (const answer of session.sideAnswers ?? []) add("info", `Side ${answer.id} · task ${answer.taskId ?? "unknown"} · attempt ${answer.attemptId} · ${modelName(answer.route)} ${answer.route.effort ?? "default"} · ${answer.error ? "failed" : answer.adopted ? "forwarded to main" : "available via /adopt"}`);
         for (const line of formatLatestRoute(session.turns, config.models)) add("info", line);
         return;

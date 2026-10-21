@@ -10,7 +10,6 @@ import { PromptQueue } from "../core/prompt-queue.js";
 import { checkpointDue, createCheckpointIfDue } from "../core/checkpoint.js";
 import { formatLiveUsage, formatTurnFooter, modelName } from "./turn-format.js";
 import type { Line } from "./Transcript.js";
-import { updateAgentTasks } from "../core/tasks.js";
 import { formatCommandActivity, formatCommandStatus } from "./shell-runner.js";
 import { readUsageLimits, type UsageLimits } from "../integrations/usage.js";
 import { isUsageLimitError, transientRetryAt, transientRetryReason, usageRetryAt } from "../core/usage-retry.js";
@@ -83,7 +82,6 @@ export function createTurnRunner({
       finally { if (jobs.current.get(turnSession.id)?.controller === owner) jobs.current.delete(turnSession.id); setRunningIds([...jobs.current.keys()]); }
     }
     let succeeded = false;
-    let tasksChanged = false;
     let deferredForRetry = false;
     let failedForRetry = false;
     let activeRoute: Route = turnSession.route;
@@ -151,7 +149,6 @@ export function createTurnRunner({
             setStatusFor(sessionId, progress.category === "command" ? formatCommandStatus(progress.title) : progress.title);
           }
           if (progress.kind === "tasks") {
-            tasksChanged = false;
             rememberSession(turnSession);
             if (activeSessionId.current === sessionId) setSession({ ...turnSession });
           }
@@ -227,7 +224,13 @@ export function createTurnRunner({
           addFor(sessionId, "error", `Could not save context checkpoint: ${String(error)}`);
         }
       }
-      setStatusFor(sessionId, "Done");
+      const assessment = outcome.session.activeTask?.assessment;
+      setStatusFor(sessionId, outcome.note === "Vex requested clarification" ? "Waiting for clarification"
+        : !succeeded ? "Workflow paused after persistence failure"
+        : outcome.role === "aside" ? "Side answer complete; main task retained"
+        : outcome.role === "verifier" ? "Verification complete; planner retained"
+        : assessment === "partial" ? "Task has remaining work"
+        : assessment === "unknown" ? "Task completion unknown" : "Done");
       if (turnSession.routingMode === "auto") setVexState("connected");
       refreshUsage();
     } catch (error) {
@@ -287,7 +290,7 @@ export function createTurnRunner({
         delete updated[sessionId];
         return updated;
       });
-      if (tasksChanged || lastTurn?.activities?.length) {
+      if (lastTurn?.activities?.length) {
         await store.saveChanges(turnSession, () => activeSessionId.current === sessionId).catch(() => {});
       }
       setProcesses(old => old.filter(item => !item.id.startsWith(`turn-${turnId}-`)));

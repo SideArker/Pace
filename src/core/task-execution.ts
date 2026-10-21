@@ -30,6 +30,7 @@ export function ensureTask(session: Session, shape: WorkflowShape, source: "vex"
 export function durableRunner(
   runner: CodexRunner, store: PaceStore, session: Session, role: AgentRole, stage: string,
   activate: boolean | (() => boolean), after?: (attemptId: string) => Promise<void>,
+  created?: (attemptId: string) => void,
 ): CodexRunner {
   return { async run(...args) {
     const [, , route, threadId, output, signal] = args;
@@ -42,6 +43,7 @@ export function durableRunner(
       status: "running", route: { ...route }, threadId, startedAt: new Date().toISOString(), observations: [],
     };
     session.attempts = [...(session.attempts ?? []), record];
+    created?.(id);
     const setStageStatus = (status: StageAttempt["status"]) => {
       if ((role === "main" || role === "scout") && session.activeTask?.workflow) session.activeTask.workflow.status = status;
     };
@@ -142,10 +144,9 @@ export async function compactSession(
     return { ...result, result: result.error ?? `Compaction ${result.outcome}`, completed: result.outcome === "completed" };
   } };
   try {
-    await durableRunner(adapter, store, session, "status", "native_compaction", activate, async id => { attemptId = id; }).run("Manual native compaction", session.projectPath, route, threadId, progress, signal);
+    await durableRunner(adapter, store, session, "status", "native_compaction", activate, undefined, id => { attemptId = id; }).run("Manual native compaction", session.projectPath, route, threadId, progress, signal);
   } catch (error) {
     if (error instanceof TransitionSaveError || !result) throw error;
-    attemptId = [...(session.attempts ?? [])].reverse().find(item => item.stage === "native_compaction" && item.threadId === threadId)?.id;
   }
   const attempt = session.attempts!.find(item => item.id === attemptId)!;
   session.compactions = [...(session.compactions ?? []), {
