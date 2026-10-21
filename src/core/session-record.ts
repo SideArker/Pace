@@ -80,6 +80,7 @@ function validNewFields(value: Record<string, unknown>): boolean {
     (Array.isArray(value[field]) && value[field].every(validate) &&
       new Set((value[field] as Record<string, unknown>[]).map(item => item.id)).size === value[field].length);
   return (value.revision === undefined || integer(value.revision)) &&
+    (value.accountingIncomplete === undefined || typeof value.accountingIncomplete === "boolean") &&
     (value.deferredTurn === undefined || isDeferred(value.deferredTurn)) && records("attempts", isAttempt) &&
     records("controlDecisions", isControl) && records("sideAnswers", isSide) &&
     (value.activeTask === undefined || (isRecord(value.activeTask) && optionalText(value.activeTask.id) &&
@@ -145,6 +146,9 @@ function isCompaction(value: unknown): boolean {
     ["completed", "failed", "cancelled"].includes(String(value.outcome)) &&
     (value.usage === undefined || isUsage(value.usage)) &&
     (value.estimatedCostUsd === undefined || nonnegative(value.estimatedCostUsd)) &&
+    (value.knownUsage === undefined || isUsage(value.knownUsage)) &&
+    (value.usageComplete === undefined || typeof value.usageComplete === "boolean") &&
+    (value.knownCostUsd === undefined || nonnegative(value.knownCostUsd)) && optionalText(value.attemptId) &&
     (value.error === undefined || typeof value.error === "string");
 }
 function isCheckpoint(value: unknown): boolean {
@@ -258,7 +262,7 @@ export function parseSession(value: unknown, project: string): Session | undefin
     || (value.manualWorkflow !== undefined && !isManualWorkflow(value.manualWorkflow))
   )
     return undefined;
-  return { ...value, ...(value.queuedPrompts === undefined ? {} : { queuedPrompts: queuedOperations(value.queuedPrompts, value.id) }) } as Session;
+  return { ...value, ...(value.accountingIncomplete === undefined && value.attempts === undefined && value.turns.length ? { accountingIncomplete: true } : {}), ...(value.queuedPrompts === undefined ? {} : { queuedPrompts: queuedOperations(value.queuedPrompts, value.id) }) } as Session;
 }
 
 export function parseSessionSummary(value: unknown, project: string): Session | undefined {
@@ -318,7 +322,7 @@ export function parseSessionSummary(value: unknown, project: string): Session | 
     ...(typeof value.verifierThreadId === "string" ? { verifierThreadId: value.verifierThreadId } : {}),
     deferredTurn,
     queuedPrompts: queuedOperations(value.queuedPrompts, value.id),
-    ...Object.fromEntries(["revision", "attempts", "controlDecisions", "sideAnswers", "activeTask", "verifier", "executionSource"]
+    ...Object.fromEntries(["revision", "accountingIncomplete", "attempts", "controlDecisions", "sideAnswers", "activeTask", "verifier", "executionSource"]
       .filter(key => value[key] !== undefined).map(key => [key, structuredClone(value[key])])),
     turns: firstTurnPrompt ? [{ prompt: firstTurnPrompt, result: "", at: value.createdAt }] : [],
   };

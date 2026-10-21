@@ -114,6 +114,39 @@ export async function resolveAttempt(store: PaceStore, session: Session, id: str
 export function taskAccounting(session: Session, taskId?: string) {
   const attempts = (session.attempts ?? []).filter(item => !taskId || item.taskId === taskId);
   const knownSubtotalUsd = attempts.reduce((sum, item) => sum + (item.knownCostUsd ?? item.estimatedCostUsd ?? 0), 0);
-  const complete = attempts.length > 0 && attempts.every(item => item.usageComplete && item.estimatedCostUsd !== undefined && !["pending", "running", "awaiting_user"].includes(item.status));
+  const complete = !session.accountingIncomplete && attempts.length > 0 && attempts.every(item => item.usageComplete && item.estimatedCostUsd !== undefined && !["pending", "running", "awaiting_user"].includes(item.status));
   return { attempts: attempts.length, knownSubtotalUsd, complete, totalUsd: complete ? knownSubtotalUsd : undefined, durationMs: attempts.reduce((sum, item) => sum + (item.durationMs ?? 0), 0) };
+}
+
+/** Manual compaction changes context, but its inference cost belongs to the same ledger. */
+export async function compactSession(
+  store: PaceStore, session: Session,
+  runner: Pick<import("../integrations/app-server-runner.js").AppServerRunner, "compact">,
+  progress: (event: Progress) => void | Promise<void>, signal?: AbortSignal,
+  activate: boolean | (() => boolean) = true,
+) {
+  if (!session.threadId) throw new Error("No Codex thread to compact");
+  const threadId = session.threadId;
+  const route = { ...session.route };
+  let result: Awaited<ReturnType<typeof runner.compact>> | undefined;
+  let attemptId: string | undefined;
+  const adapter: CodexRunner = { run: async (_prompt, project, selected, _thread, callback) => {
+    result = await runner.compact(threadId, project, selected, callback, signal);
+    return { ...result, result: result.error ?? `Compaction ${result.outcome}`, completed: result.outcome === "completed" };
+  } };
+  try {
+    await durableRunner(adapter, store, session, "status", "native_compaction", activate, async id => { attemptId = id; }).run("Manual native compaction", session.projectPath, route, threadId, progress, signal);
+  } catch (error) {
+    if (error instanceof TransitionSaveError || !result) throw error;
+    attemptId = [...(session.attempts ?? [])].reverse().find(item => item.stage === "native_compaction" && item.threadId === threadId)?.id;
+  }
+  const attempt = session.attempts!.find(item => item.id === attemptId)!;
+  session.compactions = [...(session.compactions ?? []), {
+    at: attempt.finishedAt!, attemptId, threadId, route, durationMs: result!.durationMs, outcome: result!.outcome,
+    usage: attempt.usage, knownUsage: attempt.knownUsage, usageComplete: attempt.usageComplete,
+    estimatedCostUsd: attempt.estimatedCostUsd, knownCostUsd: attempt.knownCostUsd, error: result!.error,
+  }].slice(-50);
+  if (session.contextByThread) delete session.contextByThread[threadId];
+  await requiredSave(store, session, activate);
+  return result!;
 }

@@ -61,6 +61,10 @@ export type TurnSummary = {
   cancelled?: boolean;
 };
 export type CompactionRecord = {
+  attemptId?: string;
+  knownUsage?: Usage;
+  usageComplete?: boolean;
+  knownCostUsd?: number;
   at: string;
   threadId: string;
   route: Route;
@@ -145,6 +149,7 @@ export type ActiveTask = {
   id?: string; workflow?: WorkflowState; assessment?: TaskAssessment;
 };
 export type Session = {
+  accountingIncomplete?: boolean;
   revision?: number;
   attempts?: StageAttempt[];
   controlDecisions?: ControlRecord[];
