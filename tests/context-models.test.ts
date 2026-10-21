@@ -3,7 +3,7 @@ import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Capture, btw, replay } from '../benchmark/context-models-support.js';
-import { order, parseOptions, stateHash, runCase } from '../benchmark/context-models.js';
+import { order, parseOptions, stateHash, runCase, main } from '../benchmark/context-models.js';
 const calls=vi.hoisted(()=>[] as {prompt:string;route:any;thread?:string;mode?:string}[]);
 vi.mock('../src/integrations/app-server-runner.js',()=>({AppServerRunner:class {
  async run(prompt:string,_root:string,route:any,thread:string|undefined,_p:any,_s:any,mode:string){calls.push({prompt,route,thread,mode});return {threadId:thread??`new-${calls.length}`,result:'Test response',completed:true,context:{tokens:1000,windowTokens:10000,model:route.model}};}
@@ -37,6 +37,10 @@ describe('context/model study measurement boundaries',()=>{
   const history=[{user:'correction: throw',assistant:'unfinished'}];const lines=Array.from({length:30},(_,i)=>({role:'activity',text:`visible ${i}`,detail:`detail ${i}`}));const p=btw(history,lines,[{text:'pending',completed:false}],'summary','active');expect(p).toContain('User: correction: throw\nPace: unfinished');expect(p).not.toContain('visible 5 (');expect(p).toContain('visible 6 (detail 6)');expect(p).toContain('Current user request (still in progress):\nactive');expect(p).toContain('[ ] pending');expect(p).toContain('Do not edit files or take action.');expect(replay(history,'next')).toContain(JSON.stringify(history));
  });
  it('rotates order across three repeats and rejects invalid CLI flags',()=>{expect(order(['a','b'],1)).toEqual(['a','b']);expect(order(['a','b'],2)).toEqual(['b','a']);expect(order(['a','b'],3)).toEqual(['a','b']);expect(()=>parseOptions(['--silent-fallback','yes'])).toThrow();expect(()=>parseOptions(['--repeat','0'])).toThrow();expect(stateHash({b:'2',a:'1'})).toBe(stateHash({a:'1',b:'2'}));});
+ it('lists exactly the selected held-out confirmation pairs with three rotated repeats and no model execution',async()=>{
+  const log=vi.spyOn(console,'log').mockImplementation(()=>{});
+  try {await main(['--phase','confirmation','--variants','resume,fresh_checkpoint,sol,luna_side','--repeat','3','--list']);const plan=JSON.parse(log.mock.calls.at(-1)![0] as string);expect(plan.scenarios).toBe(24);expect(plan.modelTurns).toBe(126);expect(new Set(plan.plan.map((p:any)=>p.family))).toEqual(new Set(['A','B']));for(const family of ['A','B'])for(const id of ['holdout-dispatch','holdout-session-cache']){const first=plan.plan.filter((p:any)=>p.family===family&&p.case===id&&p.repeat===1).map((p:any)=>p.variant);const second=plan.plan.filter((p:any)=>p.family===family&&p.case===id&&p.repeat===2).map((p:any)=>p.variant);expect(second).toEqual([...first].reverse());}}finally{log.mockRestore();}
+ });
  it('keeps Luna side thread separate and returns both follow-ups to the main Sol thread',async()=>{
   calls.length=0;const out=await mkdtemp(join(tmpdir(),'pace-study-test-'));const task={id:'test',cohort:'pilot',files:{'package.json':'{}\n'},setup:['inspect','correction'],followups:['change','preserve'],check:"console.log('PASS')",rubric:'test',summaryFacts:[]};
   const r=await runCase(task,'B','luna_side',1,out,1);expect(r.completed).toBe(true);expect(calls.map(c=>c.thread)).toEqual([undefined,'new-1',undefined,'new-1','new-1']);expect(calls.map(c=>c.route.model)).toEqual(['gpt-6.1-sol','gpt-6.1-sol','gpt-6-luna','gpt-6.1-sol','gpt-6.1-sol']);expect(calls[2]?.mode).toBe('side');expect(r.summaryThreadValidated).toBe(true);expect(r.threadTransitionValidated).toBe(true);expect(JSON.parse(await readFile(join(out,'test/B/1/luna_side/run.json'),'utf8')).stages).toHaveLength(5);
