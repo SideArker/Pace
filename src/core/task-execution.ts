@@ -23,7 +23,7 @@ export function ensureTask(session: Session, shape: WorkflowShape, source: "vex"
   session.activeTask.id ??= randomUUID();
   session.activeTask.assessment ??= "unknown";
   session.activeTask.workflow ??= {
-    version: 1, generation: 1, shape, stage: shape === "scout" || shape === "scout_plan" ? "scout" : shape === "plan" ? "plan" : "final", source,
+    version: 1, generation: 1, shape, stage: shape === "scout" || shape === "scout_plan" ? "scout" : shape === "plan" ? "plan" : "final", status: "pending", source,
   };
 }
 /** Every model invocation has a durable start and terminal record, independent of visible history. */
@@ -42,6 +42,10 @@ export function durableRunner(
       status: "running", route: { ...route }, threadId, startedAt: new Date().toISOString(), observations: [],
     };
     session.attempts = [...(session.attempts ?? []), record];
+    const setStageStatus = (status: StageAttempt["status"]) => {
+      if ((role === "main" || role === "scout") && session.activeTask?.workflow) session.activeTask.workflow.status = status;
+    };
+    setStageStatus("running");
     await requiredSave(store, session, activate);
     const current = () => session.attempts!.find(item => item.id === id)!;
     const persistResult = async () => {
@@ -50,6 +54,7 @@ export function durableRunner(
         // Also stop retries in this process, whose object already contains the
         // unsaved result. Disk still records a running, uncertain invocation.
         current().status = "awaiting_user";
+        setStageStatus("awaiting_user");
         throw error;
       }
     };
@@ -82,6 +87,7 @@ export function durableRunner(
         attempt.threadId = error.accounting?.threadId ?? attempt.threadId; attempt.turnId = error.accounting?.turnId;
       }
       finish(attempt, started);
+      setStageStatus(attempt.status);
       await persistResult();
       throw error;
     }
@@ -92,6 +98,7 @@ export function durableRunner(
     attempt.usageComplete = execution.usageComplete ?? !!execution.usage;
     attempt.observations.push({ kind: "answer", text: execution.result });
     finish(attempt, started);
+    setStageStatus(attempt.status);
     await persistResult();
     await after?.(id);
     return execution;

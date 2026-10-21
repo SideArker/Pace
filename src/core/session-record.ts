@@ -65,6 +65,7 @@ function isWorkflow(value: unknown): boolean {
   return isRecord(value) && value.version === 1 && integer(value.generation) &&
     oneOf(value.shape, ["single", "scout", "plan", "scout_plan"]) &&
     oneOf(value.stage, ["scout", "plan", "final"]) &&
+    (value.status === undefined || oneOf(value.status, ["pending", "running", "completed", "failed", "cancelled", "awaiting_user"])) &&
     (value.mainRoute === undefined || isRoute(value.mainRoute)) && optionalText(value.mainThreadId) && optionalText(value.scoutHandoff) &&
     oneOf(value.source, ["vex", "user"]) && (value.needsAssessment === undefined || typeof value.needsAssessment === "boolean");
 }

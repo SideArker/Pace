@@ -23,7 +23,7 @@ import { PaceStore } from "./sessions.js";
 import { retryableTurn } from "./session-model.js";
 import { verifyPlanPrompt, tryReadPlanFile, structuredHandoff, addUsage, awaitRouting, loadPlanningInstructions, planningPrompt, retainedConversationPrompt } from "./orchestrator-helpers.js";
 import { runPlanningStage } from "./workflow-stages.js";
-import { durableRunner, ensureTask, requiredSave, TransitionSaveError, UncertainAttemptError } from "./task-execution.js";
+import { durableRunner, ensureTask, requiredSave, resolveAttempt, TransitionSaveError, UncertainAttemptError } from "./task-execution.js";
 import { operation, preparePlanExecution, adoptedSidePrompt, currentPlan } from "./operations.js";
 import { runAside } from "./side-answers.js";
 import { checkpointHandoff } from "./checkpoint.js";
@@ -107,6 +107,16 @@ export class Orchestrator {
   ): Promise<TurnOutcome> {
     const startedAt = performance.now();
     const prompts = loadRoutingPrompts(this.store.baseDir);
+    if (!intent && !queuedOperation && /^\/resolve(?:\s|$)/.test(prompt)) {
+      const [, id, ...outcome] = prompt.trim().split(/\s+/);
+      if (!id || !outcome.length) throw new Error("Use /resolve <attempt-id> <outcome after inspecting the thread, artifacts and file changes>");
+      await resolveAttempt(this.store, session, id, outcome.join(" "));
+      return { session, result: "Interrupted attempt reconciled. Completion remains unknown until Vex assesses the evidence.", note: "User reconciliation", route: session.route, durationMs: 0, artifacts: [], stages: [], routing: [] };
+    }
+    if (!intent && !queuedOperation && /^\/adopt(?:\s|$)/.test(prompt)) {
+      queuedOperation = { ...operation(prompt, session.id, session.activeTask?.id), intent: "adopt_side", sourceSideId: prompt.replace(/^\/adopt(?:\s+|$)/, "").trim() };
+      intent = "adopt_side";
+    }
     if (queuedOperation) {
       const target = session.executionSource?.sessionId ?? session.id;
       if (queuedOperation.sessionId !== target || (queuedOperation.taskId && !session.executionSource && queuedOperation.taskId !== session.activeTask?.id)) throw new Error("Queued operation belongs to another task or session");
@@ -148,7 +158,7 @@ export class Orchestrator {
       side.adopted = true;
     }
     const verifierTurn = intent === "verify_plan" || intent === "continue_verify";
-    const uncertain = (session.attempts ?? []).filter(item => ["running", "awaiting_user"].includes(item.status) && (verifierTurn ? item.role === "verifier" : item.role === "main" || item.role === "scout"));
+    const uncertain = (session.attempts ?? []).filter(item => ["running", "awaiting_user"].includes(item.status) && (verifierTurn ? item.role === "verifier" : item.role === "main" || item.role === "scout" || (item.role === "status" && ["checkpoint", "native_compaction"].includes(item.stage))));
     if (uncertain.length) throw new UncertainAttemptError(uncertain);
     if (
       /^(?:stop caveman|normal mode)$/i.test(prompt.trim()) &&
@@ -257,7 +267,7 @@ export class Orchestrator {
           });
           session.controlDecisions = [...(session.controlDecisions ?? []), {
             id: randomUUID(), taskId: session.activeTask?.id, stage: session.activeTask?.workflow?.stage,
-            role: verifierTurn ? "verifier" : "main", objective, choice: decision.choice, confidence: decision.confidence,
+            role: verifierTurn ? "verifier" : request.context.stageObjective === prompts.objectives.scout ? "scout" : "main", objective, choice: decision.choice, confidence: decision.confidence,
             probabilities: decision.probabilities, durationMs: Math.round(performance.now() - decisionStarted), at: new Date().toISOString(), source: "vex", contextAction: "continue",
           }];
           await save();
@@ -547,6 +557,7 @@ export class Orchestrator {
                 durationMs,
               },
             ].slice(-20);
+            if (session.activeTask?.workflow) session.activeTask.workflow.status = "awaiting_user";
             await save();
             return {
               session,
@@ -574,6 +585,11 @@ export class Orchestrator {
         if (!auto && session.activeTask?.workflow) {
           preserveWorkflow = taskRelation === "continue";
           shape = session.activeTask.workflow.shape;
+          if (manualWorkflow && session.activeTask.workflow.mainRoute) {
+            if (!validRoute(session.activeTask.workflow.mainRoute, enabled)) throw new Error("The saved manual task route is unavailable. Select a new manual route.");
+            preserveRoute = true;
+            route = session.activeTask.workflow.mainRoute;
+          }
         }
         for (const record of session.controlDecisions ?? []) if (!record.taskId) record.taskId = session.activeTask?.id;
         await save();
@@ -633,7 +649,7 @@ export class Orchestrator {
           routeOverride: manualWorkflow?.routes.scout,
         });
         handoff = firstHandoff;
-        if (session.activeTask?.workflow) { session.activeTask.workflow.scoutHandoff = handoff; session.activeTask.workflow.stage = shape === "scout_plan" ? "plan" : "final"; }
+        if (session.activeTask?.workflow) { session.activeTask.workflow.scoutHandoff = handoff; session.activeTask.workflow.stage = shape === "scout_plan" ? "plan" : "final"; session.activeTask.workflow.status = "pending"; }
         const attempt = session.attempts!.find(item => item.id === scoutAttemptId)!; attempt.handoff = handoff;
         await save();
         await assess(attempt.id, false);
@@ -680,7 +696,7 @@ export class Orchestrator {
       const basePrompt = userClarification
         ? `${prompt}\n\nClarification: ${userClarification}`
         : prompt;
-      const resumingDeferred = session.deferredTurn?.prompt === prompt;
+      const resumingDeferred = session.deferredTurn?.prompt === prompt && session.deferredTurn?.intent === intent;
       const resumedAfterLimit = resumingDeferred && (!session.deferredTurn?.reason || session.deferredTurn.reason === "usage");
       const retryingFailure = retryableTurn(session)?.prompt === prompt;
       const resolvedPrompt = taskRelation === "continue" && priorTask && !session.threadId
@@ -713,13 +729,13 @@ export class Orchestrator {
       const promptWithHistory = checkpoint
         ? checkpointHandoff(checkpoint.note, session.turns.slice(checkpointTurn + 1).filter(turn => !turn.failed).slice(-3).map(turn => ({ user: turn.prompt.slice(0, 1000), assistant: turn.result.slice(0, 1000) })), executionPrompt)
         : retainedConversationPrompt(executionPrompt, intent === "verify_plan" || intent === "revise_plan" ? { ...session, threadId: undefined, turns: [] } : session);
-      const selectedAutoSkills = !runThreadId && intent !== "verify_plan" && intent !== "revise_plan" && !planningTurn
+      const selectedAutoSkills = !runThreadId && !verifierTurn && intent !== "revise_plan" && !planningTurn
         ? skills.filter(skill => session.autoLaunchSkills?.includes(skill.name)) : [];
       const runnerPrompt = autoLaunchPrompt(promptWithHistory, selectedAutoSkills);
       if (checkpoint) onProgress({ kind: "status", text: "Starting fresh thread from checkpoint…" });
       const stageStart = performance.now();
-      session.undoneTurns = undefined;
-      if (!planningTurn && intent !== "verify_plan" && intent !== "revise_plan") {
+      if (!verifierTurn) session.undoneTurns = undefined;
+      if (!planningTurn && !verifierTurn && intent !== "revise_plan") {
         try { editCapture = await beginFileEdits(this.store, session); }
         catch (error) { systemMessage(`File undo unavailable: ${String(error)}`); }
       }
@@ -765,7 +781,7 @@ export class Orchestrator {
       if (execution.threadId) {
         if (verifierTurn) { session.verifierThreadId = execution.threadId; session.verifier!.threadId = execution.threadId; }
         else session.threadId = execution.threadId;
-        if (intent !== "verify_plan" && intent !== "revise_plan" && !planningTurn && session.autoLaunchSkills?.length) session.autoLaunchThreadId = execution.threadId;
+        if (!verifierTurn && intent !== "revise_plan" && !planningTurn && session.autoLaunchSkills?.length) session.autoLaunchThreadId = execution.threadId;
       }
       let planChanged = false;
       if (planningTurn) {

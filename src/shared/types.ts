@@ -117,6 +117,7 @@ export type WorkflowShape = "single" | "scout" | "plan" | "scout_plan";
 export type TaskAssessment = "closed" | "partial" | "unknown";
 export type WorkflowState = {
   version: 1; generation: number; shape: WorkflowShape; stage: "scout" | "plan" | "final";
+  status?: StageAttempt["status"];
   mainRoute?: Route; mainThreadId?: string; scoutHandoff?: string;
   source: "vex" | "user"; needsAssessment?: boolean;
 };
