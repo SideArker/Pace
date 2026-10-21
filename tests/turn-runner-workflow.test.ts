@@ -35,13 +35,13 @@ async function fixture() {
   } };
   const vex = { choose: async (request: import("../src/core/vex/requests.js").VexRequest) => decision(request, request.options.some(item => item.id === "closed") ? "unknown" : request.options.some(item => item.id === "reroute") ? "continue" : request.options[0]?.id === "single" ? "single" : "0:medium") };
   const orchestrator = new Orchestrator(store, runner, vex);
-  const queue = new PromptQueue(); const sessions: Session[] = [];
+  const queue = new PromptQueue(); const sessions: Session[] = []; const statuses: string[] = [];
   const jobs = { current: new Map() }; const selected = { current: source.id };
   const runTurn = createTurnRunner({
     turnSequence: { current: 0 }, activeSessionId: selected, jobs, promptQueue: { current: queue }, titleAborts: { current: new Map() }, pendingApprovals: { current: new Map() }, pendingQuestions: { current: new Map() }, unreadCompletions: { current: new Set() }, sessionLines: { current: new Map() },
-    runner, orchestrator, store, rememberSession: session => sessions.push(session), onTurnStart: () => {}, setRunningIds: () => {}, addFor: () => {}, activityFor: () => {}, recordThoughtUsage: () => {}, resetThoughtUsage: () => {}, getTurnActivities: () => [], setStatusFor: () => {}, showApproval: () => {}, showQuestion: () => {}, dismissQuestion: () => {}, setSession: () => {}, setVexState: () => {}, refreshUsage: () => {}, setQueueVersion: () => {}, setProcesses: () => {}, setLiveUsage: () => {}, getConfig: () => config,
+    runner, orchestrator, store, rememberSession: session => sessions.push(session), onTurnStart: () => {}, setRunningIds: () => {}, addFor: () => {}, activityFor: () => {}, recordThoughtUsage: () => {}, resetThoughtUsage: () => {}, getTurnActivities: () => [], setStatusFor: (_id, value) => { statuses.push(value); }, showApproval: () => {}, showQuestion: () => {}, dismissQuestion: () => {}, setSession: () => {}, setVexState: () => {}, refreshUsage: () => {}, setQueueVersion: () => {}, setProcesses: () => {}, setLiveUsage: () => {}, getConfig: () => config,
   });
-  return { store, root, source, config, runner, calls, orchestrator, queue, sessions, runTurn, jobs };
+  return { store, root, source, config, runner, calls, orchestrator, queue, sessions, statuses, runTurn, jobs };
 }
 
 it("UI verifier events preserve the entire main state and never generate an already-due checkpoint", async () => {
@@ -60,6 +60,7 @@ it("UI direct execute from manual planning creates a normal fresh task using the
   const fresh = (await env.store.list(env.root)).find(item => item.executionSource)!;
   expect(fresh).toMatchObject({ kind: "normal", routingMode: "auto", executionSource: { sessionId: env.source.id, taskId: "task", plan: env.source.plan } });
   expect(env.source.kind).toBe("planning"); expect(env.jobs.current.size).toBe(0);
+  expect(env.statuses).toContain("Task completion unknown");
 });
 
 it("UI drains restored verify and execute operations with original identity and role", async () => {

@@ -305,3 +305,31 @@ it("interactive clarification offers and executes a scout without Luna and recor
   expect(env.session.activeTask?.workflow?.source).toBe("user");
   expect(env.session.controlDecisions?.some(item => item.source === "user" && item.choice === "scout")).toBe(true);
 });
+
+it("a first-message side answer persists and refreshes a previously unsaved session", async () => {
+  const env = await setup();
+  await env.orchestrator.aside("Explain this known fact", env.session, config, () => {});
+  expect(env.session.sideAnswers).toHaveLength(1);
+  expect(env.session.activeTask).toBeUndefined();
+  expect(env.session.threadId).toBeUndefined();
+  expect((await env.store.load(env.root, env.session.id))?.attempts?.[0]?.role).toBe("aside");
+});
+
+it("invalid Vex responses retain retry count and latency without a guessed action or model call", async () => {
+  const env = await setup(); env.vex.choose = async () => ({ choice: "invalid" }) as never;
+  await expect(env.orchestrator.turn("Implement", env.session, config, () => {})).rejects.toThrow("Invalid Vex routing decision");
+  expect(env.calls).toHaveLength(0);
+  expect(env.session.controlDecisions?.at(-1)).toMatchObject({ requests: 2, failed: true, choice: "unavailable", source: "vex" });
+});
+
+it("concurrent side snapshots attach each result to its own durable attempt", async () => {
+  const env = await setup(); await env.store.save(env.session);
+  env.runner.run = async prompt => ({ result: prompt.endsWith("Question A") ? "Answer A" : "Answer B", completed: true, usage });
+  await Promise.all([
+    env.orchestrator.aside("Question A", env.session, config, () => {}),
+    env.orchestrator.aside("Question B", env.session, config, () => {}),
+  ]);
+  const saved = (await env.store.load(env.root, env.session.id))!;
+  expect(saved.sideAnswers).toHaveLength(2);
+  for (const answer of saved.sideAnswers!) expect(saved.attempts!.find(item => item.id === answer.attemptId)?.result).toBe(answer.result);
+});

@@ -2,7 +2,7 @@ import { isRecord } from "../shared/config.js";
 import type { RoutingSuite } from "./routing-types.js";
 export type { RoutingCase, RoutingSuite } from "./routing-types.js";
 
-const SHAPES = ["single", "scout", "plan", "scout_plan", "clarify"];
+const SHAPES = ["single", "scout", "plan", "scout_plan", "clarify", "aside"];
 export function parseRoutingSuite(value: unknown): RoutingSuite {
   if (
     !isRecord(value) ||
@@ -71,6 +71,8 @@ export function parseRoutingSuite(value: unknown): RoutingSuite {
         ))
     )
       throw new Error(`Invalid handoff for ${item.id}`);
+    if (item.expectedAction !== undefined && !["continue", "aside", "reroute", "replan", "replace", "clarify", "adopt_side"].includes(String(item.expectedAction))) throw new Error(`Invalid action for ${item.id}`);
+    if (item.task !== undefined && (!isRecord(item.task) || typeof item.task.originalRequest !== "string" || !Array.isArray(item.task.instructions) || !item.task.instructions.every(entry => typeof entry === "string"))) throw new Error(`Invalid task for ${item.id}`);
     ids.add(item.id);
   }
   return value as RoutingSuite;

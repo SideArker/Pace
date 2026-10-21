@@ -1,10 +1,13 @@
+import type { ActiveTask, Route } from "../shared/types.js";
 export type RoutingCase = {
   id: string;
   category: string;
   prompt: string;
-  preferred: "single" | "scout" | "plan" | "scout_plan" | "clarify";
+  preferred: "single" | "scout" | "plan" | "scout_plan" | "clarify" | "aside";
   acceptable: string[];
   reason: string;
+  task?: ActiveTask;
+  expectedAction?: "continue" | "aside" | "reroute" | "replan" | "replace" | "clarify" | "adopt_side";
   conversation?: { user: string; assistant: string }[];
   handoff?: {
     summary: string;
@@ -36,6 +39,9 @@ export type RoutingRun = {
   promptSha256: string;
   preferred: string;
   acceptable: string[];
+  controlAction?: string;
+  controlHit?: boolean;
+  retainedRoute?: Route;
   shape?: string;
   acceptableHit?: boolean;
   preferredHit?: boolean;
