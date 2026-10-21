@@ -41,7 +41,8 @@
     "benchmark:routing": "npm run build && node dist/entrypoints/routing-benchmark.js",
     "benchmark:grade": "tsx benchmark/grading/grade.ts",
     "benchmark:check": "tsc -p benchmark/tsconfig.json",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "benchmark:task-control": "tsx benchmark/task-control.ts"
   },
   "repository": {
     "type": "git",
