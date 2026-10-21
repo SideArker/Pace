@@ -5,7 +5,7 @@ import { Orchestrator, VexUnavailableError } from "../core/orchestrator.js";
 import { artifactPath } from "../core/system/artifacts.js";
 import { PaceStore } from "../core/sessions.js";
 import { preparePlanExecution } from "../core/operations.js";
-import { durableRunner } from "../core/task-execution.js";
+import { durableRunner, TransitionSaveError } from "../core/task-execution.js";
 import { PromptQueue } from "../core/prompt-queue.js";
 import { checkpointDue, createCheckpointIfDue } from "../core/checkpoint.js";
 import { formatLiveUsage, formatTurnFooter, modelName } from "./turn-format.js";
@@ -99,13 +99,14 @@ export function createTurnRunner({
     setRunningIds([...jobs.current.keys()]);
     addFor(sessionId, displayPrompt ? "system" : "you", displayPrompt ?? text);
     setStatusFor(sessionId, "Starting…");
+    const startTitle = () => {
     if (!turnSession.turns.length && !turnSession.title && !titleAborts.current.has(sessionId)) {
       const luna = turnConfig.models.find(model => model.enabled !== false && model.model === "gpt-6-luna");
       if (luna) {
         const titleController = new AbortController();
         titleAborts.current.set(sessionId, titleController);
         const titleRoute = { model: luna.model, effort: luna.efforts.includes("low") ? "low" as const : luna.defaultEffort ?? luna.efforts[0] };
-        void runner.run(
+        void durableRunner(runner, store, turnSession, "status", "title", () => activeSessionId.current === sessionId).run(
           `Create a short conversation title from this initial user prompt. Return only the title, at most 8 words. Do not answer the prompt.\n\n${text.slice(0, 4000)}`,
           turnSession.projectPath,
           titleRoute,
@@ -125,6 +126,7 @@ export function createTurnRunner({
         });
       }
     }
+    };
     try {
       const onProgress = Object.assign(
         (progress: Progress) => {
@@ -133,6 +135,7 @@ export function createTurnRunner({
             if (activeSessionId.current === sessionId) setSession({ ...turnSession });
           }
           if (progress.kind === "route") {
+            if (progress.role === "main") startTitle();
             activeRoute = progress.route;
             resetThoughtUsage(sessionId);
             setLiveUsage(old => ({ ...old, [sessionId]: "" }));
@@ -220,6 +223,7 @@ export function createTurnRunner({
           if (checkpoint) addFor(sessionId, "meta", "Context checkpoint saved. The next turn starts a fresh thread.");
           else addFor(sessionId, "meta", "Context checkpoint could not be validated; the existing thread remains available.");
         } catch (error) {
+          if (error instanceof TransitionSaveError) succeeded = false;
           addFor(sessionId, "error", `Could not save context checkpoint: ${String(error)}`);
         }
       }

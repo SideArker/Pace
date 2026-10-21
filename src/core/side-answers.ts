@@ -56,7 +56,7 @@ export async function runAside(orchestrator: Orchestrator, question: string, sou
   } catch (error) {
     if (error instanceof TransitionSaveError) throw error;
     const attempt = session.attempts!.slice(firstAttempt).find(item => item.role === "aside");
-    if (attempt) { session.sideAnswers = [...(session.sideAnswers ?? []), { id, taskId: session.activeTask?.id, attemptId: attempt.id, question, snapshotAt, route, error: String(error), threadId: attempt.threadId }]; await requiredSave(orchestrator.store, session, activate); }
+    if (attempt) { session.sideAnswers = [...(session.sideAnswers ?? []), { id, taskId: session.activeTask?.id, attemptId: attempt.id, question, snapshotAt, route, error: String(error), threadId: attempt.threadId }]; await requiredSave(orchestrator.store, session, activate); await requiredSave(orchestrator.store, source, activate); }
     throw error;
   }
 }

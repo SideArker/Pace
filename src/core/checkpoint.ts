@@ -4,6 +4,7 @@ import type { CodexRunner, Progress } from "../integrations/codex.js";
 import { CodexRunError } from "../integrations/codex-types.js";
 import { costForUsage } from "./routing/pricing.js";
 import { contextPercent, measuredContext } from "./context.js";
+import { TransitionSaveError } from "./task-execution.js";
 export type { CheckpointNote } from "../shared/types.js";
 
 export const CHECKPOINT_MAX_CHARS = 10_000;
@@ -106,6 +107,7 @@ export async function createCheckpointIfDue(
       note = parseCheckpoint(answer);
       outcome = "valid";
     } catch (cause) {
+      if (cause instanceof TransitionSaveError) throw cause;
       if (cause instanceof CodexRunError) {
         usage = cause.usage;
         if (cause.context) {

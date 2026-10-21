@@ -9,7 +9,7 @@ import { FileDiffPanel } from "./FileDiffPanel.js";
 import { McpManager } from "./McpManager.js";
 import { Orchestrator, VexUnavailableError } from "../core/orchestrator.js";
 import { PromptQueue } from "../core/prompt-queue.js";
-import { resolveAttempt, taskAccounting } from "../core/task-execution.js";
+import { resolveAttempt, taskAccounting, compactSession } from "../core/task-execution.js";
 import { adoptedSidePrompt, operation, preparePlanExecution, manualSelection } from "../core/operations.js";
 import { AppServerRunner } from "../integrations/codex.js";
 import { VexRouter } from "../core/vex/client.js";
@@ -1692,17 +1692,9 @@ export default function App({ onClear }: { onClear: () => void }) {
         void (async () => {
           let completed = false;
           try {
-            const result = await runner.compact(threadId, target.projectPath, target.route,
-              progress => { if (progress.kind === "status") setStatusFor(sessionId, progress.text); }, controller.signal);
-            const record = {
-              at: new Date().toISOString(), threadId, route: target.route,
-              durationMs: result.durationMs, outcome: result.outcome,
-              usage: result.usage, estimatedCostUsd: costForUsage(target.route, result.usage),
-              error: result.error,
-            };
-            target.compactions = [...(target.compactions ?? []), record].slice(-50);
-            if (target.contextByThread) delete target.contextByThread[threadId];
-            await store.saveChanges(target, () => activeSessionId.current === sessionId);
+            const result = await compactSession(store, target, runner,
+              progress => { if (progress.kind === "status") setStatusFor(sessionId, progress.text); }, controller.signal,
+              () => activeSessionId.current === sessionId);
             rememberSession(target);
             completed = result.outcome === "completed";
             if (activeSessionId.current === sessionId) setSession({ ...target });
@@ -1769,7 +1761,7 @@ export default function App({ onClear }: { onClear: () => void }) {
         const accounting = taskAccounting(session);
         const total = (key: "input_tokens" | "cached_input_tokens" | "cache_write_input_tokens" | "output_tokens") => attempts.reduce((sum, attempt) => sum + ((attempt.knownUsage ?? attempt.usage)?.[key] ?? 0), 0);
         add("info", `Codex attempt ledger: ${accounting.attempts} attempts · ${attempts.filter(attempt => attempt.status === "failed").length} failed · ${attempts.filter(attempt => attempt.status === "cancelled").length} cancelled · ${(accounting.durationMs / 1000).toFixed(1)}s. Known subtotal ~$${accounting.knownSubtotalUsd.toFixed(4)}; full attempt cost ${accounting.complete ? `~$${accounting.totalUsd!.toFixed(4)}` : "unknown (incomplete usage or pricing)"}.`);
-        add("info", `Attributed usage: ${total("input_tokens")} input (${total("cached_input_tokens")} cached, ${total("cache_write_input_tokens")} cache write), ${total("output_tokens")} output. Estimates use the recorded source routes and Pace API price catalog; they do not measure Codex subscription allowance. Context actions are shown separately.`);
+        add("info", `Attributed usage: ${total("input_tokens")} input (${total("cached_input_tokens")} cached, ${total("cache_write_input_tokens")} cache write), ${total("output_tokens")} output. Estimates use the recorded source routes and Pace API price catalog; they do not measure Codex subscription allowance. Native compaction and checkpoint attempts are included in this ledger and detailed separately.`);
         if (session.activeTask?.id) {
           const task = taskAccounting(session, session.activeTask.id);
           add("info", `Active task ${session.activeTask.id}: ${task.attempts} attempts · known subtotal ~$${task.knownSubtotalUsd.toFixed(4)} · full cost ${task.complete ? `~$${task.totalUsd!.toFixed(4)}` : "unknown"} · assessment ${session.activeTask.assessment ?? "unknown"}.`);
@@ -1778,12 +1770,12 @@ export default function App({ onClear }: { onClear: () => void }) {
         const vexCalls = controls.filter(item => item.source === "vex");
         add("info", `Vex separately: ${vexCalls.length} recorded control calls · ${(vexCalls.reduce((sum, item) => sum + item.durationMs, 0) / 1000).toFixed(1)}s · token usage and cost unavailable in the choice contract.`);
         if (compactions.length) {
-          const input = compactions.reduce((sum, item) => sum + (item.usage?.input_tokens ?? 0), 0);
-          const output = compactions.reduce((sum, item) => sum + (item.usage?.output_tokens ?? 0), 0);
+          const input = compactions.reduce((sum, item) => sum + ((item.knownUsage ?? item.usage)?.input_tokens ?? 0), 0);
+          const output = compactions.reduce((sum, item) => sum + ((item.knownUsage ?? item.usage)?.output_tokens ?? 0), 0);
           const duration = compactions.reduce((sum, item) => sum + item.durationMs, 0);
-          const estimated = compactions.reduce((sum, item) => sum + (item.estimatedCostUsd ?? 0), 0);
-          const pricedCount = compactions.filter(item => item.estimatedCostUsd !== undefined).length;
-          add("info", `Compactions: ${compactions.length} (${compactions.filter(item => item.outcome === "completed").length} completed, ${compactions.filter(item => item.outcome === "failed").length} failed, ${compactions.filter(item => item.outcome === "cancelled").length} cancelled) · ${input} input / ${output} output tokens (${compactions.filter(item => item.usage).length} reported usage) · ${(duration / 1000).toFixed(1)}s · ${pricedCount ? `~$${estimated.toFixed(4)} estimated API equivalent (${pricedCount} priced)` : "API-equivalent cost unavailable"}`);
+          const estimated = compactions.reduce((sum, item) => sum + (item.knownCostUsd ?? item.estimatedCostUsd ?? 0), 0);
+          const pricedCount = compactions.filter(item => item.knownCostUsd !== undefined || item.estimatedCostUsd !== undefined).length;
+          add("info", `Compactions: ${compactions.length} (${compactions.filter(item => item.outcome === "completed").length} completed, ${compactions.filter(item => item.outcome === "failed").length} failed, ${compactions.filter(item => item.outcome === "cancelled").length} cancelled) · ${input} input / ${output} output tokens (${compactions.filter(item => item.usage).length} reported usage) · ${(duration / 1000).toFixed(1)}s · ${pricedCount ? `~$${estimated.toFixed(4)} estimated API equivalent (${pricedCount} priced)` : "API-equivalent cost unavailable"}; full compaction cost ${compactions.every(item => item.estimatedCostUsd !== undefined && item.usageComplete !== false) ? "known" : "unknown (subtotal only)"}`);
         }
         if (generations.length) {
           const input = generations.reduce((sum, item) => sum + (item.usage?.input_tokens ?? 0), 0);
@@ -1791,7 +1783,7 @@ export default function App({ onClear }: { onClear: () => void }) {
           const duration = generations.reduce((sum, item) => sum + item.durationMs, 0);
           const estimated = generations.reduce((sum, item) => sum + (item.estimatedCostUsd ?? 0), 0);
           const pricedCount = generations.filter(item => item.estimatedCostUsd !== undefined).length;
-          add("info", `Checkpoints: ${generations.length} generation attempts (${generations.filter(item => item.outcome === "valid").length} valid) · ${input} input / ${output} output tokens (${generations.filter(item => item.usage).length} reported usage) · ${(duration / 1000).toFixed(1)}s · ${pricedCount ? `~$${estimated.toFixed(4)} estimated API equivalent (${pricedCount} priced)` : "API-equivalent cost unavailable"}`);
+          add("info", `Checkpoints: ${generations.length} generation attempts (${generations.filter(item => item.outcome === "valid").length} valid) · ${input} input / ${output} output tokens (${generations.filter(item => item.usage).length} reported usage) · ${(duration / 1000).toFixed(1)}s · ${pricedCount ? `~$${estimated.toFixed(4)} estimated API equivalent (${pricedCount} priced)` : "API-equivalent cost unavailable"}; full checkpoint cost ${generations.every(item => item.estimatedCostUsd !== undefined) ? "known" : "unknown (subtotal only)"}`);
         }
         return;
       }
