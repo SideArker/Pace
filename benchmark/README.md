@@ -98,3 +98,79 @@ Runs are sequential and consume Codex account allowance. They use the existing C
 `npm run benchmark:task-control -- --baseline-dir <built-baseline-checkout> --out <new-directory>` compares the frozen bilingual task cases through the production controller and corrected App Server runner. It saves every inference, answer, check, decision and Vex cost separately. Seeded prior exchanges leave full historical task cost unknown. The routing-only CLI also uses the production `Orchestrator.turn`; its simulated answers do not grade task quality.
 
 See [the 22 October task workflow evaluation](../docs/task-workflow-evaluation-2026-10-22.md) for the paired run, separately retained quality failure and correction, bilingual paraphrase probe, and evidence limits.
+
+## 6. Context and model continuation study (2026-10-20)
+
+The extended study is available through both existing entry points. It uses the
+production App Server transport directly from TypeScript source, independent
+fixtures and initial threads, fixed Sol Medium/Luna Low routes, and two coding
+follow-ups after each intervention. Production routing is unchanged.
+
+```bash
+npm run benchmark:context-quality -- --study --help
+npm run benchmark:thread-switch -- --study --phase pilot --list
+npm run benchmark:context-quality -- --study --phase pilot --out benchmark/results/my-context-model-pilot
+```
+
+The pilot contains 16 scenario executions, 83 model turns and two native
+compactions, plus at most four checkpoint-repair turns. Family A compares four
+context strategies. Family B compares Sol-only, Luna in the main thread, and a
+separate Luna side answer using the current `/btw` prompt format. Family C compares
+Sol and Luna checkpoint authors before an identical fresh Sol continuation.
+
+The preregistered matrix, quality criteria and selection rule are in
+[`protocol/context-models-2026-10-20.md`](protocol/context-models-2026-10-20.md).
+After reviewing the pilot, freeze the implementation and explicitly select one
+comparison per family for the two held-out cases, for example:
+
+```bash
+npm run benchmark:context-quality -- --study --phase confirmation --family A --variants resume,fresh_checkpoint --repeat 3 --out benchmark/results/my-context-confirmation-A
+npm run benchmark:thread-switch -- --study --phase confirmation --family B --variants sol,luna_main --repeat 3 --out benchmark/results/my-context-confirmation-B
+npm run benchmark:context-quality -- --study --phase confirmation --family C --variants checkpoint_sol,checkpoint_luna --repeat 3 --out benchmark/results/my-context-confirmation-C
+```
+
+These are command examples, not predetermined winning variants. Each output
+folder must be new. `--case`, `--suite`, and `--timeout-minutes` restrict runs.
+The list mode never starts a model. `context-models-probe.ts OUTPUT_DIRECTORY`
+checks actual model access and multi-request usage aggregation. Raw JSON-RPC,
+requested and observed models/efforts, thread transitions, prompts, responses,
+usage categories, durations, diffs, final files, and external checks are saved.
+Neutral-ID review bundles are under `blind/`; automated checks do not constitute
+manual quality grades. Missing usage remains unknown. Cache-write uncertainty,
+if present, is explicit rather than silently reported as zero.
+
+```bash
+python3 benchmark/context-models-analyze.py benchmark/results/context-models-2026-10-20
+```
+
+The analyzer writes `analysis.json` and includes failed and partial attempts.
+It does not grade quality or select policy. Existing non-study benchmark flags
+and behavior remain available.
+
+The 2026-10-21 audit found that resumed usage can arrive after `turn/start`.
+The study now attributes usage to the active **turn ID**, then sums distinct
+request updates. Native compaction's zero billing placeholders remain unknown.
+For older captured runs, preserve the originals and create derived accounting:
+
+```bash
+./node_modules/.bin/tsx benchmark/context-models-reaccount.ts benchmark/results/context-models-2026-10-20
+python3 benchmark/context-models-summarize.py benchmark/results/context-models-2026-10-20
+```
+
+The summarizer joins explicit manual `grades.json` files and emits
+`graded-summary.json` plus `stages.csv`. It reports both monotonic stage duration
+and UTC duration; clock discrepancies must be disclosed, not silently removed.
+It does not generate quality grades.
+
+If a benchmark process is interrupted, first check whether it is still running.
+The continuation supervisor verifies every frozen source hash and the copied
+suite, preserves original repetition/order, and starts only unfinished keys in
+a new output directory:
+
+```bash
+./node_modules/.bin/tsx benchmark/context-models-continue.ts ORIGINAL_RESULTS NEW_RESULTS
+```
+
+Keep the interrupted attempt and its partial usage in the all-attempt audit.
+After a usage-limit stop, respect the limit and wait for a new authorized
+continuation; do not substitute another model or retry in a loop.
