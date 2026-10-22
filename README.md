@@ -80,7 +80,6 @@ The Windows PowerShell smoke workflow installs, builds, links, and checks the CL
 | `/new` | Alias for `/clear` |
 | `/compact` | Compact the selected idle Codex thread while keeping its thread ID |
 | `/context` | Show the current Codex thread, last measured context occupancy, and checkpoint status |
-| `/route` | Show the latest recorded Vex choices and route used |
 | `/mcp` / `/mcp list` | Open the interactive MCP manager, or print configured external servers |
 | `/diff` | Browse saved file changes by turn; undo or redo individual files |
 | `/undo` | Undo the latest conversation turn and its saved file edits; restore the prompt to the composer |
@@ -113,7 +112,7 @@ After opening a second conversation, a compact picker stays below the input. Pre
 
 Pace retains the active task's workflow and lead route across ordinary follow-ups. Vex explicitly chooses continuation, rerouting, replanning, replacement, clarification, or a separate answer. `/btw` uses a separate read-only thread with a Vex-selected route; `/adopt <id>` forwards one selected finding. `/verify` retains separate verifier state. `/execute` reads the current full plan into a fresh normal execution session. Pace periodically saves active execution progress and immediately saves new thread IDs. After a restart, incomplete attempts are marked failed with an interruption note, and the next user turn resumes from the saved thread and observations. See [durable tasks and routing](docs/task-workflows.md) for persistence, recovery, accounting, and unchanged context policy.
 
-Pace shows routing and stage activity in the live status. `/route` and `/stats` retain the detailed decisions and stage records.
+Pace shows routing and stage activity in the live status. Detailed decisions and stage records remain in saved sessions; `/stats` shows attempt accounting and Vex call totals.
 The header's Context gauge and `/context` use the last measured Codex model request and its context-window limit. `Context ?` means Pace has no valid measurement for the selected thread and model. The account usage panel shows account limits separately. `/context` also says whether the next turn resumes a Codex thread; `/new` starts a separate conversation; choose a saved conversation in the picker to return to it. `/compact` works only when that conversation has an idle Codex thread; Esc twice within 750 ms or Ctrl+C cancels it. Pace records compaction usage, estimated API-equivalent cost, duration, and outcome separately from user turns in `/stats`. The gauge becomes unknown after compaction until another model request reports context usage.
 
 After 16 turns in one Codex thread, or when measured context reaches 75%, Pace asks that thread for a bounded, structured checkpoint. The next turn starts a fresh thread with the validated checkpoint and current request. Pace keeps the old thread ID in the checkpoint record and counts turns in the new thread separately. A failed checkpoint leaves the existing thread available.

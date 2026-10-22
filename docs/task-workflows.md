@@ -34,7 +34,7 @@ Older sessions remain readable. Their workflow is unknown until Vex receives the
 
 ## Usage and audit
 
-`/route` links decisions to task, stage, role, attempt, and context action. It distinguishes user selections, Vex choices, retained routes, and selected side results. It does not invent a natural-language explanation from probabilities.
+Saved control decisions link to task, stage, role, attempt, and context action. They distinguish user selections, Vex choices, retained routes, and selected side results. Pace does not invent a natural-language explanation from probabilities.
 
 `/stats` uses the durable Codex attempt ledger, including errors, cancellations, scout format repairs, checkpoints, and manual compaction. It reports known subtotal separately from full cost. Missing billing fields, unidentified usage, backend rerouting without billable attribution, unknown prices, and compaction placeholders leave full cost unknown. Legacy history without an attempt ledger also leaves full historical cost unknown. Context occupancy is a separate measurement.
 

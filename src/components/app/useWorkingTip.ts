@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 const workingTips = [
   "Type / to browse commands",
   "Use /context to check thread size",
-  "Use /route to inspect routing decisions",
   "Use /tasks to review current steps",
   "Send another prompt to queue it",
   "Ctrl+O toggles command and reasoning details",

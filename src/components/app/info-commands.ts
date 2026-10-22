@@ -1,5 +1,5 @@
 import type { Dispatch, SetStateAction } from "react";
-import type { Config, Session } from "../../shared/types.js";
+import type { Session } from "../../shared/types.js";
 import type { PaceStore } from "../../core/sessions.js";
 import { taskSummary } from "../../core/tasks.js";
 import { taskAccounting } from "../../core/task-execution.js";
@@ -7,15 +7,12 @@ import { artifactDirectory, artifactPath, artifactSnapshot, legacyArtifactDirect
 import { listMcpServers } from "../../integrations/codex-cli.js";
 import { contextPercent, measuredContext } from "../../core/context.js";
 import { currentManifestSource, newerPaceVersion, refreshVersionManifest } from "../../core/routing/pricing.js";
-import { modelName } from "../turn-format.js";
-import { formatLatestRoute } from "../route-format.js";
 import type { Line } from "../Transcript.js";
 
-export const infoCommands = ["/help", "/tasks", "/mcp", "/context", "/version", "/artifacts", "/stats", "/route"];
+export const infoCommands = ["/help", "/tasks", "/mcp", "/context", "/version", "/artifacts", "/stats"];
 
 type InfoOptions = {
   session: Session;
-  config: Config;
   store: PaceStore;
   installedVersion: string;
   setMcpOpen: Dispatch<SetStateAction<boolean>>;
@@ -24,12 +21,12 @@ type InfoOptions = {
 };
 
 export async function showCommandInfo(command: string, parts: string[], {
-  session, config, store, installedVersion, setMcpOpen, setKnownModels, add,
+  session, store, installedVersion, setMcpOpen, setKnownModels, add,
 }: InfoOptions) {
   if (command === "/help") {
     add(
       "info",
-      "/plan [prompt] · /execute · /verify [file] [prompt] · /models · /mcp [list] · /auto · /manual [model] [effort] · /workflow [name|auto] · /approval [full-access|request-approval|limited] · /remote · /tasks · /new · /convo · /diff · /undo · /redo · /compact · /context · /retry · /cancelretry · /btw <q> · /adopt <side-answer-id> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /stats · /route · /clear · /exit · Esc cancels automatic retry; Esc twice/Ctrl+C cancels other turns · Ctrl+Z undo · Ctrl+Y redo · Alt+P/Ctrl+P plan · Alt+E/Ctrl+E execute · ! Bash · Ctrl+O toggle command, diff, and reasoning details · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
+      "/plan [prompt] · /execute · /verify [file] [prompt] · /models · /mcp [list] · /auto · /manual [model] [effort] · /workflow [name|auto] · /approval [full-access|request-approval|limited] · /remote · /tasks · /new · /convo · /diff · /undo · /redo · /compact · /context · /retry · /cancelretry · /btw <q> · /adopt <side-answer-id> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /stats · /clear · /exit · Esc cancels automatic retry; Esc twice/Ctrl+C cancels other turns · Ctrl+Z undo · Ctrl+Y redo · Alt+P/Ctrl+P plan · Alt+E/Ctrl+E execute · ! Bash · Ctrl+O toggle command, diff, and reasoning details · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
     );
     add("info", "With multiple open conversations, press Down from the input to focus the picker. Use arrows and Enter to switch; Esc returns to input. Ctrl+C cancels the selected turn. /exit quits.");
     return;
@@ -124,15 +121,6 @@ export async function showCommandInfo(command: string, parts: string[], {
       const pricedCount = generations.filter(item => item.estimatedCostUsd !== undefined).length;
       add("info", `Checkpoints: ${generations.length} generation attempts (${generations.filter(item => item.outcome === "valid").length} valid) · ${input} input / ${output} output tokens (${generations.filter(item => item.usage).length} reported usage) · ${(duration / 1000).toFixed(1)}s · ${pricedCount ? `~$${estimated.toFixed(4)} estimated API equivalent (${pricedCount} priced)` : "API-equivalent cost unavailable"}; full checkpoint cost ${generations.every(item => item.estimatedCostUsd !== undefined) ? "known" : "unknown (subtotal only)"}`);
     }
-    return;
-  }
-  if (command === "/route") {
-    if (parts.length) { add("error", "Type /route without arguments."); return; }
-    const workflow = session.activeTask?.workflow;
-    add("info", `Task ${session.activeTask?.id ?? "legacy/unknown"} · workflow ${workflow ? `${workflow.shape} v${workflow.version} generation ${workflow.generation}, stage ${workflow.stage}` : "unknown"} · main ${modelName(session.route)} ${session.route.effort ?? "default"} · thread ${session.threadId ?? "none"} · context: continue existing checkpoint policy.`);
-    for (const decision of session.controlDecisions ?? []) add("info", `${decision.at} · ${decision.source} ${decision.objective}: ${decision.failed ? `failed (${decision.error ?? "invalid decision"})` : decision.choice} · task ${decision.taskId ?? "unknown"} · stage ${decision.stage ?? "unknown"} · role ${decision.role} · attempt ${decision.attemptId ?? "none"} · context ${decision.contextAction} · ${(decision.durationMs / 1000).toFixed(2)}s`);
-    for (const answer of session.sideAnswers ?? []) add("info", `Side ${answer.id} · task ${answer.taskId ?? "unknown"} · attempt ${answer.attemptId} · ${modelName(answer.route)} ${answer.route.effort ?? "default"} · ${answer.error ? "failed" : answer.adopted ? "forwarded to main" : "available via /adopt"}`);
-    for (const line of formatLatestRoute(session.turns, config.models)) add("info", line);
     return;
   }
 }

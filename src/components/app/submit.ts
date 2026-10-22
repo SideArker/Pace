@@ -104,7 +104,7 @@ export function createSubmit({ state, transcript, queue, routing, completion, se
       setQueueVersion(value => value + 1); setDraft("");
       add("info", `Queued operation ${position}: ${text}`); return;
     }
-    if (jobs.current.has(session.id) && !/^\/(?:new|clear|help|exit|stats|compact|context|route|artifacts|models|mcp|trust|skills|approval|tasks|remote)(?:\s|$)/.test(text)) {
+    if (jobs.current.has(session.id) && !/^\/(?:new|clear|help|exit|stats|compact|context|artifacts|models|mcp|trust|skills|approval|tasks|remote)(?:\s|$)/.test(text)) {
       if (isRegisteredCommand(text, registeredCommands) && !skillCommand(text, enabledSkills(skills, config))) {
         add("info", "This conversation is working. Use /new or the conversation picker to switch conversations.");
         return;
@@ -151,7 +151,7 @@ export function createSubmit({ state, transcript, queue, routing, completion, se
         return;
       }
       if (infoCommands.includes(command)) {
-        await showCommandInfo(command, parts, { session, config, store, installedVersion, setMcpOpen, setKnownModels, add });
+        await showCommandInfo(command, parts, { session, store, installedVersion, setMcpOpen, setKnownModels, add });
         return;
       }
       if (command === "/auto" || command === "/workflow" || command === "/manual") {

@@ -23,8 +23,10 @@ it("keeps ./clear as ordinary input while recognizing the supported command alia
   expect(commands.filter(command => command.includes("clear"))).toEqual(["/clear"]);
   expect(commands).not.toContain("/resume");
   expect(commands).not.toContain("/usage");
+  expect(commands).not.toContain("/route");
   expect(isRegisteredCommand("/resume")).toBe(false);
   expect(isRegisteredCommand("/usage")).toBe(false);
+  expect(isRegisteredCommand("/route")).toBe(false);
 });
 
 it("shows pasted text directly below ten lines and a marker from ten lines", () => {
