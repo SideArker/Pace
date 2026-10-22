@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Usage } from "@openai/codex-sdk";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import type { Config, Route, Session, AgentRole, OperationIntent, QueuedOperation, WorkflowShape, TaskAssessment } from "../shared/types.js";
+import type { Config, Route, Session, AgentRole, OperationIntent, QueuedOperation, WorkflowShape } from "../shared/types.js";
 import type { CodexRunner, Progress } from "../integrations/codex.js";
 import type { UserAnswers } from "../integrations/codex-types.js";
 import {
@@ -9,42 +8,31 @@ import {
   shapeRequest,
   stageRequest,
   controlRequest,
-  assessmentRequest,
-  type VexRequest,
 } from "./vex/client.js";
 import {
   chosenRoute,
-  validateDecision,
-  type RoutingDecision,
 } from "./routing/router.js";
 import { costForUsage, pricedModels, refreshVersionManifest } from "./routing/pricing.js";
 import { advanceTask, retainedTask, type TaskRelation } from "./active-task.js";
 import { PaceStore } from "./sessions.js";
-import { retryableTurn } from "./session-model.js";
-import { verifyPlanPrompt, tryReadPlanFile, structuredHandoff, addUsage, awaitRouting, loadPlanningInstructions, planningPrompt, retainedConversationPrompt } from "./orchestrator-helpers.js";
+import { verifyPlanPrompt, tryReadPlanFile, structuredHandoff, addUsage, awaitRouting, loadPlanningInstructions, planningPrompt } from "./orchestrator-helpers.js";
+import { createTurnRouting, VexUnavailableError } from "./orchestrator-routing.js";
+export { VexUnavailableError } from "./orchestrator-routing.js";
 import { runPlanningStage } from "./workflow-stages.js";
 import { durableRunner, ensureTask, requiredSave, TransitionSaveError } from "./task-execution.js";
 import { operation, preparePlanExecution, adoptedSidePrompt, currentPlan, validateOperationTarget } from "./operations.js";
 import { runAside } from "./side-answers.js";
-import { checkpointHandoff } from "./checkpoint.js";
 import { beginFileEdits } from "./file-edits.js";
-import { artifactDirectory, artifactPath, artifactSnapshot, changedArtifacts, planArtifactReference } from "./system/artifacts.js";
+import { artifactSnapshot, changedArtifacts } from "./system/artifacts.js";
 import { validRoute } from "../shared/config.js";
 import { existingFolder } from "./system/folders.js";
+import { prepareTurnPrompt, prepareRunnerPrompt } from "./orchestrator-prompts.js";
+import { prepareTurnArtifacts, finishPlanArtifact } from "./orchestrator-artifacts.js";
+import { requestWorkflowClarification } from "./orchestrator-clarification.js";
+import { prepareTurnSkills } from "./orchestrator-skills.js";
 import {
-  autoLaunchPrompt,
-  configuredSkills,
-  enabledSkills,
-  skillCommand,
-  skillOption,
-  skillPrompt,
-  skillRequest,
-} from "./system/skills.js";
-import {
-  DEFAULT_ROUTING_PROMPTS,
   completionObjective,
   loadRoutingPrompts,
-  type RoutingPrompts,
 } from "./routing/routing-prompts.js";
 
 export type StageRecord = {
@@ -76,14 +64,6 @@ export type TurnOutcome = {
   routing: RoutingRecord[];
   estimatedCostUsd?: number;
 };
-export class VexUnavailableError extends Error {
-  constructor(
-    cause: unknown,
-    readonly source: "connection" | "decision",
-  ) {
-    super(`Vex routing failed: ${String(cause)}`);
-  }
-}
 export class Orchestrator {
   constructor(
     readonly store: PaceStore,
@@ -146,68 +126,14 @@ export class Orchestrator {
       side.adopted = true;
     }
     const verifierTurn = intent === "verify_plan" || intent === "continue_verify";
+    // A stale or concurrent attempt record must never gate a new prompt. Live
+    // executions are already owned by their runner; new turns can proceed on
+    // the saved thread and the ledger keeps each attempt's outcome separately.
     await this.store.recoverInterruptedAttempts(session, activateOnSave);
-    if (
-      /^(?:stop caveman|normal mode)$/i.test(prompt.trim()) &&
-      session.activeSkills?.includes("caveman")
-    ) {
-      session.activeSkills = session.activeSkills.filter(
-        (name) => name !== "caveman",
-      );
-      if (session.skillOptions) delete session.skillOptions.caveman;
-      await this.store.saveChanges(session, activateOnSave);
-      return {
-        session,
-        result: "/caveman disabled for this conversation.",
-        note: "Skill command",
-        route: session.route,
-        durationMs: Math.round(performance.now() - startedAt),
-        artifacts: [],
-        stages: [],
-        routing: [],
-      };
-    }
-    const skills = enabledSkills(await configuredSkills(config), config);
-    const invoked = skillCommand(prompt, skills);
-    let request = invoked ? skillRequest(prompt, invoked) : prompt;
-    const option = invoked ? skillOption(invoked, request) : undefined;
-    if (invoked) {
-      const active = session.activeSkills ?? [];
-      session.activeSkills =
-        request === "off"
-          ? active.filter((name) => name !== invoked.name)
-          : [...new Set([...active, invoked.name])];
-      session.skillOptions ??= {};
-      if (!request || request === "off")
-        delete session.skillOptions[invoked.name];
-      else if (option) session.skillOptions[invoked.name] = option;
-      if (!request || request === "off" || option) {
-        await this.store.saveChanges(session, activateOnSave);
-        const result =
-          "/" +
-          invoked.name +
-          (option ? " " + option : "") +
-          " " +
-          (request === "off" ? "disabled" : "active") +
-          " for this conversation.";
-        return {
-          session,
-          result,
-          note: "Skill command",
-          route: session.route,
-          durationMs: Math.round(performance.now() - startedAt),
-          artifacts: [],
-          stages: [],
-          routing: [],
-        };
-      }
-    }
-    const routingTurns = session.turns.map((turn) => {
-      const previousSkill = skillCommand(turn.prompt, skills);
-      return previousSkill
-        ? { ...turn, prompt: skillRequest(turn.prompt, previousSkill) }
-        : turn;
-    });
+    const preparedSkills = await prepareTurnSkills({ prompt, session, config, store: this.store, activateOnSave, startedAt });
+    if ("outcome" in preparedSkills) return preparedSkills.outcome;
+    const { skills, routingTurns } = preparedSkills;
+    let { request } = preparedSkills;
     const enabled = config.models.filter((model) => model.enabled !== false);
     const savedTask = retainedTask(session);
     // Legacy data supplies evidence, never a guessed workflow or completed scout.
@@ -230,46 +156,9 @@ export class Orchestrator {
       systemMessages.push(text);
       onProgress({ kind: "system", text });
     };
-    const choose = async (
-      request: VexRequest,
-      objective: string,
-    ): Promise<RoutingDecision> => {
-      let failure: unknown;
-      const decisionStarted = performance.now();
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        signal?.throwIfAborted();
-        try {
-          const decision = validateDecision(
-            await awaitRouting(this.vex.choose(request), signal),
-            request.options,
-          );
-          signal?.throwIfAborted();
-          routing.push({
-            objective,
-            choice: decision.choice,
-            choiceLabel: request.options.find(option => option.id === decision.choice)?.description,
-            confidence: decision.confidence,
-            probabilities: decision.probabilities,
-            attempts: attempt,
-          });
-          session.controlDecisions = [...(session.controlDecisions ?? []), {
-            id: randomUUID(), taskId: session.activeTask?.id, stage: session.activeTask?.workflow?.stage,
-            role: verifierTurn ? "verifier" : request.context.stageObjective === prompts.objectives.scout ? "scout" : "main", objective, choice: decision.choice, confidence: decision.confidence,
-            probabilities: decision.probabilities, durationMs: Math.round(performance.now() - decisionStarted), at: new Date().toISOString(), source: "vex", contextAction: "continue",
-            requests: attempt,
-          }];
-          await save();
-          return decision;
-        } catch (error) {
-          if (error instanceof TransitionSaveError) throw error;
-          signal?.throwIfAborted();
-          failure = error;
-        }
-      }
-      session.controlDecisions = [...(session.controlDecisions ?? []), { id: randomUUID(), taskId: session.activeTask?.id, stage: session.activeTask?.workflow?.stage, role: verifierTurn ? "verifier" : "main", objective, choice: "unavailable", confidence: 0, probabilities: {}, durationMs: Math.round(performance.now() - decisionStarted), at: new Date().toISOString(), source: "vex", contextAction: "continue", requests: 2, failed: true, error: String(failure) }];
-      await save();
-      throw new VexUnavailableError(failure, "decision");
-    };
+    const { choose, assess } = createTurnRouting({
+      vex: this.vex, session, prompts, verifierTurn, routing, save, onProgress, signal,
+    });
     const previousPlanRoute = intent === "verify_plan" && session.planRoute
       ? { ...session.planRoute }
       : intent === "continue_verify" && session.verifierThreadId
@@ -288,24 +177,6 @@ export class Orchestrator {
       preserveRoute = !!session.activeTask?.workflow?.mainRoute;
       shape = session.activeTask?.workflow?.shape ?? "plan";
     }
-    const assess = async (attemptId: string, updateTask: boolean) => {
-      const attempt = session.attempts?.find(item => item.id === attemptId);
-      if (!attempt) return;
-      try {
-        const decision = await choose(assessmentRequest(session, attemptId, prompts), "task completion assessment");
-        const record = session.controlDecisions!.at(-1)!;
-        record.attemptId = attemptId; record.taskId = attempt.taskId; record.role = attempt.role; record.stage = attempt.stage;
-        const currentAttempt = session.attempts!.find(item => item.id === attemptId)!;
-        currentAttempt.assessment = { value: decision.choice as TaskAssessment, evidence: currentAttempt.observations.length, decisionId: record.id };
-        if (updateTask && session.activeTask) session.activeTask.assessment = decision.choice as TaskAssessment;
-        await save();
-      } catch (error) {
-        if (error instanceof TransitionSaveError) throw error;
-        if (updateTask && session.activeTask) session.activeTask.assessment = "unknown";
-        onProgress({ kind: "error", text: `Task completion is unknown: ${String(error)}` });
-        await save();
-      }
-    };
     let usedThreadForClarification = false;
     let handoff: string | undefined;
     let userClarification: string | undefined;
@@ -414,83 +285,8 @@ export class Orchestrator {
         }
         if (shape === "clarify") {
 
-          const isInteractive = (onProgress as { interactive?: boolean }).interactive === true;
-          let userDecision: { choice?: string; clarification?: string; cancelled?: boolean } | undefined;
-
-          if (isInteractive) {
-            onProgress({ kind: "status", text: "Waiting for clarification..." });
-            const formatRoute = (r?: Route) => {
-              if (!r?.model) return "Codex default";
-              const name = r.model.replace(
-                /^gpt-(\d+)-(.+)$/,
-                (_match, version: string, n: string) =>
-                  `GPT-${version} ${n[0]!.toUpperCase()}${n.slice(1)}`,
-              );
-              return `${name}${r.effort ? ` ${r.effort[0]!.toUpperCase()}${r.effort.slice(1)}` : ""}`;
-            };
-            const defaultRouteDesc = formatRoute(session.route);
-            const options = [
-              {
-                label: "Run as single agent",
-                description: "Direct answer or action using the standard route",
-              },
-              ...(enabled.some(m => m.efforts.length > 0)
-                ? [
-                    {
-                      label: "Scout codebase first",
-                      description: "Read-only exploration to find files and report context",
-                    },
-                  ]
-                : []),
-              { label: "Plan only", description: "Save a plan in conversation artifacts; use /execute later" },
-            ];
-            if (session.route?.model) {
-              options.push({
-                label: `Use manual route (${defaultRouteDesc})`,
-                description: `Bypass workflow and route stages directly to ${defaultRouteDesc}`,
-              });
-            }
-
-            userDecision = await new Promise<{ choice?: string; clarification?: string; cancelled?: boolean }>((resolve) => {
-              const questionId = `clarify-${Date.now()}`;
-              const abortListener = () => resolve({ cancelled: true });
-              signal?.addEventListener("abort", abortListener, { once: true });
-
-              onProgress({
-                kind: "question",
-                id: questionId,
-                questions: [
-                  {
-                    id: "workflow",
-                    header: "Clarification Needed",
-                    question: "Vex is unsure about the deliverable for this request. How would you like to proceed?",
-                    options,
-                    isOther: true,
-                    isSecret: false,
-                  },
-                ],
-                respond: (answers: UserAnswers) => {
-                  signal?.removeEventListener("abort", abortListener);
-                  const val = answers["workflow"]?.answers[0]?.trim();
-                  if (!val) {
-                    resolve({ cancelled: true });
-                    return;
-                  }
-                  if (val === "Run as single agent") {
-                    resolve({ choice: "single" });
-                  } else if (val === "Scout codebase first") {
-                    resolve({ choice: "scout" });
-                  } else if (val === "Plan only") {
-                    resolve({ choice: "plan" });
-                  } else if (val.startsWith("Use manual route")) {
-                    resolve({ choice: "manual" });
-                  } else {
-                    resolve({ clarification: val });
-                  }
-                },
-              });
-            });
-          }
+          const clarification = requestWorkflowClarification(session, enabled, onProgress, signal);
+          const userDecision = clarification ? await clarification : undefined;
 
           if (userDecision?.choice === "manual") {
             shape = "single";
@@ -594,29 +390,9 @@ export class Orchestrator {
         if (intent !== "verify_plan" && intent !== "revise_plan")
           systemMessage("Pace switched to planning mode. Only conversation artifacts are writable; use /verify or /execute after the plan is saved.");
       }
-      const conversationArtifacts = artifactDirectory(this.store, session);
-      await mkdir(conversationArtifacts, { recursive: true });
-      const planningTurn = session.kind === "planning" && (intent === "revise_plan" || !intent);
-      const pendingPlanBeforeTurn = session.pendingPlanArtifact;
-      const separatePlan = planningTurn && !!session.planArtifact && !pendingPlanBeforeTurn && taskRelation === "replace";
-      const planReference = planningTurn ? planArtifactReference(session.id, prompt, session.pendingPlanArtifact ?? session.planArtifact, separatePlan) : undefined;
-      const planPath = planReference ? artifactPath(this.store, session, planReference) : undefined;
-      if (planReference && planReference !== session.planArtifact && session.pendingPlanArtifact !== planReference) {
-        session.pendingPlanArtifact = planReference;
-        await save();
-      }
-      let planBefore: string | undefined;
-      if (planPath) {
-        try { planBefore = await readFile(planPath, "utf8"); }
-        catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-        if (planBefore === undefined && session.plan && !separatePlan && (!pendingPlanBeforeTurn || planReference === session.planArtifact)) {
-          planBefore = session.plan;
-          await writeFile(planPath, planBefore, "utf8");
-        }
-      }
-      const artifactsBefore = await artifactSnapshot(conversationArtifacts).catch(
-        () => new Map<string, number>(),
-      );
+      const { conversationArtifacts, planningTurn, planReference, planPath, planBefore, artifactsBefore } = await prepareTurnArtifacts({
+        store: this.store, session, prompt, intent, taskRelation, save,
+      });
       const trustedFolders = await Promise.all(
         (config.trustedFolders ?? []).map(existingFolder),
       );
@@ -687,45 +463,16 @@ export class Orchestrator {
         kind: "status",
         text: `${note}: ${route.model ?? "Codex default"} · ${route.effort ?? "default"}`,
       });
-      const basePrompt = userClarification
-        ? `${prompt}\n\nClarification: ${userClarification}`
-        : prompt;
-      const resumingDeferred = session.deferredTurn?.prompt === prompt && session.deferredTurn?.intent === intent;
-      const resumedAfterLimit = resumingDeferred && (!session.deferredTurn?.reason || session.deferredTurn.reason === "usage");
-      const retryingFailure = retryableTurn(session)?.prompt === prompt;
-      const resolvedPrompt = taskRelation === "continue" && priorTask && !session.threadId
-        ? `${basePrompt}\n\nPace's saved task brief (verify against conversation): ${priorTask.originalRequest}\nLater instructions: ${JSON.stringify(priorTask.instructions)}\nLast outcome: ${priorTask.latestOutcome ?? "Unknown"}\n${prompts.execution.savedTaskInstruction}`
-        : (taskRelation === "continue" || usedThreadForClarification) && session.threadId && intent !== "verify_plan" && intent !== "revise_plan"
-          ? `${basePrompt}\n\n${prompts.execution.existingThreadInstruction}`
-          : basePrompt;
-      const safePrompt = resumedAfterLimit
-        ? `${resolvedPrompt}\n\n${prompts.execution.usageRetryInstruction}`
-        : retryingFailure
-          ? `${resolvedPrompt}\n\nThis request was interrupted by an error. Inspect current files and prior conversation before editing. Continue only unfinished work. Report completed work, remaining work, and checks.`
-          : resolvedPrompt;
-      const baseExecutionPrompt = skillPrompt(
-        `${safePrompt}\n\n${prompts.execution.coverageInstruction}`,
-        skills,
-        session.activeSkills,
-        session.skillOptions,
-      );
-      const promptWithHandoff = handoff
-        ? `${baseExecutionPrompt}\n\n${prompts.handoff.reportInstruction}\n${handoff}`
-        : baseExecutionPrompt;
+      const { promptWithHandoff, resumingDeferred } = prepareTurnPrompt({
+        prompt, session, intent, userClarification, taskRelation, priorTask,
+        usedThreadForClarification, prompts, skills, handoff,
+      });
       const executionPrompt = intent === "verify_plan" || intent === "continue_verify"
         ? `${promptWithHandoff}\n\nIndependently verify the plan. Propose precise changes for every finding. Work read-only; do not edit or save the plan.`
         : planningTurn ? planningPrompt(promptWithHandoff, session.projectPath, planPath!, planBefore ?? session.plan, await loadPlanningInstructions(), intent === "revise_plan" ? session.turns.at(-1)?.result : undefined) : promptWithHandoff;
-      const checkpoint = !verifierTurn && intent !== "revise_plan" && session.checkpoint?.threadId === session.threadId &&
-        session.turns.some(turn => turn.at === session.checkpoint?.sourceTurnAt)
-        ? session.checkpoint : undefined;
-      const runThreadId = intent === "continue_verify" ? session.verifier?.threadId ?? session.verifierThreadId : checkpoint || intent === "verify_plan" ? undefined : session.threadId;
-      const checkpointTurn = checkpoint ? session.turns.findIndex(turn => turn.at === checkpoint.sourceTurnAt) : -1;
-      const promptWithHistory = checkpoint
-        ? checkpointHandoff(checkpoint.note, session.turns.slice(checkpointTurn + 1).filter(turn => !turn.failed).slice(-3).map(turn => ({ user: turn.prompt.slice(0, 1000), assistant: turn.result.slice(0, 1000) })), executionPrompt)
-        : retainedConversationPrompt(executionPrompt, intent === "verify_plan" || intent === "revise_plan" ? { ...session, threadId: undefined, turns: [] } : session);
-      const selectedAutoSkills = !runThreadId && !verifierTurn && intent !== "revise_plan" && !planningTurn
-        ? skills.filter(skill => session.autoLaunchSkills?.includes(skill.name)) : [];
-      const runnerPrompt = autoLaunchPrompt(promptWithHistory, selectedAutoSkills);
+      const { runnerPrompt, runThreadId, checkpoint } = prepareRunnerPrompt({
+        executionPrompt, session, intent, verifierTurn, planningTurn, skills,
+      });
       if (checkpoint) onProgress({ kind: "status", text: "Starting fresh thread from checkpoint…" });
       const stageStart = performance.now();
       if (!verifierTurn) session.undoneTurns = undefined;
@@ -776,24 +523,9 @@ export class Orchestrator {
         else session.threadId = execution.threadId;
         if (!verifierTurn && intent !== "revise_plan" && !planningTurn && session.autoLaunchSkills?.length) session.autoLaunchThreadId = execution.threadId;
       }
-      let planChanged = false;
-      if (planningTurn) {
-        let planAfter: string | undefined;
-        try { planAfter = await readFile(planPath!, "utf8"); }
-        catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-        if (planAfter !== undefined && !planAfter.trim() && planBefore?.trim()) {
-          await writeFile(planPath!, planBefore, "utf8");
-          planAfter = planBefore;
-        }
-        if (planAfter?.trim() && planAfter !== planBefore) {
-          planChanged = true;
-          session.plan = planAfter;
-          session.planArtifact = planReference;
-          session.planRoute = route;
-          delete session.pendingPlanArtifact;
-          systemMessage(`Plan saved: ${planPath}`);
-        }
-      }
+      const planChanged = planningTurn
+        ? await finishPlanArtifact({ session, route, planPath: planPath!, planBefore, planReference, systemMessage })
+        : false;
       if (checkpoint && session.threadId === checkpoint.threadId) {
         session.threadId = undefined;
         onProgress({ kind: "error", text: "Fresh Codex thread ID was unavailable; the next turn will use retained conversation history." });

@@ -1,12 +1,12 @@
 import type { ApprovalMode, Route } from "../shared/types.js";
 import { realpath } from "node:fs/promises";
 import type { Usage } from "@openai/codex-sdk";
-import { CodexRunError, type ApprovalDecision, type CodexRunner, type Execution, type Progress, type RunnerMode, type UserAnswers, type UserQuestion } from "./codex-types.js";
+import { CodexRunError, type ApprovalDecision, type CodexRunner, type Execution, type Progress, type RunnerMode, type UserAnswers } from "./codex-types.js";
 import { AppServer, isRecord, type AppServerConnection, type JsonRecord } from "./app-server-process.js";
-import { appServerThreadParams, appServerTurnParams, appUsage } from "./app-server-protocol.js";
+import { appServerThreadParams, appServerTurnParams } from "./app-server-protocol.js";
 import { appItemProgress, fileChangeProgress } from "./codex-events.js";
-import { contextMeasurement } from "../core/context.js";
-import { commandRisk } from "../core/command-protection.js";
+import { TurnUsage } from "./app-server-usage.js";
+import { registerAppServerRequests } from "./app-server-requests.js";
 import { turnImageInput } from "./image-input.js";
 
 type RpcMessage = { id?: number | string; method?: string; params?: unknown; result?: unknown; error?: { message?: string } };
@@ -21,93 +21,6 @@ export type CompactionResult = {
   knownUsage?: Usage;
   usageComplete: boolean;
 };
-
-function sumUsage(left: Usage, right: Usage): Usage {
-  return {
-    input_tokens: left.input_tokens + right.input_tokens,
-    cached_input_tokens: left.cached_input_tokens + right.cached_input_tokens,
-    cache_write_input_tokens: left.cache_write_input_tokens + right.cache_write_input_tokens,
-    output_tokens: left.output_tokens + right.output_tokens,
-    reasoning_output_tokens: left.reasoning_output_tokens + right.reasoning_output_tokens,
-  };
-}
-
-/** A cumulative total identifies one model request within an identified turn.
- * Repeated readings update that request; they are not additional inference. */
-class TurnUsage {
-  private readonly requests = new Map<number, Usage | undefined>();
-  private unidentified = false;
-  private fallback?: Usage;
-  private billingStopped = false;
-  context?: Execution["context"];
-  private contextTotal = -1;
-
-  markUnknown(): void { this.unidentified = true; }
-
-  stopBilling(): void {
-    // Without per-request model metadata, later inference cannot be priced on
-    // the requested route. Preserve only the subtotal observed before reroute.
-    this.billingStopped = true;
-    this.markUnknown();
-    this.context = undefined;
-  }
-
-  observe(value: unknown, model?: string): void {
-    if (this.billingStopped) return;
-    const raw = isRecord(value) ? value : {};
-    const total = isRecord(raw.total) ? raw.total.totalTokens : undefined;
-    if (typeof total !== "number" || !Number.isSafeInteger(total) || total < 0) {
-      this.markUnknown();
-      this.context = undefined;
-      return;
-    }
-    this.requests.set(total, billableUsage(raw));
-    if (total >= this.contextTotal) {
-      this.contextTotal = total;
-      this.context = contextMeasurement(raw, model);
-    }
-  }
-
-  complete(...values: unknown[]): void {
-    // Completion usage is a compatibility fallback, never a second charge.
-    if (!this.requests.size && !this.billingStopped) this.fallback = values.map(billableUsage).find(value => value !== undefined);
-  }
-
-  get knownUsage(): Usage | undefined {
-    let sum = this.fallback;
-    for (const reading of this.requests.values()) if (reading) sum = sum ? sumUsage(sum, reading) : reading;
-    return sum;
-  }
-
-  get usageComplete(): boolean {
-    return !this.unidentified && (this.requests.size > 0
-      ? [...this.requests.values()].every(reading => reading !== undefined)
-      : this.fallback !== undefined);
-  }
-
-  get usage(): Usage | undefined { return this.usageComplete ? this.knownUsage : undefined; }
-}
-
-function billableUsage(value: unknown): Usage | undefined {
-  if (!isRecord(value)) return undefined;
-  const last = isRecord(value.last) ? value.last : value;
-  const keys = [
-    ["input_tokens", "inputTokens"], ["cached_input_tokens", "cachedInputTokens"],
-    ["cache_write_input_tokens", "cacheWriteInputTokens"], ["output_tokens", "outputTokens"],
-    ["reasoning_output_tokens", "reasoningOutputTokens"],
-  ];
-  if (keys.some(([snake, camel]) => {
-    const number = last[snake!] ?? last[camel!];
-    return typeof number !== "number" || !Number.isSafeInteger(number) || number < 0;
-  })) return undefined;
-  const usage = appUsage(value);
-  if (!usage || usage.cached_input_tokens + usage.cache_write_input_tokens > usage.input_tokens ||
-      usage.reasoning_output_tokens > usage.output_tokens) return undefined;
-  // Native compaction can report context size with no billing measurement.
-  if (typeof last.totalTokens === "number" && last.totalTokens > 0 &&
-      usage.input_tokens === 0 && usage.output_tokens === 0) return undefined;
-  return usage;
-}
 
 function eventTurnId(params: JsonRecord): unknown {
   return isRecord(params.turn) ? params.turn.id : params.turnId;
@@ -357,76 +270,7 @@ export class AppServerRunner implements CodexRunner {
       });
     };
     const approvals = new Map<string, (decision: ApprovalDecision) => void>();
-    server.setRequestHandler(message => {
-      if (message.id === undefined) return;
-      const params = isRecord(message.params) ? message.params : {};
-      if (message.method === "item/tool/requestUserInput") {
-        const parsed: UserQuestion[] = Array.isArray(params.questions) ? params.questions.flatMap(value => {
-          if (!isRecord(value) || typeof value.id !== "string" || typeof value.question !== "string") return [];
-          return [{
-            id: value.id,
-            header: typeof value.header === "string" ? value.header : "Question",
-            question: value.question,
-            options: Array.isArray(value.options) ? value.options.flatMap(option =>
-              isRecord(option) && typeof option.label === "string"
-                ? [{ label: option.label, description: typeof option.description === "string" ? option.description : "" }]
-                : []) : [],
-            isOther: value.isOther === true,
-            isSecret: value.isSecret === true,
-          }];
-        }) : [];
-        if (mode === "side" || !parsed.length || new Set(parsed.map(item => item.id)).size !== parsed.length) {
-          server.respond(message.id, { answers: {} });
-          return;
-        }
-        const requestId = message.id;
-        const key = String(requestId);
-        const resolve = (answers: UserAnswers) => {
-          if (!questions.delete(key)) return;
-          server.respond(requestId, { answers });
-        };
-        questions.set(key, resolve);
-        void onProgress({ kind: "question", id: key, questions: parsed, respond: resolve });
-        return;
-      }
-      const isCommandApproval = message.method === "item/commandExecution/requestApproval";
-      const isFileApproval = message.method === "item/fileChange/requestApproval";
-      if (!isCommandApproval && !isFileApproval) {
-        server.respond(message.id, { decision: "decline" });
-        return;
-      }
-      if (mode !== "main") {
-        server.respond(message.id, { decision: "decline" });
-        return;
-      }
-      if (isCommandApproval && typeof params.command === "string" && commandRisk(params.command).action === "block") {
-        server.respond(message.id, { decision: "decline" });
-        void onProgress({ kind: "status", text: `Blocked command: ${params.command}` });
-        return;
-      }
-      const requestId = message.id;
-      const approvalId = String(requestId);
-      const resolve = (decision: ApprovalDecision) => {
-        if (!approvals.delete(approvalId)) return;
-        server.respond(requestId, { decision });
-      };
-      approvals.set(approvalId, resolve);
-      const networkContext = isRecord(params.networkApprovalContext) ? params.networkApprovalContext : undefined;
-      const networkTarget = networkContext
-        ? `${String(networkContext.host ?? "host")}${networkContext.protocol ? ` (${String(networkContext.protocol)})` : ""}`
-        : undefined;
-      void onProgress({
-        kind: "approval",
-        id: String(params.itemId ?? requestId),
-        command: isFileApproval
-          ? "Codex requests permission to modify files"
-          : typeof params.command === "string" ? params.command : networkTarget ? `Network access to ${networkTarget}` : "Codex requests permission to run a command",
-        cwd: typeof params.cwd === "string" ? params.cwd : undefined,
-        reason: typeof params.reason === "string" ? params.reason : undefined,
-        network: !!networkContext,
-        respond: resolve,
-      });
-    });
+    registerAppServerRequests(server, mode, onProgress, approvals, questions);
     try {
       const init = await awaitAbort(server.request("initialize", {
         clientInfo: { name: "pace", title: "Pace", version: "0.1.0" },

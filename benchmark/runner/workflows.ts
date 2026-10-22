@@ -42,7 +42,8 @@ async function main() {
   }
   const sourcePaths = [
     "benchmark/runner/workflows.ts", "benchmark/runner/execute.ts", "benchmark/runner/summary.ts",
-    "src/core/orchestrator.ts", "src/core/vex/client.ts", "src/integrations/codex.ts",
+    "src/core/orchestrator.ts",
+    "src/core/orchestrator-artifacts.ts", "src/core/orchestrator-clarification.ts", "src/core/orchestrator-prompts.ts", "src/core/orchestrator-routing.ts", "src/core/orchestrator-skills.ts", "src/core/vex/client.ts", "src/integrations/codex.ts",
   ];
   const sourceContents = await Promise.all(sourcePaths.map(path => readFile(resolve(path))));
   await writeFile(
