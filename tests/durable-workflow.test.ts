@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Orchestrator } from "../src/core/orchestrator.js";
 import { PaceStore, newSession, undoConversationTurn } from "../src/core/sessions.js";
-import { resolveAttempt, taskAccounting, TransitionSaveError, UncertainAttemptError } from "../src/core/task-execution.js";
-import { adoptedSidePrompt, operation, preparePlanExecution } from "../src/core/operations.js";
+import { taskAccounting, TransitionSaveError } from "../src/core/task-execution.js";
+import { adoptedSidePrompt, operation, preparePlanExecution, saveRoutingSelection } from "../src/core/operations.js";
 import { DEFAULT_ROUTING_PROMPTS } from "../src/core/routing/routing-prompts.js";
 import type { Config, Session } from "../src/shared/types.js";
 import type { CodexRunner } from "../src/integrations/codex-types.js";
@@ -86,7 +86,7 @@ it("does not start a stage if its mandatory start save fails", async () => {
   expect(env.calls).toHaveLength(0);
 });
 
-for (const shape of ["single", "scout"]) it(`post-${shape} save failure leaves uncertain attempt and prevents blind retry after restart`, async () => {
+for (const shape of ["single", "scout"]) it(`post-${shape} save failure is recovered after restart and continues from saved state`, async () => {
   const env = await setup(shape); const save = env.store.saveChanges.bind(env.store);
   vi.spyOn(env.store, "saveChanges").mockImplementation(async (...args) => {
     if (args[0].attempts?.some(item => item.status === "completed")) throw new Error("disk full after runner");
@@ -95,13 +95,11 @@ for (const shape of ["single", "scout"]) it(`post-${shape} save failure leaves u
   await expect(env.orchestrator.turn("Implement", env.session, config, () => {})).rejects.toBeInstanceOf(TransitionSaveError);
   expect(env.calls).toHaveLength(1);
   vi.restoreAllMocks(); const loaded = (await env.store.load(env.root, env.session.id))!;
-  expect(loaded.attempts?.[0]?.status).toBe("running");
-  await expect(env.orchestrator.turn("Retry", loaded, config, () => {})).rejects.toBeInstanceOf(UncertainAttemptError);
-  expect(env.calls).toHaveLength(1);
-  await resolveAttempt(env.store, loaded, loaded.attempts![0]!.id, shape === "scout" ? report : "Verified current thread, files and artifacts; implementation is complete");
+  expect(loaded.attempts?.[0]).toMatchObject({ status: "failed", threadId: "thread-1" });
+  expect(loaded.attempts?.[0]?.error).toContain("Pace stopped");
   await env.orchestrator.turn("Continue only unfinished work", loaded, config, () => {});
-  expect(env.calls).toHaveLength(2);
-  if (shape === "scout") expect(env.calls[1]?.[6]).toBe("main");
+  expect(env.calls).toHaveLength(shape === "scout" ? 3 : 2);
+  if (shape === "scout") expect(env.calls.at(-1)?.[6]).toBe("main");
 });
 
 it("Vex completion has recorded core evidence and does not derive completion from turn/completed", async () => {
@@ -111,6 +109,29 @@ it("Vex completion has recorded core evidence and does not derive completion fro
   const request = env.requests.find(item => item.options[0]?.id === "closed")!;
   expect(request.context.evidence).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "tasks" }), expect.objectContaining({ kind: "activity", text: expect.stringContaining("Assertions passed") }), expect.objectContaining({ kind: "answer" }), expect.objectContaining({ kind: "artifacts" })]));
   expect(env.session.attempts?.[0]?.assessment).toMatchObject({ value: "unknown", evidence: 4 });
+});
+
+it("persists a new thread immediately and checkpoints progress while execution is still active", async () => {
+  const env = await setup();
+  env.runner.run = async (...args) => {
+    await args[4]({ kind: "thread", text: "checkpoint-thread" });
+    let saved = (await env.store.load(env.root, env.session.id))!;
+    expect(saved.attempts?.[0]?.threadId).toBe("checkpoint-thread");
+    expect(saved.threadId).toBe("checkpoint-thread");
+    expect(saved.attempts?.[0]?.status).toBe("running");
+    await args[4]({ kind: "activity", id: "live-check", category: "command", title: "npm test", completed: false });
+    await args[4]({ kind: "tasks", items: [{ text: "Checkpointed task", completed: false }] });
+    await new Promise(resolve => setTimeout(resolve, 2_100));
+    saved = (await env.store.load(env.root, env.session.id))!;
+    expect(saved.attempts?.[0]?.observations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "activity", text: expect.stringContaining("npm test") }),
+      expect.objectContaining({ kind: "tasks", items: [{ text: "Checkpointed task", completed: false }] }),
+    ]));
+    expect(saved.tasks?.some(task => task.text === "Checkpointed task")).toBe(true);
+    expect(saved.attempts?.[0]?.status).toBe("running");
+    return { result: "Done", completed: true, threadId: "checkpoint-thread", usage };
+  };
+  await env.orchestrator.turn("Implement", env.session, config, () => {});
 });
 
 for (const cancel of [false, true]) it(`retains ${cancel ? "cancelled" : "failed"} usage attempts after retry, deduplication, truncation and undo`, async () => {
@@ -181,15 +202,17 @@ it("accepted verification changes keep the planner task and completed scout", as
   expect(env.calls.at(-1)?.[3]).toBe(lead);
 });
 
-it("failed terminal persistence also blocks a retry on the current in-memory session", async () => {
+it("failed terminal persistence is recovered automatically on the current in-memory session", async () => {
   const env = await setup(); const save = env.store.saveChanges.bind(env.store);
   vi.spyOn(env.store, "saveChanges").mockImplementation(async (...args) => {
     if (args[0].attempts?.some(item => item.status === "completed")) throw new Error("disk full");
     return save(...args);
   });
   await expect(env.orchestrator.turn("Implement", env.session, config, () => {})).rejects.toBeInstanceOf(TransitionSaveError);
-  await expect(env.orchestrator.turn("Retry", env.session, config, () => {})).rejects.toBeInstanceOf(UncertainAttemptError);
-  expect(env.calls).toHaveLength(1);
+  vi.restoreAllMocks();
+  await env.orchestrator.turn("Continue only unfinished work", env.session, config, () => {});
+  expect(env.session.attempts?.[0]?.status).toBe("failed");
+  expect(env.calls).toHaveLength(2);
 });
 
 it("technical noncompletion stops a scout before any final agent starts", async () => {
@@ -225,6 +248,33 @@ it("explicit manual workflow changes are recorded and take effect on the existin
   expect(env.calls.map(item => item[6])).toEqual(["main", "side", "main"]);
   expect(changed.activeTask?.id).toBe(env.session.activeTask?.id);
   expect(changed.controlDecisions?.some(item => item.source === "user" && item.choice === "scout")).toBe(true);
+});
+
+it("saves a manual workflow from the UI snapshot emitted before the turn's final saves", async () => {
+  const env = await setup();
+  let displayed: Session | undefined;
+  const run = env.runner.run;
+  env.runner.run = async (...args) => {
+    await args[4]({ kind: "tasks", items: [{ text: "Implement", completed: false }] });
+    return run(...args);
+  };
+  await env.orchestrator.turn("Implement", env.session, config, event => {
+    if (event.kind === "tasks") displayed = { ...env.session };
+  });
+  expect(displayed).toBeDefined();
+  expect(displayed!.revision).toBeLessThan(env.session.revision!);
+  expect(displayed!.activeTask).toBe(env.session.activeTask);
+  expect(displayed!.activeTask?.workflow?.status).toBe("completed");
+  const previous = structuredClone(env.session);
+  const changed = await saveRoutingSelection(env.store, displayed!, { shape: "scout", routes: { scout: "vex", final: "vex" } });
+  const saved = (await env.store.load(env.root, env.session.id))!;
+  expect(saved).toEqual(changed);
+  expect(saved.activeTask?.workflow).toMatchObject({ shape: "scout", generation: 2 });
+  expect(saved.attempts).toEqual(previous.attempts);
+  expect(saved.turns).toEqual(previous.turns);
+  expect(saved.controlDecisions).toHaveLength(previous.controlDecisions!.length + 1);
+  await env.orchestrator.turn("Continue with selected workflow", changed, config, () => {});
+  expect(env.calls.map(item => item[6])).toEqual(["main", "side", "main"]);
 });
 
 it("a concurrent side completion cannot receive the main answer's assessment or artifacts", async () => {

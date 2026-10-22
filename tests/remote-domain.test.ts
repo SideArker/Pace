@@ -117,6 +117,33 @@ it("UI bridge receives the same fresh execution service and queue metadata", asy
   expect(submitted[0]?.item).toMatchObject({ intent: "execute_plan", sessionId: env.session.id });
 });
 
+it("routing.set applies intent to latest storage and publishes the saved snapshot to the UI bridge", async () => {
+  const env = await fixture();
+  let displayed = env.session;
+  const changed = vi.fn((session: Session) => { displayed = session; });
+  const bridge: RemoteBridge = {
+    busy: () => false, cancel: () => false, session: () => displayed, changed,
+    queue: async () => false, submit: async () => {},
+  };
+  const domain = env.create(bridge);
+  const latest = await env.store.update(env.session, session => {
+    session.activeTask!.workflow = { version: 1, generation: 2, shape: "scout_plan", stage: "plan", status: "completed", source: "vex", scoutHandoff: "Verified findings" };
+    session.manualWorkflow = { shape: "scout_plan", routes: { scout: "vex", final: "vex" } };
+    session.turns = [{ prompt: "Plan", result: "Current plan", at: "now" }];
+  });
+  await env.request(domain, "routing.set", { mode: "manual", route: config.defaultRoute });
+  expect(changed).toHaveBeenCalledTimes(1);
+  expect(displayed).toEqual(await env.store.load(env.root, env.session.id));
+  expect(displayed.activeTask?.workflow).toEqual({ ...latest.activeTask!.workflow, source: "user", mainRoute: config.defaultRoute });
+  expect(displayed.turns).toEqual(latest.turns);
+  expect(displayed.manualWorkflow).toBeUndefined();
+  await env.request(domain, "routing.set", { mode: "auto", route: {} });
+  expect(changed).toHaveBeenCalledTimes(2);
+  expect(displayed.routingMode).toBe("auto");
+  expect(displayed).toEqual(await env.store.load(env.root, env.session.id));
+  expect(displayed.controlDecisions).toHaveLength(1);
+});
+
 it("queued adoption preserves its source through restart and records only that finding", async () => {
   const env = await fixture(); env.session.kind = "normal";
   env.session.sideAnswers = [{ id: "selected", taskId: "plan-task", attemptId: "side-attempt", snapshotAt: "snapshot", question: "Explain", result: "Verified fact", route: config.defaultRoute }];

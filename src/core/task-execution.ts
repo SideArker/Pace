@@ -2,17 +2,15 @@ import { randomUUID } from "node:crypto";
 import type { AgentRole, Session, StageAttempt, WorkflowShape } from "../shared/types.js";
 import type { CodexRunner, Execution, Progress } from "../integrations/codex-types.js";
 import { CodexRunError } from "../integrations/codex-types.js";
-import type { PaceStore } from "./sessions.js";
+import { registerActiveAttempt, type PaceStore } from "./sessions.js";
 import { costForUsage, PRICE_SNAPSHOT } from "./routing/pricing.js";
 import { updateAgentTasks } from "./tasks.js";
 
 export class TransitionSaveError extends Error {
   constructor(cause: unknown) { super(`Required workflow save failed; execution stopped: ${String(cause)}`, { cause }); }
 }
-export class UncertainAttemptError extends Error {
-  constructor(readonly attempts: StageAttempt[]) {
-    super(`Previous execution has an uncertain result. Automatic retry is paused. Inspect its thread, artifacts and file changes, then resolve the attempt: ${attempts.map(item => `${item.id} (${item.role}, ${item.threadId ?? "thread unknown"})`).join(", ")}`);
-  }
+export class ActiveAttemptError extends Error {
+  constructor() { super("An execution is still active for this conversation. Wait for it to finish before sending another turn."); }
 }
 export async function requiredSave(store: PaceStore, session: Session, activate: boolean | (() => boolean) = true) {
   try { await store.saveChanges(session, activate); }
@@ -43,14 +41,34 @@ export function durableRunner(
       status: "running", route: { ...route }, threadId, startedAt: new Date().toISOString(), observations: [],
     };
     session.attempts = [...(session.attempts ?? []), record];
+    const releaseAttempt = registerActiveAttempt(session, id);
     created?.(id);
     const setStageStatus = (status: StageAttempt["status"]) => {
       if ((role === "main" || role === "scout") && session.activeTask?.workflow) session.activeTask.workflow.status = status;
     };
     setStageStatus("running");
-    await requiredSave(store, session, activate);
+    try { await requiredSave(store, session, activate); }
+    catch (error) { releaseAttempt(); throw error; }
     const current = () => session.attempts!.find(item => item.id === id)!;
+    let progressSave: Promise<void> | undefined;
+    let saveAgain = false;
+    let autosaveTimer: ReturnType<typeof setInterval> | undefined;
+    const saveProgress = () => {
+      if (progressSave) { saveAgain = true; return progressSave; }
+      progressSave = (async () => {
+        try {
+          do {
+            saveAgain = false;
+            await requiredSave(store, session, activate);
+          } while (saveAgain);
+        } finally { progressSave = undefined; }
+      })();
+      return progressSave;
+    };
+    autosaveTimer = setInterval(() => { void saveProgress().catch(() => {}); }, 2_000);
     const persistResult = async () => {
+      if (autosaveTimer) clearInterval(autosaveTimer);
+      await progressSave?.catch(() => {});
       try { await requiredSave(store, session, activate); }
       catch (error) {
         // Also stop retries in this process, whose object already contains the
@@ -72,53 +90,52 @@ export function durableRunner(
           session.verifier.tasks = updateAgentTasks(session.verifier.tasks, event.items);
         }
       }
-      return output({ ...event, taskId, role, attemptId: id });
+      const forwarded = output({ ...event, taskId, role, attemptId: id });
+      if (event.kind === "thread") return Promise.resolve(forwarded).then(() => saveProgress());
+      return forwarded;
     };
     let execution: Execution;
     try {
-      execution = await runner.run(...[...args.slice(0, 4), progress, ...args.slice(5)] as Parameters<CodexRunner["run"]>);
-      if (!execution.completed) throw new CodexRunError("Codex invocation did not complete", execution.usage, execution.context,
-        { threadId: execution.threadId, turnId: execution.turnId, route: execution.route ?? route, knownUsage: execution.knownUsage, usageComplete: execution.usageComplete ?? !!execution.usage });
-    } catch (error) {
-      const attempt = current();
-      attempt.status = signal?.aborted ? "cancelled" : "failed";
-      attempt.error = String(error);
-      if (error instanceof CodexRunError) {
-        attempt.usage = error.usage; attempt.knownUsage = error.accounting?.knownUsage ?? error.usage;
-        attempt.usageComplete = error.accounting?.usageComplete ?? !!error.usage;
-        attempt.threadId = error.accounting?.threadId ?? attempt.threadId; attempt.turnId = error.accounting?.turnId;
+      try {
+        execution = await runner.run(...[...args.slice(0, 4), progress, ...args.slice(5)] as Parameters<CodexRunner["run"]>);
+        if (!execution.completed) throw new CodexRunError("Codex invocation did not complete", execution.usage, execution.context,
+          { threadId: execution.threadId, turnId: execution.turnId, route: execution.route ?? route, knownUsage: execution.knownUsage, usageComplete: execution.usageComplete ?? !!execution.usage });
+      } catch (error) {
+        const attempt = current();
+        attempt.status = signal?.aborted ? "cancelled" : "failed";
+        attempt.error = String(error);
+        if (error instanceof CodexRunError) {
+          attempt.usage = error.usage; attempt.knownUsage = error.accounting?.knownUsage ?? error.usage;
+          attempt.usageComplete = error.accounting?.usageComplete ?? !!error.usage;
+          attempt.threadId = error.accounting?.threadId ?? attempt.threadId; attempt.turnId = error.accounting?.turnId;
+        }
+        finish(attempt, started);
+        setStageStatus(attempt.status);
+        await persistResult();
+        throw error;
       }
+      const attempt = current();
+      attempt.status = signal?.aborted ? "cancelled" : execution.completed ? "completed" : "failed";
+      attempt.result = execution.result; attempt.threadId = execution.threadId ?? attempt.threadId; attempt.turnId = execution.turnId;
+      attempt.usage = execution.usage; attempt.knownUsage = execution.knownUsage ?? execution.usage;
+      attempt.usageComplete = execution.usageComplete ?? !!execution.usage;
+      attempt.observations.push({ kind: "answer", text: execution.result });
       finish(attempt, started);
       setStageStatus(attempt.status);
       await persistResult();
-      throw error;
+      await after?.(id);
+      return execution;
+    } finally {
+      if (autosaveTimer) clearInterval(autosaveTimer);
+      await progressSave?.catch(() => {});
+      releaseAttempt();
     }
-    const attempt = current();
-    attempt.status = signal?.aborted ? "cancelled" : execution.completed ? "completed" : "failed";
-    attempt.result = execution.result; attempt.threadId = execution.threadId ?? attempt.threadId; attempt.turnId = execution.turnId;
-    attempt.usage = execution.usage; attempt.knownUsage = execution.knownUsage ?? execution.usage;
-    attempt.usageComplete = execution.usageComplete ?? !!execution.usage;
-    attempt.observations.push({ kind: "answer", text: execution.result });
-    finish(attempt, started);
-    setStageStatus(attempt.status);
-    await persistResult();
-    await after?.(id);
-    return execution;
   } };
 }
 function finish(attempt: StageAttempt, started: number) {
   attempt.finishedAt = new Date().toISOString(); attempt.durationMs = Math.round(performance.now() - started);
   attempt.estimatedCostUsd = attempt.usageComplete ? costForUsage(attempt.route, attempt.usage, attempt.pricing) : undefined;
   attempt.knownCostUsd = costForUsage(attempt.route, attempt.knownUsage, attempt.pricing);
-}
-/** Human reconciliation is explicit; unknown execution is never interpreted as no work. */
-export async function resolveAttempt(store: PaceStore, session: Session, id: string, result: string) {
-  const attempt = session.attempts?.find(item => item.id === id);
-  if (!attempt || !["running", "awaiting_user"].includes(attempt.status)) throw new Error("No uncertain attempt with that ID.");
-  attempt.status = "completed"; attempt.result = result; attempt.finishedAt = new Date().toISOString();
-  attempt.observations.push({ kind: "answer", text: `User reconciled thread, artifacts and file changes: ${result}` });
-  if ((attempt.role === "main" || attempt.role === "scout" || attempt.role === "status") && session.activeTask) { session.activeTask.assessment = "unknown"; if (session.activeTask.workflow) { session.activeTask.workflow.needsAssessment = true; session.activeTask.workflow.status = "pending"; } }
-  await requiredSave(store, session);
 }
 export function taskAccounting(session: Session, taskId?: string) {
   const attempts = (session.attempts ?? []).filter(item => !taskId || item.taskId === taskId);

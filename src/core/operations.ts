@@ -51,6 +51,22 @@ export function manualSelection(source: Session, selection: Route | ManualWorkfl
   session.controlDecisions = [...(session.controlDecisions ?? []), { id: randomUUID(), taskId: session.activeTask?.id, stage: session.activeTask?.workflow?.stage, role: "main", objective: "shape" in selection ? "manual workflow" : "manual route", choice, confidence: 1, probabilities: { [choice]: 1 }, durationMs: 0, at: new Date().toISOString(), source: "user", contextAction: "continue" }];
   return session;
 }
+/** Persist routing intent against the latest revision, rather than a mutable UI snapshot. */
+export async function saveRoutingSelection(
+  store: PaceStore, source: Pick<Session, "id" | "projectPath">, selection: Route | ManualWorkflow | "auto",
+  activate: boolean | (() => boolean) = true,
+): Promise<Session> {
+  return store.update(source, latest => {
+    if (latest.attempts?.some(attempt => attempt.status === "running" &&
+      (attempt.role === "main" || attempt.role === "scout" || attempt.role === "verifier" ||
+        (attempt.role === "status" && ["checkpoint", "native_compaction"].includes(attempt.stage)))))
+      throw new Error("Wait for the current turn to finish before changing routing.");
+    if (selection === "auto") {
+      latest.routingMode = "auto";
+      latest.manualWorkflow = undefined;
+    } else Object.assign(latest, manualSelection(latest, selection));
+  }, activate);
+}
 export async function currentPlan(store: PaceStore, source: Session): Promise<string | undefined> {
   if (source.planArtifact) return readFile(artifactPath(store, source, source.planArtifact), "utf8");
   return source.plan;

@@ -9,8 +9,8 @@ import { FileDiffPanel } from "./FileDiffPanel.js";
 import { McpManager } from "./McpManager.js";
 import { Orchestrator, VexUnavailableError } from "../core/orchestrator.js";
 import { PromptQueue } from "../core/prompt-queue.js";
-import { resolveAttempt, taskAccounting, compactSession } from "../core/task-execution.js";
-import { adoptedSidePrompt, operation, preparePlanExecution, manualSelection } from "../core/operations.js";
+import { taskAccounting, compactSession } from "../core/task-execution.js";
+import { adoptedSidePrompt, operation, preparePlanExecution, saveRoutingSelection } from "../core/operations.js";
 import { AppServerRunner } from "../integrations/codex.js";
 import { VexRouter } from "../core/vex/client.js";
 import { EFFORTS, withModels } from "../shared/config.js";
@@ -75,7 +75,6 @@ export const commands = [
   "/cancelretry",
   "/btw",
   "/adopt",
-  "/resolve",
   "/artifacts",
   "/trust",
   "/skills",
@@ -115,7 +114,6 @@ export const commandArguments: Record<string, string> = {
   "/skills": "[folder|enable|disable|auto|off]",
   "/btw": "<question>",
   "/adopt": "<side-answer-id>",
-  "/resolve": "<attempt-id> <reconciled outcome>",
 };
 export const skillArguments = (skillName: string): string => {
   if (skillName === "caveman") return "[mode]";
@@ -142,7 +140,6 @@ const commandDescriptions: Record<string, string> = {
   "/cancelretry": "Cancel automatic retry and clear its queue",
   "/btw": "Ask a read-only side question with a separate agent",
   "/adopt": "Forward a selected side answer to the active task",
-  "/resolve": "Record an inspected outcome of an interrupted attempt",
   "/artifacts": "Show generated artifacts",
   "/trust": "Manage trusted project folders",
   "/skills": "Discover and manage agent skills",
@@ -762,6 +759,13 @@ export default function App({ onClear }: { onClear: () => void }) {
       `${menuModel}: ${effort} ${present ? "disabled" : "enabled"}.`,
     );
   };
+  const saveRouting = async (target: Session, selection: Route | ManualWorkflow | "auto") => {
+    if (jobs.current.has(target.id)) throw new Error("Wait for the current turn to finish before changing routing.");
+    const updated = await saveRoutingSelection(store, target, selection, () => activeSessionId.current === target.id);
+    rememberSession(updated);
+    if (activeSessionId.current === updated.id) setSession(updated);
+    return updated;
+  };
   const selectManualRoute = async (target: Route | (typeof EFFORTS)[number]) => {
     if (typeof target === "string") {
       const effort = target;
@@ -779,11 +783,8 @@ export default function App({ onClear }: { onClear: () => void }) {
           : [...config.models, { model: menuModel, efforts: [effort], defaultEffort: effort, enabled: true }];
         const updatedConfig = withModels(config, models);
         await store.saveConfig(updatedConfig);
-        const updatedSession = manualSelection(session, { model: menuModel, effort });
-        await store.saveChanges(updatedSession);
+        await saveRouting(session, { model: menuModel, effort });
         setConfig(updatedConfig);
-        setSession(updatedSession);
-        rememberSession(updatedSession);
         setModelMenu(undefined);
         add("info", `Manual route: ${menuModel} ${effort}.${modelRates(menuModel) ? " Use /auto to return to Vex routing." : " This model has no verified auto-routing price; disable it before using /auto."}`);
       } catch (error) {
@@ -794,11 +795,8 @@ export default function App({ onClear }: { onClear: () => void }) {
     const route = target;
     setManualMenu(false);
     if (!session) return;
-    const updated = manualSelection(session, route);
     try {
-      await store.saveChanges(updated);
-      setSession(updated);
-      rememberSession(updated);
+      await saveRouting(session, route);
       const name =
         route.model?.replace(
           /^gpt-(\d+)-(.+)$/,
@@ -977,11 +975,8 @@ export default function App({ onClear }: { onClear: () => void }) {
       : ["Delegate choice to Vex", ...(enabledModels.find(m => m.model === manualWizard.model)?.efforts ?? [])];
   const saveWorkflow = async (shape: WorkflowShape, routes: ManualWorkflow["routes"]) => {
     if (!session) return;
-    const updated = manualSelection(session, { shape, routes });
     try {
-      await store.saveChanges(updated);
-      setSession(updated);
-      rememberSession(updated);
+      await saveRouting(session, { shape, routes });
       setManualMenu(false);
       add("info", `Manual ${shape} workflow saved. Send the task as your next message.`);
     } catch (error) { add("error", `Could not save workflow: ${String(error)}`); }
@@ -1001,9 +996,8 @@ export default function App({ onClear }: { onClear: () => void }) {
     if (manualWizard.step === "workflow") {
       if (index === 0) {
         if (!session) return;
-        const updated = { ...session, routingMode: "auto" as const, manualWorkflow: undefined };
-        void store.saveChanges(updated).then(() => {
-          setSession(updated); rememberSession(updated); setManualMenu(false);
+        void saveRouting(session, "auto").then(() => {
+          setManualMenu(false);
           add("info", "Workflow choice delegated to Vex.");
         }).catch(error => add("error", `Could not save routing mode: ${String(error)}`));
         return;
@@ -1490,16 +1484,6 @@ export default function App({ onClear }: { onClear: () => void }) {
         await handleExecutePlan(extraPrompt || undefined);
         return;
       }
-      if (command === "/resolve") {
-        const [attemptId, ...outcome] = parts;
-        if (!attemptId || !outcome.length) { add("error", "Use /resolve <attempt-id> <reconciled outcome after inspecting the thread, artifacts and file changes>."); return; }
-        try {
-          await resolveAttempt(store, session, attemptId, outcome.join(" "));
-          rememberSession(session); setSession({ ...session });
-          add("info", `Reconciled attempt ${attemptId}. Its usage remains unchanged; continue the task when ready.`);
-        } catch (error) { add("error", `Could not reconcile attempt: ${String(error)}`); }
-        return;
-      }
       if (command === "/adopt") {
         void runTurnRef.current?.(text, session, config, "adopt_side", undefined, false, commandOperation);
         return;
@@ -1516,18 +1500,15 @@ export default function App({ onClear }: { onClear: () => void }) {
       if (command === "/help") {
         add(
           "info",
-          "/plan [prompt] · /execute · /verify [file] [prompt] · /models · /mcp [list] · /auto · /manual [model] [effort] · /workflow [name|auto] · /approval [full-access|request-approval|limited] · /remote · /tasks · /new · /resume · /convo · /diff · /undo · /redo · /compact · /context · /usage · /retry · /cancelretry · /btw <q> · /adopt <side-answer-id> · /resolve <attempt-id> <outcome> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /stats · /route · /clear · /exit · Esc cancels automatic retry; Esc twice/Ctrl+C cancels other turns · Ctrl+Z undo · Ctrl+Y redo · Alt+P/Ctrl+P plan · Alt+E/Ctrl+E execute · ! Bash · Ctrl+O toggle command, diff, and reasoning details · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
+          "/plan [prompt] · /execute · /verify [file] [prompt] · /models · /mcp [list] · /auto · /manual [model] [effort] · /workflow [name|auto] · /approval [full-access|request-approval|limited] · /remote · /tasks · /new · /resume · /convo · /diff · /undo · /redo · /compact · /context · /usage · /retry · /cancelretry · /btw <q> · /adopt <side-answer-id> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /stats · /route · /clear · /exit · Esc cancels automatic retry; Esc twice/Ctrl+C cancels other turns · Ctrl+Z undo · Ctrl+Y redo · Alt+P/Ctrl+P plan · Alt+E/Ctrl+E execute · ! Bash · Ctrl+O toggle command, diff, and reasoning details · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
         );
         add("info", "With multiple open conversations, press Down from the input to focus the picker. Use arrows and Enter to switch; Esc returns to input. Ctrl+C cancels the selected turn. /exit quits.");
         return;
       }
       if (command === "/auto") {
         // Auto selection uses the enabled model list in the orchestrator.
-        const updated = { ...session, routingMode: "auto" as const, manualWorkflow: undefined };
         try {
-          await store.saveChanges(updated);
-          setSession(updated);
-          rememberSession(updated);
+          await saveRouting(session, "auto");
           add("info", "Auto routing enabled for the next turn.");
         } catch (error) {
           add("error", `Could not save routing mode: ${String(error)}`);
@@ -1546,9 +1527,8 @@ export default function App({ onClear }: { onClear: () => void }) {
         }
         const requested = parts[0]!.toLowerCase().replaceAll("-", "_");
         if (requested === "auto" || requested === "vex") {
-          const updated = { ...session, routingMode: "auto" as const, manualWorkflow: undefined };
           try {
-            await store.saveChanges(updated); setSession(updated); rememberSession(updated);
+            await saveRouting(session, "auto");
             add("info", "Workflow choice delegated to Vex.");
           } catch (error) { add("error", `Could not save routing mode: ${String(error)}`); }
           return;
@@ -1575,11 +1555,8 @@ export default function App({ onClear }: { onClear: () => void }) {
           return;
         }
         if (parts[0] === "off" || parts[0] === "auto") {
-          const updated = { ...session, routingMode: "auto" as const, manualWorkflow: undefined };
           try {
-            await store.saveChanges(updated);
-            setSession(updated);
-            rememberSession(updated);
+            await saveRouting(session, "auto");
             add("info", "Auto routing enabled for the next turn.");
           } catch (error) {
             add("error", `Could not save routing mode: ${String(error)}`);
@@ -1609,11 +1586,8 @@ export default function App({ onClear }: { onClear: () => void }) {
           );
           return;
         }
-        const updated = manualSelection(session, { model: matched.model, effort });
         try {
-          await store.saveChanges(updated);
-          setSession(updated);
-          rememberSession(updated);
+          await saveRouting(session, { model: matched.model, effort });
           const name = matched.model.replace(
             /^gpt-(\d+)-(.+)$/,
             (_match: string, ver: string, n: string) =>

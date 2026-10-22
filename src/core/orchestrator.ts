@@ -19,11 +19,11 @@ import {
 } from "./routing/router.js";
 import { costForUsage, pricedModels, refreshVersionManifest } from "./routing/pricing.js";
 import { advanceTask, retainedTask, type TaskRelation } from "./active-task.js";
-import { PaceStore } from "./sessions.js";
+import { isActiveAttempt, PaceStore } from "./sessions.js";
 import { retryableTurn } from "./session-model.js";
 import { verifyPlanPrompt, tryReadPlanFile, structuredHandoff, addUsage, awaitRouting, loadPlanningInstructions, planningPrompt, retainedConversationPrompt } from "./orchestrator-helpers.js";
 import { runPlanningStage } from "./workflow-stages.js";
-import { durableRunner, ensureTask, requiredSave, resolveAttempt, TransitionSaveError, UncertainAttemptError } from "./task-execution.js";
+import { durableRunner, ensureTask, requiredSave, TransitionSaveError, ActiveAttemptError } from "./task-execution.js";
 import { operation, preparePlanExecution, adoptedSidePrompt, currentPlan, validateOperationTarget } from "./operations.js";
 import { runAside } from "./side-answers.js";
 import { checkpointHandoff } from "./checkpoint.js";
@@ -107,12 +107,6 @@ export class Orchestrator {
   ): Promise<TurnOutcome> {
     const startedAt = performance.now();
     const prompts = loadRoutingPrompts(this.store.baseDir);
-    if (!intent && !queuedOperation && /^\/resolve(?:\s|$)/.test(prompt)) {
-      const [, id, ...outcome] = prompt.trim().split(/\s+/);
-      if (!id || !outcome.length) throw new Error("Use /resolve <attempt-id> <outcome after inspecting the thread, artifacts and file changes>");
-      await resolveAttempt(this.store, session, id, outcome.join(" "));
-      return { session, result: "Interrupted attempt reconciled. Completion remains unknown until Vex assesses the evidence.", note: "User reconciliation", route: session.route, durationMs: 0, artifacts: [], stages: [], routing: [] };
-    }
     if (!intent && !queuedOperation && /^\/adopt(?:\s|$)/.test(prompt)) {
       queuedOperation = { ...operation(prompt, session.id, session.activeTask?.id), intent: "adopt_side", sourceSideId: prompt.replace(/^\/adopt(?:\s+|$)/, "").trim() };
       intent = "adopt_side";
@@ -152,8 +146,11 @@ export class Orchestrator {
       side.adopted = true;
     }
     const verifierTurn = intent === "verify_plan" || intent === "continue_verify";
-    const uncertain = (session.attempts ?? []).filter(item => ["running", "awaiting_user"].includes(item.status) && (verifierTurn ? item.role === "verifier" : item.role === "main" || item.role === "scout" || (item.role === "status" && ["checkpoint", "native_compaction"].includes(item.stage))));
-    if (uncertain.length) throw new UncertainAttemptError(uncertain);
+    await this.store.recoverInterruptedAttempts(session, activateOnSave);
+    const active = (session.attempts ?? []).some(item => ["running", "awaiting_user"].includes(item.status) &&
+      isActiveAttempt(session, item.id) && (verifierTurn ? item.role === "verifier" :
+        item.role === "main" || item.role === "scout" || (item.role === "status" && ["checkpoint", "native_compaction"].includes(item.stage))));
+    if (active) throw new ActiveAttemptError();
     if (
       /^(?:stop caveman|normal mode)$/i.test(prompt.trim()) &&
       session.activeSkills?.includes("caveman")
@@ -753,7 +750,6 @@ export class Orchestrator {
             else session.threadId = progress.text;
             if (progress.text !== runThreadId) { if (verifierTurn) session.verifier!.threadTurnCount = 0; else session.threadTurnCount = 0; }
             if (intent !== "verify_plan" && intent !== "continue_verify" && !planningTurn && session.autoLaunchSkills?.length) session.autoLaunchThreadId = progress.text;
-            await save();
           } else if (progress.kind === "question") {
             onProgress({ ...progress, respond: (answers: UserAnswers) => {
               for (const item of progress.questions) {

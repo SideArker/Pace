@@ -39,6 +39,19 @@ const writeQueues = new Map<string, Promise<unknown>>();
 const objectBaselines = new WeakMap<Session, Session>();
 const revisionBaselines = new Map<string, Session>();
 const keyedRecords = new Set(["attempts", "sideAnswers", "controlDecisions"]);
+const activeAttempts = new Set<string>();
+
+function attemptKey(session: SessionIdentity, attemptId: string): string {
+  return `${resolve(session.projectPath)}:${session.id}:${attemptId}`;
+}
+export function registerActiveAttempt(session: SessionIdentity, attemptId: string): () => void {
+  const key = attemptKey(session, attemptId);
+  activeAttempts.add(key);
+  return () => activeAttempts.delete(key);
+}
+export function isActiveAttempt(session: SessionIdentity, attemptId: string): boolean {
+  return activeAttempts.has(attemptKey(session, attemptId));
+}
 
 export class SessionConflictError extends Error {
   constructor(readonly field: string) {
@@ -47,10 +60,49 @@ export class SessionConflictError extends Error {
   }
 }
 
+function appendedTurns(base: unknown[], branch: unknown[]): unknown[] | undefined {
+  const indexed = (items: unknown[]) => {
+    const byAt = new Map<string, unknown>();
+    for (const item of items) {
+      if (!isRecord(item) || typeof item.at !== "string" || byAt.has(item.at)) return undefined;
+      byAt.set(item.at, item);
+    }
+    return byAt;
+  };
+  const before = indexed(base), after = indexed(branch);
+  if (!before || !after) return undefined;
+  const retained = branch.filter(item => isRecord(item) && typeof item.at === "string" && before.has(item.at));
+  const additions = branch.filter(item => isRecord(item) && typeof item.at === "string" && !before.has(item.at));
+  const dropped = base.length - retained.length;
+  if (dropped < 0 || (dropped > 0 && additions.length === 0)) return undefined;
+  const expectedRetained = base.slice(dropped);
+  if (retained.length !== expectedRetained.length || retained.some((item, index) =>
+    !isRecord(item) || !isRecord(expectedRetained[index]) || item.at !== expectedRetained[index]!.at ||
+    !isDeepStrictEqual(item, expectedRetained[index]))) return undefined;
+  const firstAddition = branch.findIndex(item => isRecord(item) && typeof item.at === "string" && !before.has(item.at));
+  if (firstAddition >= 0 && branch.slice(firstAddition).some(item => !isRecord(item) || typeof item.at !== "string" || before.has(item.at))) return undefined;
+  return additions;
+}
+
 /** Apply only the caller's changes; concurrent edits to the same value fail closed. */
 function reapplyChanges(base: unknown, desired: unknown, latest: unknown, field: string): unknown {
   if (isDeepStrictEqual(base, desired)) return structuredClone(latest);
   if (isDeepStrictEqual(base, latest) || isDeepStrictEqual(desired, latest)) return structuredClone(desired);
+  if (field === "turns" && Array.isArray(base) && Array.isArray(desired) && Array.isArray(latest)) {
+    const desiredAdds = appendedTurns(base, desired), latestAdds = appendedTurns(base, latest);
+    if (desiredAdds && latestAdds) {
+      const additions = new Map<string, unknown>();
+      for (const item of [...latestAdds, ...desiredAdds]) {
+        const at = (item as { at: string }).at;
+        const existing = additions.get(at);
+        additions.set(at, existing
+          ? reapplyChanges({}, item, existing, `turns.${at}`)
+          : structuredClone(item));
+      }
+      return [...base, ...[...additions.values()].sort((a, b) =>
+        (a as { at: string }).at.localeCompare((b as { at: string }).at))].slice(-20);
+    }
+  }
   if (keyedRecords.has(field) && (base === undefined || Array.isArray(base)) &&
       Array.isArray(desired) && Array.isArray(latest)) {
     const records = (items: unknown[]): Map<string, unknown> => {
@@ -116,16 +168,20 @@ export class PaceStore {
   }
   async load(project: string, sessionId: string): Promise<Session | undefined> {
     const path = join(this.sessionDir(project), `${sessionId}.json`);
+    let session: Session | undefined;
     try {
       const raw: unknown = JSON.parse(await readFile(path, "utf8"));
-      const session = parseSession(raw, normalizeProject(project));
-      if (session) this.track(session);
-      return session;
+      session = parseSession(raw, normalizeProject(project));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT")
         this.notice(`Session ${sessionId} unavailable: ${String(error)}`);
       return undefined;
     }
+    if (session) {
+      this.track(session);
+      await this.recoverInterruptedAttempts(session, false);
+    }
+    return session;
   }
   async list(project: string): Promise<Session[]> {
     const path = this.sessionDir(project);
@@ -141,16 +197,21 @@ export class PaceStore {
     for (const file of files.filter((name) =>
       /^[0-9a-f-]{36}\.json$/.test(name),
     )) {
+      let session: Session | undefined;
       try {
-        const session = parseSession(
+        session = parseSession(
           JSON.parse(await readFile(join(path, file), "utf8")),
           normalizeProject(project),
         );
-        if (session) { this.track(session); sessions.push(session); }
-        else this.notice(`Ignoring invalid session ${file}`);
       } catch {
         this.notice(`Ignoring unreadable session ${file}`);
+        continue;
       }
+      if (session) {
+        this.track(session);
+        await this.recoverInterruptedAttempts(session, false);
+        sessions.push(session);
+      } else this.notice(`Ignoring invalid session ${file}`);
     }
     return sessions.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
@@ -295,6 +356,27 @@ export class PaceStore {
       /* Fall back to the newest session. */
     }
     return sessions[0];
+  }
+  /** A running record with no live owner belongs to a previous Pace process or a stopped run. */
+  async recoverInterruptedAttempts(session: Session, activate: Activation = false): Promise<boolean> {
+    const interrupted = (session.attempts ?? []).filter(attempt =>
+      ["running", "awaiting_user"].includes(attempt.status) && !isActiveAttempt(session, attempt.id));
+    if (!interrupted.length) return false;
+    const finishedAt = new Date().toISOString();
+    for (const attempt of interrupted) {
+      attempt.status = "failed";
+      attempt.finishedAt = finishedAt;
+      attempt.error ??= "Pace stopped before this execution's final state was saved; continue from the saved thread and observations.";
+      if ((attempt.role === "main" || attempt.role === "scout") && session.activeTask?.id === attempt.taskId) {
+        session.activeTask.assessment = "unknown";
+        if (session.activeTask.workflow) {
+          session.activeTask.workflow.status = "pending";
+          session.activeTask.workflow.needsAssessment = true;
+        }
+      }
+    }
+    await this.saveChanges(session, activate);
+    return true;
   }
   async activate(session: Session): Promise<void> {
     const write = () => atomicJson(

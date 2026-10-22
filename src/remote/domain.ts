@@ -8,7 +8,7 @@ import { FileEdits } from "../core/file-edits.js";
 import { changeFileHistory } from "../core/file-history.js";
 import { artifactDirectory, artifactPath } from "../core/system/artifacts.js";
 import { verifyPlanPrompt, tryReadPlanFile } from "../core/orchestrator-helpers.js";
-import { operation, preparePlanExecution, currentPlan, manualSelection } from "../core/operations.js";
+import { operation, preparePlanExecution, currentPlan, saveRoutingSelection } from "../core/operations.js";
 import { configuredSkills, enabledSkills } from "../core/system/skills.js";
 import { readAvailableModels } from "../integrations/models.js";
 import { readUsageLimits } from "../integrations/usage.js";
@@ -84,7 +84,7 @@ export class RemoteDomain {
   }
 
   subscribe(listener: (event: RemoteEvent) => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
-  /** Resume only unstarted operations. Interrupted model attempts require reconciliation. */
+  /** Resume queued operations after session loading has recovered interrupted attempts. */
   async resumeQueues(): Promise<void> {
     if (this.bridge) return;
     for (const project of this.roots.values()) {
@@ -206,8 +206,8 @@ export class RemoteDomain {
   private async routing(projectId: string, sessionId: string, mode: "auto" | "manual", route: Route) {
     const session = await this.session(projectId, sessionId); if (this.active.has(sessionId) || this.bridge?.busy(sessionId)) throw new Error("Wait for active turn before changing routing.");
     const config = await this.store.loadConfig(); if (mode === "manual" && !validRoute(route, config.models)) throw new Error("Choose model and effort available in Pace settings.");
-    if (mode === "manual") Object.assign(session, manualSelection(session, route));
-    else { session.routingMode = "auto"; session.manualWorkflow = undefined; } await this.store.saveChanges(session); this.emit(session); return { routingMode: mode, route: session.route };
+    const updated = await saveRoutingSelection(this.store, session, mode === "manual" ? route : "auto");
+    this.sessions.set(updated.id, updated); this.bridge?.changed(updated); this.emit(updated); return { routingMode: mode, route: updated.route };
   }
   private async artifacts(projectId: string, sessionId: string) {
     const s = await this.session(projectId, sessionId); const files = await readdir(artifactDirectory(this.store, s), { withFileTypes: true }).catch(e => missing(e) ? [] : Promise.reject(e));

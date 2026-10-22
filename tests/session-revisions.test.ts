@@ -67,6 +67,69 @@ it("tracks spread snapshots by their revision and preserves unseen latest fields
   expect((await store.load(session.projectPath, session.id))?.title).toBe("Main title");
 });
 
+it("merges independent appended turns from separate session snapshots", async () => {
+  const { root, store, session } = await setup();
+  const secondStore = new PaceStore(root);
+  const first = (await store.load(session.projectPath, session.id))!;
+  const second = (await secondStore.load(session.projectPath, session.id))!;
+  first.turns.push({ prompt: "First", result: "One", at: "2026-10-22T10:00:00.000Z" });
+  second.turns.push({ prompt: "Second", result: "Two", at: "2026-10-22T10:00:01.000Z" });
+  await store.saveChanges(first);
+  await secondStore.saveChanges(second);
+  expect((await store.load(session.projectPath, session.id))?.turns.map(turn => turn.prompt)).toEqual(["First", "Second"]);
+});
+
+it("serializes overlapping saves that enrich the same appended turn", async () => {
+  const { store, session } = await setup();
+  const turn = { prompt: "Task", result: "Done", at: "2026-10-22T10:00:00.000Z" };
+  session.turns.push(turn);
+  const initialSave = store.saveChanges(session);
+  session.turns[0]!.activities = [{ id: "activity", category: "command", title: "Check", text: "npm test" }];
+  const enrichmentSave = store.saveChanges(session);
+  await Promise.all([initialSave, enrichmentSave]);
+  expect((await store.load(session.projectPath, session.id))?.turns).toEqual([session.turns[0]]);
+});
+
+it("rejects conflicting contents for the same concurrently appended turn", async () => {
+  const { root, store, session } = await setup();
+  const secondStore = new PaceStore(root);
+  const first = (await store.load(session.projectPath, session.id))!;
+  const second = (await secondStore.load(session.projectPath, session.id))!;
+  first.turns.push({ prompt: "First", result: "One", at: "2026-10-22T10:00:00.000Z" });
+  second.turns.push({ prompt: "Second", result: "Two", at: "2026-10-22T10:00:00.000Z" });
+  await store.saveChanges(first);
+  await expect(secondStore.saveChanges(second)).rejects.toThrow("turns.");
+});
+
+it("keeps the 20 turn window when concurrent append saves merge", async () => {
+  const { root, store, session } = await setup();
+  const secondStore = new PaceStore(root);
+  session.turns = Array.from({ length: 20 }, (_, index) => ({ prompt: `Turn ${index}`, result: "Done", at: `2026-10-22T09:${String(index).padStart(2, "0")}:00.000Z` }));
+  await store.saveChanges(session);
+  const first = (await store.load(session.projectPath, session.id))!;
+  const second = (await secondStore.load(session.projectPath, session.id))!;
+  first.turns = [...first.turns.slice(1), { prompt: "Turn 20", result: "Done", at: "2026-10-22T10:00:00.000Z" }];
+  second.turns = [...second.turns.slice(1), { prompt: "Turn 21", result: "Done", at: "2026-10-22T10:00:01.000Z" }];
+  await store.saveChanges(first);
+  await secondStore.saveChanges(second);
+  const turns = (await store.load(session.projectPath, session.id))!.turns;
+  expect(turns).toHaveLength(20);
+  expect(turns.at(-2)?.prompt).toBe("Turn 20");
+  expect(turns.at(-1)?.prompt).toBe("Turn 21");
+});
+
+it("rejects concurrent edits to the same saved turn", async () => {
+  const { root, store, session } = await setup();
+  session.turns = [{ prompt: "Original", result: "Done", at: "2026-10-22T10:00:00.000Z" }];
+  await store.saveChanges(session);
+  const first = (await store.load(session.projectPath, session.id))!;
+  const second = (await new PaceStore(root).load(session.projectPath, session.id))!;
+  first.turns[0]!.result = "First edit";
+  second.turns[0]!.result = "Second edit";
+  await store.saveChanges(first);
+  await expect(new PaceStore(root).saveChanges(second)).rejects.toThrow("turns");
+});
+
 it("serializes latest-state updates across independent store instances", async () => {
   const { root, store, session } = await setup();
   const second = new PaceStore(root);
