@@ -1,6 +1,7 @@
 import type { ModelOption, Route, Session, TurnSummary } from "../../shared/types.js";
 import { PRICE_SNAPSHOT, modelRates } from "../routing/pricing.js";
 import { routeChoices, type RoutingChoice } from "../routing/router.js";
+import { boundedContext, PROJECTION_CONSTRAINT } from "./context.js";
 import {
   DEFAULT_ROUTING_PROMPTS,
   type RoutingPrompts,
@@ -142,11 +143,13 @@ export function stageRequest(
 
 export function controlRequest(prompt: string, session: Session, prompts = DEFAULT_ROUTING_PROMPTS): VexRequest {
   const choices = Object.entries(prompts.control.choices).filter(([id]) => id !== "adopt_side" || session.sideAnswers?.some(answer => answer.result && !answer.error && answer.taskId === session.activeTask?.id));
-  return { question: prompts.control.question, decisionType: "routing", options: choices.map(([id, description]) => ({ id, description })), constraints: prompts.control.constraints,
-    context: { latestRequest: excerpt(prompt, 12000), recentConversation: recentConversation(session.turns), activeTask: session.activeTask, attempts: (session.attempts ?? []).filter(item => item.taskId === session.activeTask?.id).slice(-12), sideAnswers: session.sideAnswers?.filter(item => item.taskId === session.activeTask?.id), conversationState: compactState({ previousRoute: session.route, activeTask: session.activeTask, hasCodexThread: !!session.threadId }) } };
+  return { question: prompts.control.question, decisionType: "routing", options: choices.map(([id, description]) => ({ id, description })), constraints: `${prompts.control.constraints}\n\n${PROJECTION_CONSTRAINT}`,
+    context: boundedContext({ latestRequest: excerpt(prompt, 12000), recentConversation: recentConversation(session.turns), activeTask: session.activeTask, attempts: (session.attempts ?? []).filter(item => item.taskId === session.activeTask?.id).slice(-12), sideAnswers: session.sideAnswers?.filter(item => item.taskId === session.activeTask?.id), conversationState: compactState({ previousRoute: session.route, activeTask: session.activeTask, hasCodexThread: !!session.threadId }) }) };
 }
 export function assessmentRequest(session: Session, attemptId: string, prompts = DEFAULT_ROUTING_PROMPTS): VexRequest {
   const attempt = session.attempts?.find(item => item.id === attemptId);
-  return { question: prompts.assessment.question, decisionType: "routing", options: Object.entries(prompts.assessment.choices).map(([id, description]) => ({ id, description })), constraints: prompts.assessment.constraints,
-    context: { goal: session.activeTask, attempt, priorAttempts: session.attempts?.filter(item => item.taskId === attempt?.taskId && item.id !== attemptId).slice(-10), recentConversation: recentConversation(session.turns), evidence: attempt?.observations, sideAnswers: session.sideAnswers?.filter(item => item.adopted && item.taskId === attempt?.taskId) } };
+  // Observations belong in evidence once, rather than both evidence and attempt.
+  const { observations, ...summary } = attempt ?? {};
+  return { question: prompts.assessment.question, decisionType: "routing", options: Object.entries(prompts.assessment.choices).map(([id, description]) => ({ id, description })), constraints: `${prompts.assessment.constraints}\n\n${PROJECTION_CONSTRAINT}`,
+    context: boundedContext({ goal: session.activeTask, attempt: attempt ? summary : undefined, priorAttempts: session.attempts?.filter(item => item.taskId === attempt?.taskId && item.id !== attemptId).slice(-10), recentConversation: recentConversation(session.turns), evidence: observations, sideAnswers: session.sideAnswers?.filter(item => item.adopted && item.taskId === attempt?.taskId) }) };
 }

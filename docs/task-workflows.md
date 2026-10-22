@@ -4,6 +4,8 @@ Pace assigns `single`, `scout`, `plan`, or `scout_plan` to the active task. Ordi
 
 Vex uses the existing validated `vex_choose` contract. A separate choice assesses recorded evidence as `closed`, `partial`, or `unknown` after the technical result is persisted. A completed Codex invocation, scout report, or saved plan does not establish completion of an implementation. Activity results, agent task events, answers, and artifact references are collected in core for terminal UI, exec, and Remote. The ordinary answer is retained as evidence, with its coverage and remaining work; Pace does not invent a remaining-work note from a forced-choice response. No extra model status-note call is made when that answer supplies the evidence. Unavailable assessment leaves completion unknown.
 
+Control and completion-assessment contexts have a 24,000-byte serialized JSON budget. Assessment sends the current observations once. Oversized contexts use marked excerpts of text and arrays, retaining both the beginning and end when possible. The request reports omissions and instructs Vex to choose `unknown` when required completion evidence is omitted. Full observations remain in the durable session. This byte budget is a conservative input bound, not a provider tokenizer or a guarantee of assessment accuracy. Vex classifies supplied evidence; it does not independently run tests or audit files. Known provider token-limit errors are shown without exposing the raw provider response.
+
 ## Explicit control
 
 - `/manual` selects an allowed workflow or route. Explicit selections are recorded as user actions. Delegating a stage to Vex uses the same editable profiles as automatic routing. Scouts, verifiers, and side answers can use any enabled permitted route; Luna is not required.

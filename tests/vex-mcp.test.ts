@@ -85,6 +85,26 @@ it('blocks a coding turn when the Vex tool fails', async () => {
   } finally { await vex.close(); await server.close(); }
 });
 
+it('reports provider token limits without exposing the provider response body', async () => {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const server = new Server({ name: 'limited-vex', version: '1' }, { capabilities: { tools: {} } });
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [{ name: 'vex_choose', inputSchema: { type: 'object' } }] }));
+  server.setRequestHandler(CallToolRequestSchema, async () => ({ isError: true, content: [{ type: 'text', text: JSON.stringify({
+    error: true, http_status: 400,
+    error_detail: { error: { message: 'HTTP 400: {"detail":{"error_type":"max_tokens_exceeded"}}', private_data: 'sk-or-test-secret' } },
+  }) }] }));
+  await server.connect(serverTransport);
+  const vex = new VexRouter('', () => clientTransport);
+  try {
+    const failure = await vex.choose({ question: 'Pick', context: {}, options: [{ id: 'a', description: 'A' }, { id: 'b', description: 'B' }], constraints: 'Pick one', decisionType: 'routing' }).catch(error => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure.message).toContain('HTTP 400');
+    expect(failure.message).toContain('max_tokens_exceeded');
+    expect(failure.message).not.toContain('sk-or-test-secret');
+    expect(failure.message).not.toContain('private_data');
+  } finally { await vex.close(); await server.close(); }
+});
+
 it('distinguishes an MCP connection failure from a provider decision failure', async () => {
   directory = await mkdtemp(join(tmpdir(), 'pace-vex-'));
   const config: Config = { routingMode: 'auto', defaultRoute: { model: 'gpt-6-sol', effort: 'high' }, models: [{ model: 'gpt-6-sol', efforts: ['high'] }] };

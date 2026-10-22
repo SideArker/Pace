@@ -111,6 +111,32 @@ it("Vex completion has recorded core evidence and does not derive completion fro
   expect(env.session.attempts?.[0]?.assessment).toMatchObject({ value: "unknown", evidence: 4 });
 });
 
+it("bounds assessment and continuation evidence after huge command output without changing durable observations", async () => {
+  const env = await setup();
+  const run = env.runner.run;
+  const output = `npm test\n${"verbose output\n".repeat(30_000)}\nOutcome: failure`;
+  env.runner.run = async (...args) => {
+    await args[4]({ kind: "activity", id: "large-check", category: "command", title: "npm test", completed: true, outcome: "failure", detail: output });
+    return run(...args);
+  };
+  const choose = env.vex.choose;
+  env.vex.choose = async request => {
+    if (["closed", "continue"].includes(request.options[0]?.id)) {
+      expect(Buffer.byteLength(JSON.stringify(request.context))).toBeLessThanOrEqual(24_000);
+    }
+    return choose(request);
+  };
+  const errors: string[] = [];
+  const progress = (event: import("../src/integrations/codex-types.js").Progress) => { if (event.kind === "error") errors.push(event.text); };
+  await env.orchestrator.turn("Implement and test", env.session, config, progress);
+  await env.orchestrator.turn("Continue", env.session, config, progress);
+  expect(errors).toEqual([]);
+  expect(env.session.activeTask?.assessment).toBe("partial");
+  const loaded = (await env.store.load(env.root, env.session.id))!;
+  expect(loaded.attempts?.[0]?.observations.some(item => item.text?.includes(output))).toBe(true);
+  expect(env.requests.filter(item => item.options[0]?.id === "closed").every(item => (item.context.projection as { truncated?: boolean })?.truncated)).toBe(true);
+});
+
 it("persists a new thread immediately and checkpoints progress while execution is still active", async () => {
   const env = await setup();
   env.runner.run = async (...args) => {

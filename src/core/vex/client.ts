@@ -161,17 +161,18 @@ export class VexRouter {
         ? result.content.find((item) => item.type === "text")
         : undefined;
       let status: unknown;
+      let tokenLimit: string | undefined;
       try {
-        status =
-          detail?.type === "text"
-            ? JSON.parse(detail.text).http_status
-            : undefined;
+        const failure = detail?.type === "text" ? JSON.parse(detail.text) : undefined;
+        status = failure?.http_status;
+        // Provider bodies may echo private inputs. Expose only known limit codes.
+        tokenLimit = JSON.stringify(failure?.error_detail)?.match(/\b(max_tokens_exceeded|context_length_exceeded)\b/)?.[0];
       } catch {
         /* Keep generic failure. */
       }
       throw new Error(
         typeof status === "number" && status > 0
-          ? `Vex decision tool failed (HTTP ${status})`
+          ? `Vex decision tool failed (HTTP ${status})${tokenLimit ? `: ${tokenLimit}; decision context exceeds the provider token limit` : ""}`
           : "Vex decision tool failed; check Vex credentials and network access",
       );
     }
