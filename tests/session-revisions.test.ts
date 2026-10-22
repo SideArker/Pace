@@ -68,6 +68,19 @@ it("tracks spread snapshots by their revision and preserves unseen latest fields
   expect((await store.load(session.projectPath, session.id))?.title).toBe("Main title");
 });
 
+it("keeps a spread snapshot usable after many later revisions", async () => {
+  const { store, session } = await setup();
+  const spread = { ...session, title: "Main title" };
+  for (let revision = 0; revision < 2_050; revision++) {
+    session.threadTurnCount = revision;
+    await store.saveChanges(session);
+  }
+
+  await store.saveChanges(spread);
+  expect((await store.load(session.projectPath, session.id))?.title).toBe("Main title");
+  expect((await store.load(session.projectPath, session.id))?.threadTurnCount).toBe(2_049);
+});
+
 it("merges independent appended turns from separate session snapshots", async () => {
   const { root, store, session } = await setup();
   const secondStore = new PaceStore(root);

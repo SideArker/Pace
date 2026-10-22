@@ -38,9 +38,23 @@ export async function atomicJson(path: string, value: unknown): Promise<void> {
 type Activation = boolean | (() => boolean);
 type SessionIdentity = Pick<Session, "id" | "projectPath">;
 const writeQueues = new Map<string, Promise<unknown>>();
-const objectBaselines = new WeakMap<Session, Session>();
-const revisionBaselines = new Map<string, Session>();
+const snapshotBaseline = Symbol("PaceStore session baseline");
+type SnapshotSession = Session & { [snapshotBaseline]?: Session };
+const revisionBaselines = new Map<string, WeakRef<Session>>();
+const recentRevisionBaselines = new Map<string, Session>();
 const activeAttempts = new Set<string>();
+const MAX_TRACKED_REVISIONS = 2000;
+const MAX_STRONG_REVISION_BASELINES = 32;
+
+function attachBaseline(session: Session, baseline: Session): void {
+  // Enumerable symbols survive object spread, but JSON and structuredClone omit
+  // them. A copied session therefore keeps only the baseline it actually uses.
+  Object.defineProperty(session, snapshotBaseline, {
+    configurable: true,
+    enumerable: true,
+    value: baseline,
+  });
+}
 
 function attemptKey(session: SessionIdentity, attemptId: string): string {
   return `${resolve(session.projectPath)}:${session.id}:${attemptId}`;
@@ -329,11 +343,15 @@ export class PaceStore {
   }
   private track(session: Session): void {
     const baseline = structuredClone(session);
-    objectBaselines.set(session, baseline);
+    attachBaseline(session, baseline);
     const key = `${this.key(session)}:${session.revision ?? 0}`;
-    revisionBaselines.set(key, baseline);
-    // Spread copies carry a revision; retain a bounded cache of their source snapshots.
-    while (revisionBaselines.size > 2000) revisionBaselines.delete(revisionBaselines.keys().next().value!);
+    revisionBaselines.set(key, new WeakRef(baseline));
+    recentRevisionBaselines.delete(key);
+    recentRevisionBaselines.set(key, baseline);
+    while (recentRevisionBaselines.size > MAX_STRONG_REVISION_BASELINES)
+      recentRevisionBaselines.delete(recentRevisionBaselines.keys().next().value!);
+    while (revisionBaselines.size > MAX_TRACKED_REVISIONS)
+      revisionBaselines.delete(revisionBaselines.keys().next().value!);
   }
   private async readSaved(identity: SessionIdentity): Promise<Session | undefined> {
     try {
@@ -398,7 +416,7 @@ export class PaceStore {
       } else if (value !== undefined) target[key] = structuredClone(value);
       else delete target[key];
     }
-    objectBaselines.set(caller, baseline as unknown as Session);
+    attachBaseline(caller, baseline as unknown as Session);
   }
   /** Strict whole-snapshot write. Stale snapshots are never merged implicitly. */
   async save(session: Session, activate: Activation = true): Promise<void> {
@@ -416,7 +434,9 @@ export class PaceStore {
       // Earlier writes may refresh this same object. Capture its state and
       // baseline together only after those writes finish, including on failure.
       const captured = structuredClone(session);
-      const baseline = objectBaselines.get(session) ?? revisionBaselines.get(`${this.key(captured)}:${captured.revision ?? 0}`);
+      const revisionKey = `${this.key(captured)}:${captured.revision ?? 0}`;
+      const baseline = (session as SnapshotSession)[snapshotBaseline] ??
+        recentRevisionBaselines.get(revisionKey) ?? revisionBaselines.get(revisionKey)?.deref();
       const latest = await this.readSaved(captured);
       if (!latest) {
         if ((captured.revision ?? 0) !== 0) throw new SessionConflictError("revision");
