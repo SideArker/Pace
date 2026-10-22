@@ -16,6 +16,23 @@ it('stores a session atomically under a hashed project key and reloads it', asyn
   expect((await readFile(join(store.sessionDir('/example/project'), `${session.id}.json`), 'utf8'))).toContain('thread-123');
   expect(store.conversationDir('/example/project', session.id)).toBe(join(store.sessionDir('/example/project'), session.id));
 });
+it('saves a standalone feedback snapshot and optional comment in the local inbox', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  const store = new PaceStore(dir);
+  const session = newSession('/example/project', 'auto');
+  session.turns.push({ prompt: 'Why did this fail?', result: 'It failed.', at: '2026-01-01' });
+
+  const path = await store.saveFeedback(session, 'Please review this turn.');
+  const report = JSON.parse(await readFile(path, 'utf8'));
+  expect(path).toContain(join(dir, 'feedback', 'inbox'));
+  expect(report).toMatchObject({
+    version: 1,
+    comment: 'Please review this turn.',
+    projectPath: '/example/project',
+    session: { id: session.id, turns: session.turns },
+  });
+  expect(session.turns).toHaveLength(1);
+});
 it('persists multiple ON-LAUNCH skills while loading older sessions without them', async () => {
   dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
   const store = new PaceStore(dir);

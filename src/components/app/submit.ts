@@ -1,5 +1,6 @@
 import type { ApprovalMode } from "../../shared/types.js";
 import { retryableTurn } from "../../core/sessions.js";
+import { isDebugBuild } from "../../core/build-mode.js";
 import { adoptedSidePrompt, operation } from "../../core/operations.js";
 import { enabledSkills, skillCommand, skillOption, skillRequest } from "../../core/system/skills.js";
 import { oneOffShellCommand } from "../shell-runner.js";
@@ -55,6 +56,11 @@ export function createSubmit({ state, transcript, queue, routing, completion, se
     }
     const text = shellMode ? raw.trim() : normalizeNewCommand(raw);
     if (!text) return;
+    if (!isDebugBuild && /^\/feedback(?:\s|$)/.test(text)) {
+      setDraft("");
+      add("error", "/feedback is available only in a debug build of Pace.");
+      return;
+    }
     setHistory(old => [...old.slice(-99), raw]);
     if (text === "!") {
       add("info", shellMode ? "$ !" : "> !");
@@ -104,7 +110,7 @@ export function createSubmit({ state, transcript, queue, routing, completion, se
       setQueueVersion(value => value + 1); setDraft("");
       add("info", `Queued operation ${position}: ${text}`); return;
     }
-    if (jobs.current.has(session.id) && !/^\/(?:new|clear|help|exit|stats|compact|context|artifacts|models|mcp|trust|skills|approval|tasks|remote)(?:\s|$)/.test(text)) {
+    if (jobs.current.has(session.id) && !/^\/(?:new|clear|help|exit|stats|compact|context|artifacts|models|mcp|trust|skills|approval|tasks|remote|feedback)(?:\s|$)/.test(text)) {
       if (isRegisteredCommand(text, registeredCommands) && !skillCommand(text, enabledSkills(skills, config))) {
         add("info", "This conversation is working. Use /new or the conversation picker to switch conversations.");
         return;
@@ -148,6 +154,16 @@ export function createSubmit({ state, transcript, queue, routing, completion, se
       }
       if (command === "/exit") {
         exit();
+        return;
+      }
+      if (command === "/feedback") {
+        const comment = parts.join(" ").trim();
+        try {
+          const path = await store.saveFeedback(session, comment);
+          add("info", `Feedback saved locally: ${path}`);
+        } catch (error) {
+          add("error", `Could not save feedback: ${String(error)}`);
+        }
         return;
       }
       if (infoCommands.includes(command)) {

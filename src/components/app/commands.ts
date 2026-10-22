@@ -1,3 +1,4 @@
+import { isDebugBuild } from "../../core/build-mode.js";
 
 export const commands = [
   "/plan",
@@ -24,6 +25,7 @@ export const commands = [
   "/stats",
   "/approval",
   "/remote",
+  ...(isDebugBuild ? ["/feedback"] : []),
   "/tasks",
   "/compact",
   "/context",
@@ -76,6 +78,7 @@ export const commandDescriptions: Record<string, string> = {
   "/stats": "Show conversation stats and token costs",
   "/approval": "Set command approval mode",
   "/remote": "Pair and control this Pace session from a phone",
+  ...(isDebugBuild ? { "/feedback": "Save this conversation locally for review, with an optional comment" } : {}),
   "/tasks": "Show background agent tasks",
   "/compact": "Compact conversation context to save tokens",
   "/context": "Show context window usage breakdown",

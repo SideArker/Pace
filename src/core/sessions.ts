@@ -66,6 +66,23 @@ export class PaceStore {
   conversationDir(project: string, sessionId: string): string {
     return join(this.sessionDir(project), sessionId);
   }
+  async saveFeedback(session: Session, comment = ""): Promise<string> {
+    const capturedAt = new Date().toISOString();
+    const id = randomUUID();
+    const file = `${capturedAt.replace(/[:.]/g, "-")}-${id}.json`;
+    const directory = join(this.baseDir, "feedback", "inbox");
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    const path = join(directory, file);
+    await atomicJson(path, {
+      version: 1,
+      id,
+      capturedAt,
+      comment,
+      projectPath: session.projectPath,
+      session: structuredClone(session),
+    });
+    return path;
+  }
   async loadConfig(): Promise<Config> {
     try {
       const config = parseConfig(

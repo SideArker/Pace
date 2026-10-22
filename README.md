@@ -58,6 +58,8 @@ pace
 
 For development, use `npm run dev` instead of linking.
 
+Pace detects debug mode from its installed package path. Builds run from a checkout expose `/feedback`, which saves the current conversation and an optional comment under `~/.pace/feedback/inbox`. The npm-installed package is treated as production and does not expose this command.
+
 </details>
 
 Interactive `pace` opens a fresh conversation; choose a saved conversation in the conversation picker to continue saved work. `pace --help` and `pace --version` work without authentication. `pace doctor` checks Node, local storage, Git, SDK, Vex installation, and configuration; only a live coding turn checks authentication and runtime access.
