@@ -2,7 +2,7 @@ import { afterEach, expect, it } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { newSession, PaceStore } from "../src/core/sessions.js";
+import { newSession, PaceStore, registerActiveAttempt } from "../src/core/sessions.js";
 import { saveRoutingSelection } from "../src/core/operations.js";
 import type { AgentRole, ManualWorkflow } from "../src/shared/types.js";
 
@@ -68,15 +68,20 @@ it("changes only the route on the latest workflow and auto mode preserves its pr
 for (const [role, stage] of [["main", "final"], ["scout", "scout"], ["verifier", "verify"], ["status", "checkpoint"], ["status", "native_compaction"]] as [AgentRole, string][]) {
   it(`rejects a workflow change during a running ${role}/${stage} stage without changing saved or caller state`, async () => {
     const { store, session } = await setup();
-    const running = await store.update(session, latest => {
-      latest.attempts = [{ id: "running", taskId: "task", generation: 1, role, stage, status: "running", route: {}, startedAt: "now", observations: [] }];
-    });
-    const caller = structuredClone(session);
-    await expect(saveRoutingSelection(store, session, scout)).rejects.toThrow("Wait for the current turn");
-    expect(session).toEqual(caller);
-    expect(await store.load(session.projectPath, session.id)).toEqual(running);
-    await store.update(session, latest => { latest.attempts![0]!.status = "completed"; });
-    await expect(saveRoutingSelection(store, session, scout)).resolves.toMatchObject({ manualWorkflow: scout });
+    // A live runner owns its record; otherwise load() correctly recovers it as
+    // an interrupted invocation, changing the state this test is inspecting.
+    const release = registerActiveAttempt(session, "running");
+    try {
+      const running = await store.update(session, latest => {
+        latest.attempts = [{ id: "running", taskId: "task", generation: 1, role, stage, status: "running", route: {}, startedAt: "now", observations: [] }];
+      });
+      const caller = structuredClone(session);
+      await expect(saveRoutingSelection(store, session, scout)).rejects.toThrow("Wait for the current turn");
+      expect(session).toEqual(caller);
+      expect(await store.load(session.projectPath, session.id)).toEqual(running);
+      await store.update(session, latest => { latest.attempts![0]!.status = "completed"; });
+      await expect(saveRoutingSelection(store, session, scout)).resolves.toMatchObject({ manualWorkflow: scout });
+    } finally { release(); }
   });
 }
 

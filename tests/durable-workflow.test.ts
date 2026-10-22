@@ -86,6 +86,20 @@ it("does not start a stage if its mandatory start save fails", async () => {
   expect(env.calls).toHaveLength(0);
 });
 
+it("continues a new prompt when the session contains a stale running attempt", async () => {
+  const env = await setup();
+  env.session.attempts = [{ id: "717a1a33-725a-4390-89bf-09795fc6cc75", taskId: env.session.id, generation: 1, role: "main", stage: "final", status: "running", route: config.defaultRoute, startedAt: new Date().toISOString(), observations: [] }];
+  await env.store.save(env.session);
+  const savedPath = join(env.store.sessionDir(env.root), `${env.session.id}.json`);
+  const saved = JSON.parse(await (await import("node:fs/promises")).readFile(savedPath, "utf8"));
+  saved.attempts[0].status = "running";
+  await writeFile(savedPath, JSON.stringify(saved));
+  const recoveredSession = (await env.store.load(env.root, env.session.id))!;
+  await env.orchestrator.turn("Continue with the task", recoveredSession, config, () => {});
+  expect(env.calls).toHaveLength(1);
+  expect(recoveredSession.attempts?.find(item => item.id === "717a1a33-725a-4390-89bf-09795fc6cc75")?.status).toBe("failed");
+});
+
 for (const shape of ["single", "scout"]) it(`post-${shape} save failure is recovered after restart and continues from saved state`, async () => {
   const env = await setup(shape); const save = env.store.saveChanges.bind(env.store);
   vi.spyOn(env.store, "saveChanges").mockImplementation(async (...args) => {

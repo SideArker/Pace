@@ -19,11 +19,11 @@ import {
 } from "./routing/router.js";
 import { costForUsage, pricedModels, refreshVersionManifest } from "./routing/pricing.js";
 import { advanceTask, retainedTask, type TaskRelation } from "./active-task.js";
-import { isActiveAttempt, PaceStore } from "./sessions.js";
+import { PaceStore } from "./sessions.js";
 import { retryableTurn } from "./session-model.js";
 import { verifyPlanPrompt, tryReadPlanFile, structuredHandoff, addUsage, awaitRouting, loadPlanningInstructions, planningPrompt, retainedConversationPrompt } from "./orchestrator-helpers.js";
 import { runPlanningStage } from "./workflow-stages.js";
-import { durableRunner, ensureTask, requiredSave, TransitionSaveError, ActiveAttemptError } from "./task-execution.js";
+import { durableRunner, ensureTask, requiredSave, TransitionSaveError } from "./task-execution.js";
 import { operation, preparePlanExecution, adoptedSidePrompt, currentPlan, validateOperationTarget } from "./operations.js";
 import { runAside } from "./side-answers.js";
 import { checkpointHandoff } from "./checkpoint.js";
@@ -147,10 +147,6 @@ export class Orchestrator {
     }
     const verifierTurn = intent === "verify_plan" || intent === "continue_verify";
     await this.store.recoverInterruptedAttempts(session, activateOnSave);
-    const active = (session.attempts ?? []).some(item => ["running", "awaiting_user"].includes(item.status) &&
-      isActiveAttempt(session, item.id) && (verifierTurn ? item.role === "verifier" :
-        item.role === "main" || item.role === "scout" || (item.role === "status" && ["checkpoint", "native_compaction"].includes(item.stage))));
-    if (active) throw new ActiveAttemptError();
     if (
       /^(?:stop caveman|normal mode)$/i.test(prompt.trim()) &&
       session.activeSkills?.includes("caveman")

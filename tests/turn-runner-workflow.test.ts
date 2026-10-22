@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createTurnRunner } from "../src/components/turn-runner.js";
@@ -37,14 +37,120 @@ async function fixture() {
   } };
   const vex = { choose: async (request: import("../src/core/vex/requests.js").VexRequest) => decision(request, request.options.some(item => item.id === "closed") ? "unknown" : request.options.some(item => item.id === "reroute") ? "continue" : request.options[0]?.id === "single" ? "single" : "0:medium") };
   const orchestrator = new Orchestrator(store, runner, vex);
-  const queue = new PromptQueue(); const sessions: Session[] = []; const statuses: string[] = [];
+  const queue = new PromptQueue(); const sessions: Session[] = []; const statuses: string[] = []; const lines: { role: string; text: string }[] = [];
   const jobs = { current: new Map() }; const selected = { current: source.id };
   const runTurn = createTurnRunner({
     turnSequence: { current: 0 }, activeSessionId: selected, jobs, promptQueue: { current: queue }, titleAborts: { current: new Map() }, pendingApprovals: { current: new Map() }, pendingQuestions: { current: new Map() }, unreadCompletions: { current: new Set() }, sessionLines: { current: new Map() },
-    runner, orchestrator, store, rememberSession: session => sessions.push(session), onTurnStart: () => {}, setRunningIds: () => {}, addFor: () => {}, activityFor: () => {}, recordThoughtUsage: () => {}, resetThoughtUsage: () => {}, getTurnActivities: () => [], setStatusFor: (_id, value) => { statuses.push(value); }, showApproval: () => {}, showQuestion: () => {}, dismissQuestion: () => {}, setSession: () => {}, setVexState: () => {}, refreshUsage: () => {}, setQueueVersion: () => {}, setProcesses: () => {}, setLiveUsage: () => {}, getConfig: () => config,
+    runner, orchestrator, store, rememberSession: session => sessions.push(session), onTurnStart: () => {}, setRunningIds: () => {}, addFor: (_id, role, text) => lines.push({ role, text }), activityFor: () => {}, recordThoughtUsage: () => {}, resetThoughtUsage: () => {}, getTurnActivities: () => [], setStatusFor: (_id, value) => { statuses.push(value); }, showApproval: () => {}, showQuestion: () => {}, dismissQuestion: () => {}, setSession: () => {}, setVexState: () => {}, refreshUsage: () => {}, setQueueVersion: () => {}, setProcesses: () => {}, setLiveUsage: () => {}, getConfig: () => config,
   });
-  return { store, root, source, config, runner, calls, orchestrator, queue, sessions, statuses, runTurn, jobs };
+  return { store, root, source, config, runner, calls, orchestrator, queue, sessions, statuses, lines, runTurn, jobs };
 }
+
+it("UI completes overlapping history saves without an error and accepts the next prompt", async () => {
+  const env = await fixture();
+  const display = (await env.store.load(env.root, env.source.id))!;
+  const save = env.store.saveChanges.bind(env.store);
+  let enriched = false;
+  vi.spyOn(env.store, "saveChanges").mockImplementation(async (...args) => {
+    if (!enriched && args[0] === env.source && env.source.turns.length > 1) {
+      enriched = true;
+      display.turns[0]!.activities = [{ category: "command", text: "npm test" }];
+      await save(display, false);
+    }
+    await save(...args);
+  });
+  expect(await env.runTurn("Verify plan", env.source, env.config, "verify_plan")).toBe(true);
+  expect(enriched).toBe(true);
+  expect(env.lines.filter(line => line.role === "error")).toEqual([]);
+  expect(env.source.turns[0]?.activities).toEqual(display.turns[0]?.activities);
+  expect(await env.runTurn("Continue verification", env.source, env.config, "continue_verify")).toBe(true);
+  const saved = (await env.store.load(env.root, env.source.id))!;
+  expect(saved.turns).toHaveLength(3);
+  expect(saved.attempts).toHaveLength(2);
+  expect(env.jobs.current.size).toBe(0);
+});
+
+it("UI preserves a truly conflicting snapshot and continues from disk without restarting", async () => {
+  const env = await fixture();
+  const save = env.store.saveChanges.bind(env.store);
+  let conflicted = false;
+  vi.spyOn(env.store, "saveChanges").mockImplementation(async (...args) => {
+    if (!conflicted && args[0] === env.source && env.source.turns.length > 1) {
+      conflicted = true;
+      const latest = (await env.store.load(env.root, env.source.id))!;
+      latest.turns[0]!.result = "Saved elsewhere";
+      await save(latest, false);
+      env.source.turns[0]!.result = "Local divergent edit";
+    }
+    await save(...args);
+  });
+  const queued = operation("Queued verification", env.source.id, "task");
+  env.queue.restore(env.source.id, [queued]);
+  expect(await env.runTurn("Verify plan", env.source, env.config, "verify_plan")).toBe(false);
+  expect(conflicted).toBe(true);
+  expect(env.calls).toHaveLength(1);
+  expect(env.jobs.current.size).toBe(0);
+  expect(env.queue.peekOperation(env.source.id)).toEqual(queued);
+  expect(env.lines.filter(line => line.role === "error")).toEqual([]);
+  expect(env.lines.some(line => line.text.includes("no restart is needed"))).toBe(true);
+  const recovered = env.sessions.at(-1)!;
+  expect(recovered.turns[0]?.result).toBe("Saved elsewhere");
+  const recoveryDir = join(env.store.conversationDir(env.root, env.source.id), "recovery");
+  const snapshots = await readdir(recoveryDir);
+  expect(snapshots).toHaveLength(1);
+  const snapshot = JSON.parse(await readFile(join(recoveryDir, snapshots[0]!), "utf8"));
+  expect(snapshot.turns[0].result).toBe("Local divergent edit");
+  expect(snapshot.turns.at(-1).result).toBe("Result");
+  env.queue.clear(env.source.id);
+  expect(await env.runTurn("Continue verification", recovered, env.config, "continue_verify")).toBe(true);
+  expect(env.calls).toHaveLength(2);
+});
+
+it("UI pauses queue draining and recovers when a conflict occurs during the post-turn checkpoint", async () => {
+  const env = await fixture();
+  env.runner.run = async (...args) => {
+    env.calls.push(args);
+    await args[4]({ kind: "thread", text: "main-thread" });
+    return { completed: true, result: "Result", threadId: "main-thread", context: { tokens: 900, windowTokens: 1000 } };
+  };
+  const save = env.store.saveChanges.bind(env.store);
+  let conflicted = false;
+  vi.spyOn(env.store, "saveChanges").mockImplementation(async (...args) => {
+    if (!conflicted && args[0].attempts?.some(item => item.stage === "checkpoint")) {
+      conflicted = true;
+      const latest = (await env.store.load(env.root, env.source.id))!;
+      latest.title = "Other title";
+      await save(latest, false);
+      env.source.title = "Local title";
+    }
+    await save(...args);
+  });
+  const current = operation("Continue planning", env.source.id, "task");
+  const next = operation("Queued follow-up", env.source.id, "task");
+  env.queue.restore(env.source.id, [current, next]);
+  expect(await env.runTurn(current.text, env.source, env.config, undefined, undefined, false, current)).toBe(false);
+  expect(conflicted).toBe(true);
+  expect(env.calls).toHaveLength(1);
+  expect(env.queue.peekOperation(env.source.id)).toEqual(current);
+  expect(env.jobs.current.size).toBe(0);
+  expect(env.sessions.at(-1)?.title).toBe("Other title");
+  expect(env.lines.filter(line => line.role === "error")).toEqual([]);
+});
+
+for (const failureAt of ["start", "result"]) it(`UI accepts the next prompt after a ${failureAt} persistence failure in the same process`, async () => {
+  const env = await fixture();
+  const save = env.store.saveChanges.bind(env.store);
+  const failingSave = vi.spyOn(env.store, "saveChanges").mockImplementation(async (...args) => {
+    if (args[0].attempts?.some(item => item.status === (failureAt === "start" ? "running" : "completed"))) throw new Error("disk full");
+    return save(...args);
+  });
+  expect(await env.runTurn("Verify plan", env.source, env.config, "verify_plan")).toBe(false);
+  expect(env.jobs.current.size).toBe(0);
+  failingSave.mockRestore();
+  expect(await env.runTurn("Continue verification", env.source, env.config, "continue_verify")).toBe(true);
+  expect(env.source.attempts?.[0]?.status).toBe("failed");
+  expect(env.source.attempts?.at(-1)?.status).toBe("completed");
+});
 
 it("UI verifier events preserve the entire main state and never generate an already-due checkpoint", async () => {
   const env = await fixture();

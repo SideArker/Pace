@@ -9,9 +9,6 @@ import { updateAgentTasks } from "./tasks.js";
 export class TransitionSaveError extends Error {
   constructor(cause: unknown) { super(`Required workflow save failed; execution stopped: ${String(cause)}`, { cause }); }
 }
-export class ActiveAttemptError extends Error {
-  constructor() { super("An execution is still active for this conversation. Wait for it to finish before sending another turn."); }
-}
 export async function requiredSave(store: PaceStore, session: Session, activate: boolean | (() => boolean) = true) {
   try { await store.saveChanges(session, activate); }
   catch (error) { throw new TransitionSaveError(error); }

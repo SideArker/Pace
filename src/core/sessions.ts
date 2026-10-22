@@ -16,6 +16,8 @@ import { DEFAULT_CONFIG, isRecord, parseConfig } from "../shared/config.js";
 import type { Config, Notice, Session } from "../shared/types.js";
 import { normalizeProject, projectKey } from "./session-model.js";
 import { parseSession, parseSessionSummary } from "./session-record.js";
+import { keyedRecords, reapplyChanges, SessionConflictError } from "./sessions-revisions.js";
+export { SessionConflictError } from "./sessions-revisions.js";
 export { normalizeProject, projectKey, newSession, rewindConversation, deleteConversationTurn, undoConversationTurn, retryableTurn } from "./session-model.js";
 export { parseSessionSummary } from "./session-record.js";
 
@@ -38,7 +40,6 @@ type SessionIdentity = Pick<Session, "id" | "projectPath">;
 const writeQueues = new Map<string, Promise<unknown>>();
 const objectBaselines = new WeakMap<Session, Session>();
 const revisionBaselines = new Map<string, Session>();
-const keyedRecords = new Set(["attempts", "sideAnswers", "controlDecisions"]);
 const activeAttempts = new Set<string>();
 
 function attemptKey(session: SessionIdentity, attemptId: string): string {
@@ -51,88 +52,6 @@ export function registerActiveAttempt(session: SessionIdentity, attemptId: strin
 }
 export function isActiveAttempt(session: SessionIdentity, attemptId: string): boolean {
   return activeAttempts.has(attemptKey(session, attemptId));
-}
-
-export class SessionConflictError extends Error {
-  constructor(readonly field: string) {
-    super(`Session changed concurrently (${field}); reload and reapply the intended change`);
-    this.name = "SessionConflictError";
-  }
-}
-
-function appendedTurns(base: unknown[], branch: unknown[]): unknown[] | undefined {
-  const indexed = (items: unknown[]) => {
-    const byAt = new Map<string, unknown>();
-    for (const item of items) {
-      if (!isRecord(item) || typeof item.at !== "string" || byAt.has(item.at)) return undefined;
-      byAt.set(item.at, item);
-    }
-    return byAt;
-  };
-  const before = indexed(base), after = indexed(branch);
-  if (!before || !after) return undefined;
-  const retained = branch.filter(item => isRecord(item) && typeof item.at === "string" && before.has(item.at));
-  const additions = branch.filter(item => isRecord(item) && typeof item.at === "string" && !before.has(item.at));
-  const dropped = base.length - retained.length;
-  if (dropped < 0 || (dropped > 0 && additions.length === 0)) return undefined;
-  const expectedRetained = base.slice(dropped);
-  if (retained.length !== expectedRetained.length || retained.some((item, index) =>
-    !isRecord(item) || !isRecord(expectedRetained[index]) || item.at !== expectedRetained[index]!.at ||
-    !isDeepStrictEqual(item, expectedRetained[index]))) return undefined;
-  const firstAddition = branch.findIndex(item => isRecord(item) && typeof item.at === "string" && !before.has(item.at));
-  if (firstAddition >= 0 && branch.slice(firstAddition).some(item => !isRecord(item) || typeof item.at !== "string" || before.has(item.at))) return undefined;
-  return additions;
-}
-
-/** Apply only the caller's changes; concurrent edits to the same value fail closed. */
-function reapplyChanges(base: unknown, desired: unknown, latest: unknown, field: string): unknown {
-  if (isDeepStrictEqual(base, desired)) return structuredClone(latest);
-  if (isDeepStrictEqual(base, latest) || isDeepStrictEqual(desired, latest)) return structuredClone(desired);
-  if (field === "turns" && Array.isArray(base) && Array.isArray(desired) && Array.isArray(latest)) {
-    const desiredAdds = appendedTurns(base, desired), latestAdds = appendedTurns(base, latest);
-    if (desiredAdds && latestAdds) {
-      const additions = new Map<string, unknown>();
-      for (const item of [...latestAdds, ...desiredAdds]) {
-        const at = (item as { at: string }).at;
-        const existing = additions.get(at);
-        additions.set(at, existing
-          ? reapplyChanges({}, item, existing, `turns.${at}`)
-          : structuredClone(item));
-      }
-      return [...base, ...[...additions.values()].sort((a, b) =>
-        (a as { at: string }).at.localeCompare((b as { at: string }).at))].slice(-20);
-    }
-  }
-  if (keyedRecords.has(field) && (base === undefined || Array.isArray(base)) &&
-      Array.isArray(desired) && Array.isArray(latest)) {
-    const records = (items: unknown[]): Map<string, unknown> => {
-      const result = new Map<string, unknown>();
-      for (const item of items) {
-        if (!isRecord(item) || typeof item.id !== "string" || result.has(item.id)) throw new SessionConflictError(field);
-        result.set(item.id, item);
-      }
-      return result;
-    };
-    const before = records(base ?? []), after = records(desired), current = records(latest);
-    for (const id of new Set([...before.keys(), ...after.keys()])) {
-      if (isDeepStrictEqual(before.get(id), after.get(id))) continue;
-      if (!isDeepStrictEqual(before.get(id), current.get(id)) && !isDeepStrictEqual(after.get(id), current.get(id)))
-        throw new SessionConflictError(`${field}.${id}`);
-      if (after.has(id)) current.set(id, structuredClone(after.get(id)));
-      else current.delete(id);
-    }
-    return [...current.values()];
-  }
-  if (isRecord(base) && isRecord(desired) && isRecord(latest)) {
-    const result = structuredClone(latest);
-    for (const key of new Set([...Object.keys(base), ...Object.keys(desired)])) {
-      const value = reapplyChanges(base[key], desired[key], latest[key], field ? `${field}.${key}` : key);
-      if (value === undefined) delete result[key];
-      else result[key] = value;
-    }
-    return result;
-  }
-  throw new SessionConflictError(field);
 }
 
 export class PaceStore {
@@ -433,20 +352,36 @@ export class PaceStore {
     const target = caller as unknown as Record<string, unknown>;
     const before = captured as unknown as Record<string, unknown>;
     const after = saved as unknown as Record<string, unknown>;
+    const baseline = structuredClone(saved) as unknown as Record<string, unknown>;
     for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
-      // Keep mutations made while this write waited in the queue for their next save.
-      if (key !== "revision" && key !== "updatedAt" && !isDeepStrictEqual(target[key], before[key])) continue;
-      if (isDeepStrictEqual(target[key], after[key])) continue;
-      if (keyedRecords.has(key) && Array.isArray(target[key]) && Array.isArray(after[key])) {
+      let value = after[key];
+      if (key !== "revision" && key !== "updatedAt" && !isDeepStrictEqual(target[key], before[key])) {
+        // Preserve edits made during I/O AND independent records merged from
+        // disk. Keeping the whole local array would delete unseen records on
+        // the next save, because its baseline already contains those records.
+        const [baseValue, localValue, savedValue] = [before[key], target[key], after[key]]
+          .map(item => item === undefined ? undefined : JSON.parse(JSON.stringify(item)));
+        try { value = reapplyChanges(baseValue, localValue, savedValue, key); }
+        catch (error) {
+          if (!(error instanceof SessionConflictError)) throw error;
+          // The write already committed. Retain the conflicting local intent
+          // and its original baseline so a later save still fails closed.
+          if (Object.hasOwn(before, key)) baseline[key] = structuredClone(before[key]);
+          else delete baseline[key];
+          continue;
+        }
+      }
+      if (isDeepStrictEqual(target[key], value)) continue;
+      if (keyedRecords.has(key) && Array.isArray(target[key]) && Array.isArray(value)) {
         const existing = new Map((target[key] as Record<string, unknown>[]).map(record => [record.id, record]));
-        target[key] = (after[key] as Record<string, unknown>[]).map(record => {
+        target[key] = (value as Record<string, unknown>[]).map(record => {
           const current = existing.get(record.id);
           return isDeepStrictEqual(current, record) ? current : structuredClone(record);
         });
-      } else if (Object.hasOwn(after, key)) target[key] = structuredClone(after[key]);
+      } else if (value !== undefined) target[key] = structuredClone(value);
       else delete target[key];
     }
-    objectBaselines.set(caller, structuredClone(saved));
+    objectBaselines.set(caller, baseline as unknown as Session);
   }
   /** Strict whole-snapshot write. Stale snapshots are never merged implicitly. */
   async save(session: Session, activate: Activation = true): Promise<void> {
@@ -460,9 +395,11 @@ export class PaceStore {
   }
   /** Reapply a tracked snapshot's concrete changes on the newest persisted revision. */
   async saveChanges(session: Session, activate: Activation = true): Promise<void> {
-    const captured = structuredClone(session);
-    const baseline = objectBaselines.get(session) ?? revisionBaselines.get(`${this.key(captured)}:${captured.revision ?? 0}`);
-    await this.serial(captured, async () => {
+    await this.serial(session, async () => {
+      // Earlier writes may refresh this same object. Capture its state and
+      // baseline together only after those writes finish, including on failure.
+      const captured = structuredClone(session);
+      const baseline = objectBaselines.get(session) ?? revisionBaselines.get(`${this.key(captured)}:${captured.revision ?? 0}`);
       const latest = await this.readSaved(captured);
       if (!latest) {
         if ((captured.revision ?? 0) !== 0) throw new SessionConflictError("revision");
@@ -471,7 +408,9 @@ export class PaceStore {
         return;
       }
       if (!baseline) throw new SessionConflictError("unknown snapshot baseline");
-      const base = structuredClone(baseline), desired = structuredClone(captured);
+      // Compare the JSON values that will actually be persisted. Optional
+      // undefined properties inside arrays are not edits to saved records.
+      const base = structuredClone(baseline), desired = JSON.parse(JSON.stringify(captured)) as Session;
       // Metadata belongs to the store, not to a user change.
       desired.revision = base.revision;
       desired.updatedAt = base.updatedAt;
@@ -479,6 +418,19 @@ export class PaceStore {
       const saved = await this.write(merged, latest.revision ?? 0, activate);
       this.refreshCaller(session, captured, saved);
     });
+  }
+  /** Preserve a rejected snapshot before returning a fresh, usable caller. */
+  async recoverConflict(session: Session): Promise<{ session: Session; snapshotPath: string }> {
+    const recovery = await this.serial(session, async () => {
+      const latest = await this.readSaved(session);
+      if (!latest) throw new Error("Pace session not found");
+      const snapshotPath = join(this.conversationDir(session.projectPath, session.id), "recovery", `${randomUUID()}.json`);
+      await atomicJson(snapshotPath, session);
+      this.track(latest);
+      return { session: latest, snapshotPath };
+    });
+    await this.recoverInterruptedAttempts(recovery.session, false);
+    return recovery;
   }
   /** Serialized latest-state mutation, including callers using independent store instances. */
   async update(identity: SessionIdentity, mutate: (latest: Session) => void | Promise<void>, activate: Activation = true): Promise<Session> {

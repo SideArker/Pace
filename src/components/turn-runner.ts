@@ -3,7 +3,7 @@ import type { Config, Route, Session, TurnActivity, OperationIntent, QueuedOpera
 import type { CodexRunner, Progress } from "../integrations/codex.js";
 import { Orchestrator, VexUnavailableError } from "../core/orchestrator.js";
 import { artifactPath } from "../core/system/artifacts.js";
-import { PaceStore } from "../core/sessions.js";
+import { PaceStore, SessionConflictError } from "../core/sessions.js";
 import { preparePlanExecution } from "../core/operations.js";
 import { durableRunner, TransitionSaveError } from "../core/task-execution.js";
 import { PromptQueue } from "../core/prompt-queue.js";
@@ -90,6 +90,7 @@ export function createTurnRunner({
     let succeeded = false;
     let deferredForRetry = false;
     let failedForRetry = false;
+    let recoveredSession: Session | undefined;
     let activeRoute: Route = turnSession.route;
     let emittedMessages = 0;
     const controller = new AbortController();
@@ -123,6 +124,7 @@ export function createTurnRunner({
           if (!title || turnSession.title || titleController.signal.aborted) return;
           turnSession.title = title;
           await store.saveChanges(turnSession, () => activeSessionId.current === sessionId);
+          if (titleController.signal.aborted) return;
           rememberSession(turnSession);
           if (activeSessionId.current === sessionId) setSession({ ...turnSession });
         }).catch(() => {}).finally(() => {
@@ -230,6 +232,7 @@ export function createTurnRunner({
           if (checkpoint) addFor(sessionId, "meta", "Context checkpoint saved. The next turn starts a fresh thread.");
           else addFor(sessionId, "meta", "Context checkpoint could not be validated; the existing thread remains available.");
         } catch (error) {
+          if (error instanceof SessionConflictError || error instanceof TransitionSaveError && error.cause instanceof SessionConflictError) throw error;
           if (error instanceof TransitionSaveError) succeeded = false;
           addFor(sessionId, "error", `Could not save context checkpoint: ${String(error)}`);
         }
@@ -244,6 +247,7 @@ export function createTurnRunner({
       if (turnSession.routingMode === "auto") setVexState("connected");
       refreshUsage();
     } catch (error) {
+      succeeded = false;
       const retryReason = error instanceof VexUnavailableError
         ? error.source === "connection" ? "network" : transientRetryReason(error)
         : isUsageLimitError(error) ? "usage" : transientRetryReason(error);
@@ -274,6 +278,18 @@ export function createTurnRunner({
           addFor(sessionId, "error", `Could not save automatic retry: ${String(saveError)}`);
           setStatusFor(sessionId, "Failed");
         }
+      } else if (error instanceof SessionConflictError || error instanceof TransitionSaveError && error.cause instanceof SessionConflictError) {
+        titleAborts.current.get(sessionId)?.abort();
+        try {
+          const recovery = await store.recoverConflict(turnSession);
+          recoveredSession = recovery.session;
+          if (activeSessionId.current === sessionId) setSession({ ...recoveredSession });
+          addFor(sessionId, "meta", `Conversation refreshed after a conflicting save. Send your next prompt to continue; no restart is needed. The interrupted turn was not rerun. Unsaved state retained at ${recovery.snapshotPath}`);
+          setStatusFor(sessionId, "Ready after conversation recovery");
+        } catch (recoveryError) {
+          addFor(sessionId, "error", `Could not recover conversation: ${String(recoveryError)}`);
+          setStatusFor(sessionId, "Conversation recovery failed");
+        }
       } else {
         const failedTurn = turnSession.turns.at(-1);
         failedForRetry = !!failedTurn?.failed && !failedTurn.cancelled && failedTurn.prompt === text;
@@ -293,13 +309,13 @@ export function createTurnRunner({
       const job = jobs.current.get(sessionId);
       await job?.pendingSteer?.catch(() => {});
       const lastTurn = turnSession.turns.at(-1);
-      if (lastTurn && lastTurn !== previousTurn && job?.steeredPrompts?.length) {
+      if (!recoveredSession && lastTurn && lastTurn !== previousTurn && job?.steeredPrompts?.length) {
         lastTurn.steeringPrompts = [...(lastTurn.steeringPrompts ?? []), ...job.steeredPrompts];
         await store.saveChanges(turnSession, () => activeSessionId.current === sessionId).catch(error => {
           addFor(sessionId, "error", `Could not save steering history: ${String(error)}`);
         });
       }
-      if (lastTurn && lastTurn !== previousTurn) {
+      if (!recoveredSession && lastTurn && lastTurn !== previousTurn) {
         const activities = getTurnActivities(sessionId, turnId);
         if (activities.length) lastTurn.activities = activities;
       }
@@ -308,7 +324,7 @@ export function createTurnRunner({
         delete updated[sessionId];
         return updated;
       });
-      if (lastTurn?.activities?.length) {
+      if (!recoveredSession && lastTurn?.activities?.length) {
         await store.saveChanges(turnSession, () => activeSessionId.current === sessionId).catch(() => {});
       }
       setProcesses(old => old.filter(item => !item.id.startsWith(`turn-${turnId}-`)));
@@ -318,7 +334,7 @@ export function createTurnRunner({
       if (question?.owner === controller) question.respond({});
       jobs.current.delete(sessionId);
       if (activeSessionId.current !== sessionId) unreadCompletions.current.add(sessionId);
-      rememberSession(turnSession);
+      rememberSession(recoveredSession ?? turnSession);
       setRunningIds([...jobs.current.keys()]);
       if (typeof performance !== "undefined" && typeof performance.clearMeasures === "function") {
         try { performance.clearMeasures(); } catch {}
