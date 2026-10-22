@@ -541,7 +541,7 @@ export class Orchestrator {
               taskRelation === "continue" && priorTask
                 ? "How should this message change the active task? Specify the requested outcome or select a workflow."
                 : taskRelation === "continue"
-                ? "I can't identify an earlier task from this conversation. Open /resume if the work is in another saved conversation, or paste the original request or plan."
+                ? "I can't identify an earlier task from this conversation. Choose the other saved conversation in the conversation picker, or paste the original request or plan."
                 : "What outcome would you like from this request? Please describe the deliverable.";
             const durationMs = Math.round(performance.now() - startedAt);
             session.turns = [

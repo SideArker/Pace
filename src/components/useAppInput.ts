@@ -174,7 +174,7 @@ export function useAppInput(options: {
         setPickerFocused(false);
         setPickerSearch?.("");
         if (chosen && missingProjectPaths.includes(chosen.projectPath))
-          add("error", `Project folder is missing: ${chosen.projectPath}. Restore it here or run pace reconnect "${chosen.projectPath}" "<new path>" in a terminal, then reopen /resume.`);
+          add("error", `Project folder is missing: ${chosen.projectPath}. Restore it here or run pace reconnect "${chosen.projectPath}" "<new path>" in a terminal, then reopen the conversation picker.`);
         else if (chosen && chosen.id !== activeSessionId.current) void activateSession(chosen);
       } else if (key.backspace || key.delete) {
         setPickerSearch?.(s => s.slice(0, -1));
@@ -262,7 +262,7 @@ export function useAppInput(options: {
       else if (key.return) {
         const chosen = resumeChoices[menuIndex];
         if (chosen && missingProjectPaths.includes(chosen.projectPath))
-          add("error", `Project folder is missing: ${chosen.projectPath}. Restore it here or run pace reconnect "${chosen.projectPath}" "<new path>" in a terminal, then reopen /resume.`);
+          add("error", `Project folder is missing: ${chosen.projectPath}. Restore it here or run pace reconnect "${chosen.projectPath}" "<new path>" in a terminal, then reopen the conversation picker.`);
         else if (chosen) void activateSession(chosen);
       }
       return;

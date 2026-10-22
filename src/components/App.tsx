@@ -66,12 +66,10 @@ export const commands = [
   "/manual",
   "/workflow",
   "/new",
-  "/resume",
   "/convo",
   "/undo",
   "/redo",
   "/diff",
-  "/usage",
   "/retry",
   "/cancelretry",
   "/btw",
@@ -131,12 +129,10 @@ const commandDescriptions: Record<string, string> = {
   "/manual": "Configure workflow stages, models, and effort",
   "/workflow": "Choose workflow strategy (single, scout, plan, scout-plan)",
   "/new": "Start a new conversation",
-  "/resume": "Switch to a saved conversation",
   "/convo": "Browse and manage conversation turns",
   "/undo": "Revert latest turn and file changes",
   "/redo": "Restore the last undone turn and file changes",
   "/diff": "Browse agent file changes and undo or redo individual files",
-  "/usage": "Show Codex account usage and rate limits",
   "/retry": "Retry the latest failed request in this conversation",
   "/cancelretry": "Cancel automatic retry and clear its queue",
   "/btw": "Ask a read-only side question with a separate agent",
@@ -955,7 +951,7 @@ export default function App({ onClear }: { onClear: () => void }) {
     } else if (session?.deferredTurn) {
       void cancelRetry();
     } else if (jobs.current.size) {
-      add("info", `${jobs.current.size} background turn(s) running. Use /resume to switch or /exit to quit.`);
+      add("info", `${jobs.current.size} background turn(s) running. Use the conversation picker to switch or /exit to quit.`);
     } else exit();
   };
   const interruptRef = useRef(interrupt);
@@ -1420,9 +1416,9 @@ export default function App({ onClear }: { onClear: () => void }) {
       setQueueVersion(value => value + 1); setDraft("");
       add("info", `Queued operation ${position}: ${text}`); return;
     }
-    if (jobs.current.has(session.id) && !/^\/(?:new|clear|resume|help|exit|usage|stats|compact|context|route|artifacts|models|mcp|trust|skills|approval|tasks|remote)(?:\s|$)/.test(text)) {
+    if (jobs.current.has(session.id) && !/^\/(?:new|clear|help|exit|stats|compact|context|route|artifacts|models|mcp|trust|skills|approval|tasks|remote)(?:\s|$)/.test(text)) {
       if (isRegisteredCommand(text, registeredCommands) && !skillCommand(text, enabledSkills(skills, config))) {
-        add("info", "This conversation is working. Use /new or /resume to switch conversations.");
+        add("info", "This conversation is working. Use /new or the conversation picker to switch conversations.");
         return;
       }
       const position = promptQueue.current.add(session.id, commandOperation);
@@ -1511,7 +1507,7 @@ export default function App({ onClear }: { onClear: () => void }) {
       if (command === "/help") {
         add(
           "info",
-          "/plan [prompt] · /execute · /verify [file] [prompt] · /models · /mcp [list] · /auto · /manual [model] [effort] · /workflow [name|auto] · /approval [full-access|request-approval|limited] · /remote · /tasks · /new · /resume · /convo · /diff · /undo · /redo · /compact · /context · /usage · /retry · /cancelretry · /btw <q> · /adopt <side-answer-id> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /stats · /route · /clear · /exit · Esc cancels automatic retry; Esc twice/Ctrl+C cancels other turns · Ctrl+Z undo · Ctrl+Y redo · Alt+P/Ctrl+P plan · Alt+E/Ctrl+E execute · ! Bash · Ctrl+O toggle command, diff, and reasoning details · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
+          "/plan [prompt] · /execute · /verify [file] [prompt] · /models · /mcp [list] · /auto · /manual [model] [effort] · /workflow [name|auto] · /approval [full-access|request-approval|limited] · /remote · /tasks · /new · /convo · /diff · /undo · /redo · /compact · /context · /retry · /cancelretry · /btw <q> · /adopt <side-answer-id> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /stats · /route · /clear · /exit · Esc cancels automatic retry; Esc twice/Ctrl+C cancels other turns · Ctrl+Z undo · Ctrl+Y redo · Alt+P/Ctrl+P plan · Alt+E/Ctrl+E execute · ! Bash · Ctrl+O toggle command, diff, and reasoning details · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
         );
         add("info", "With multiple open conversations, press Down from the input to focus the picker. Use arrows and Enter to switch; Esc returns to input. Ctrl+C cancels the selected turn. /exit quits.");
         return;
@@ -1644,11 +1640,6 @@ export default function App({ onClear }: { onClear: () => void }) {
         } catch (error) { add("error", `Could not list MCP servers: ${String(error)}`); }
         return;
       }
-      if (command === "/usage") {
-        if (parts.length) { add("error", "Type /usage without arguments."); return; }
-        refreshUsage();
-        return;
-      }
       if (command === "/context") {
         if (parts.length) { add("error", "Type /context without arguments."); return; }
         const reading = measuredContext(session);
@@ -1662,7 +1653,7 @@ export default function App({ onClear }: { onClear: () => void }) {
           ? `Last model request: ${reading.tokens.toLocaleString()} / ${reading.windowTokens.toLocaleString()} context tokens (${percent}%)${reading.model ? ` on ${reading.model}` : ""}.`
           : "Context occupancy is unavailable for the current thread and model.");
         if (session.checkpoint) add("info", `Saved checkpoint from ${session.checkpoint.createdAt}; original thread ${session.checkpoint.threadId}.`);
-        add("info", "Use /compact to compact an idle thread, or /new to begin a separate fresh conversation. /resume returns to a saved conversation.");
+        add("info", "Use /compact to compact an idle thread, or /new to begin a separate fresh conversation. Choose a saved conversation in the conversation picker to return to it.");
         return;
       }
       if (command === "/compact") {
@@ -1853,21 +1844,6 @@ export default function App({ onClear }: { onClear: () => void }) {
             ? found.map(skill => `/${skill.name} ${updated.disabledSkills?.includes(skill.name) ? "(disabled)" : "(enabled)"} · ${skill.description}`).join("\n")
             : `No skills found in ${folder === null ? "the disabled skill folder" : folder ?? defaultSkillFolder()}.`);
         } catch (error) { add("error", `Could not discover skills: ${String(error)}`); }
-        return;
-      }
-      if (command === "/resume") {
-        const query = parts.join(" ").trim();
-        const loaded = await loadResumeChoices(store, openSessions, [...jobs.current.values()].map(job => job.session));
-        if (loaded.sessions.length <= 1) {
-          add("info", "No saved conversations.");
-          return;
-        }
-        setOpenSessions(loaded.sessions);
-        setMissingProjectPaths(loaded.missingProjectPaths);
-        setPickerSearch(query);
-        setShowConversationsTab(true);
-        setPickerFocused(true);
-        setPickerIndex(0);
         return;
       }
       if (command === "/diff") {
