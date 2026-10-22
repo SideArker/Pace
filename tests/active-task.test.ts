@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { advanceTask, retainedTask } from '../src/core/active-task.js';
 import { PaceStore, newSession } from '../src/core/sessions.js';
-import { shapeRequest, taskRelationRequest } from '../src/core/vex/client.js';
+import { shapeRequest } from '../src/core/vex/client.js';
 import { DEFAULT_CONFIG } from '../src/shared/config.js';
 
 it('keeps the original unfinished task beyond Vex recent conversation', () => {
@@ -13,7 +13,6 @@ it('keeps the original unfinished task beyond Vex recent conversation', () => {
   session.turns = Array.from({ length: 12 }, (_, index) => ({ prompt: `Later turn ${index}`, result: `Response ${index}`, at: '2026-10-05' }));
   const task = retainedTask(session)!;
   const state = { activeTask: task, hasCodexThread: true };
-  expect(taskRelationRequest('Continue', session.turns, state).context.conversationState).toMatchObject({ activeTask: task });
   const shape = shapeRequest('Continue', session.turns, DEFAULT_CONFIG.models, undefined, state);
   expect(shape.context.recentConversation).toHaveLength(10);
   expect(shape.context.conversationState).toMatchObject({ activeTask: task });

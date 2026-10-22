@@ -18,4 +18,6 @@
 
 The controller preserves the order of lifecycle effects. Actions receive state, refs and callbacks explicitly; they do not create additional stores or execution clients. `AppView` imports the controller type only and shares the existing transcript-history ref across redraws and modal transitions.
 
+`useSessionActions.showFreshSession` applies the shared UI reset after a fresh conversation has been saved. New conversation, planning and execution actions keep their own preparation, persistence, error rollback and status text, then call this same reset.
+
 Mounted application checks live in `tests/app-composition.test.tsx`; input, queue and turn-runner tests cover the underlying workflows.

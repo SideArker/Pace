@@ -1,11 +1,10 @@
-import { randomUUID } from "node:crypto";
 import type { Session, TaskAssessment } from "../shared/types.js";
 import type { Progress } from "../integrations/codex-types.js";
 import { assessmentRequest, type VexRequest, type VexRouter } from "./vex/client.js";
-import { validateDecision, type RoutingDecision } from "./routing/router.js";
+import type { RoutingDecision } from "./routing/router.js";
 import type { RoutingPrompts } from "./routing/routing-prompts.js";
 import type { RoutingRecord } from "./orchestrator.js";
-import { awaitRouting } from "./orchestrator-helpers.js";
+import { chooseDecision, decisionAudit } from "./vex/decisions.js";
 import { TransitionSaveError } from "./task-execution.js";
 
 export class VexUnavailableError extends Error {
@@ -32,16 +31,10 @@ export function createTurnRouting({
     request: VexRequest,
     objective: string,
   ): Promise<RoutingDecision> => {
-    let failure: unknown;
     const decisionStarted = performance.now();
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      signal?.throwIfAborted();
-      try {
-        const decision = validateDecision(
-          await awaitRouting(vex.choose(request), signal),
-          request.options,
-        );
-        signal?.throwIfAborted();
+    const result = await chooseDecision({
+      vex, request, signal, checkAborted: () => signal?.throwIfAborted(),
+      accept: async (decision, attempt) => {
         routing.push({
           objective,
           choice: decision.choice,
@@ -51,22 +44,22 @@ export function createTurnRouting({
           attempts: attempt,
         });
         session.controlDecisions = [...(session.controlDecisions ?? []), {
-          id: randomUUID(), taskId: session.activeTask?.id, stage: session.activeTask?.workflow?.stage,
-          role: verifierTurn ? "verifier" : request.context.stageObjective === prompts.objectives.scout ? "scout" : "main", objective, choice: decision.choice, confidence: decision.confidence,
-          probabilities: decision.probabilities, durationMs: Math.round(performance.now() - decisionStarted), at: new Date().toISOString(), source: "vex", contextAction: "continue",
-          requests: attempt,
+          ...decisionAudit(decisionStarted, attempt, decision),
+          taskId: session.activeTask?.id, stage: session.activeTask?.workflow?.stage,
+          role: verifierTurn ? "verifier" : request.context.stageObjective === prompts.objectives.scout ? "scout" : "main", objective, at: new Date().toISOString(),
         }];
         await save();
         return decision;
-      } catch (error) {
-        if (error instanceof TransitionSaveError) throw error;
-        signal?.throwIfAborted();
-        failure = error;
-      }
-    }
-    session.controlDecisions = [...(session.controlDecisions ?? []), { id: randomUUID(), taskId: session.activeTask?.id, stage: session.activeTask?.workflow?.stage, role: verifierTurn ? "verifier" : "main", objective, choice: "unavailable", confidence: 0, probabilities: {}, durationMs: Math.round(performance.now() - decisionStarted), at: new Date().toISOString(), source: "vex", contextAction: "continue", requests: 2, failed: true, error: String(failure) }];
+      },
+    });
+    if (result.ok) return result.value;
+    session.controlDecisions = [...(session.controlDecisions ?? []), {
+      ...decisionAudit(decisionStarted, 2, undefined, result.failure),
+      taskId: session.activeTask?.id, stage: session.activeTask?.workflow?.stage,
+      role: verifierTurn ? "verifier" : "main", objective, at: new Date().toISOString(),
+    }];
     await save();
-    throw new VexUnavailableError(failure, "decision");
+    throw new VexUnavailableError(result.failure, "decision");
   };
   const assess = async (attemptId: string, updateTask: boolean) => {
     const attempt = session.attempts?.find(item => item.id === attemptId);

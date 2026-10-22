@@ -6,7 +6,6 @@ import { artifactDirectory, artifactPath, savePlanArtifact } from "../../core/sy
 import { preparePlanExecution, operation } from "../../core/operations.js";
 import { tryReadPlanFile, verifyPlanPrompt } from "../../core/orchestrator-helpers.js";
 import type { PromptQueue } from "../../core/prompt-queue.js";
-import type { Progress } from "../../integrations/codex.js";
 import type { createTurnRunner, TurnJob } from "../turn-runner.js";
 import type { Line } from "../Transcript.js";
 
@@ -27,23 +26,15 @@ type PlanningOptions = {
   stopSideQuestion: () => void;
   onClear: () => void;
   rememberSession: (session: Session) => void;
+  showFreshSession: (session: Session, status: string) => void;
   add: (role: Line["role"], text: string) => void;
   setSession: Setter<Session | undefined>;
-  setOpenSessions: Setter<Session[]>;
-  setShowConversationsTab: Setter<boolean>;
   setLines: Setter<Line[]>;
-  setDraft: Setter<string>;
-  setHistory: Setter<string[]>;
-  setPickerFocused: Setter<boolean>;
-  setPickerIndex: Setter<number>;
-  setShowHeader: Setter<boolean>;
-  setStatus: Setter<string>;
-  setApproval: Setter<Extract<Progress, { kind: "approval" }> | undefined>;
   setQueueVersion: Setter<number>;
 };
 
 export function createPlanningActions({
-  session, config, store, project, thisPaceIds, switchingSession, activeSessionId, sessionDrafts, sessionLines, runTurnRef, jobs, promptQueue, stopSideQuestion, onClear, rememberSession, add, setSession, setOpenSessions, setShowConversationsTab, setLines, setDraft, setHistory, setPickerFocused, setPickerIndex, setShowHeader, setStatus, setApproval, setQueueVersion
+  session, config, store, project, thisPaceIds, switchingSession, activeSessionId, sessionDrafts, sessionLines, runTurnRef, jobs, promptQueue, stopSideQuestion, onClear, rememberSession, showFreshSession, add, setSession, setLines, setQueueVersion
 }: PlanningOptions) {
   const startOrTogglePlanning = async (promptText?: string) => {
     if (!session) return;
@@ -94,24 +85,7 @@ export function createPlanningActions({
       await store.saveChanges(fresh);
       stopSideQuestion();
       onClear();
-      sessionLines.current.set(fresh.id, []);
-      setSession(fresh);
-      setOpenSessions(old => {
-        const map = new Map<string, Session>();
-        if (session) map.set(session.id, session);
-        for (const s of old) map.set(s.id, s);
-        map.set(fresh.id, fresh);
-        return [...map.values()];
-      });
-      setShowConversationsTab(true);
-      setLines([]);
-      setDraft("");
-      setHistory([]);
-      setPickerFocused(false);
-      setPickerIndex(0);
-      setShowHeader(true);
-      setStatus("Ready");
-      setApproval(undefined);
+      showFreshSession(fresh, "Ready");
       if (loadedPlan && planPath) {
         add("info", `◈ Started planning session with ${basename(planPath)} (${loadedPlan.split("\n").length} lines). Plan artifacts are writable; use /verify or /execute.`);
         add("codex", `Plan: ${artifactPath(store, fresh, fresh.planArtifact!)}. Full content is available to /verify and /execute.`);
@@ -147,24 +121,7 @@ export function createPlanningActions({
       await store.saveChanges(fresh);
       stopSideQuestion();
       onClear();
-      sessionLines.current.set(fresh.id, []);
-      setSession(fresh);
-      setOpenSessions(old => {
-        const map = new Map<string, Session>();
-        if (session) map.set(session.id, session);
-        for (const s of old) map.set(s.id, s);
-        map.set(fresh.id, fresh);
-        return [...map.values()];
-      });
-      setShowConversationsTab(true);
-      setLines([]);
-      setDraft("");
-      setHistory([]);
-      setPickerFocused(false);
-      setPickerIndex(0);
-      setShowHeader(true);
-      setStatus("Starting…");
-      setApproval(undefined);
+      showFreshSession(fresh, "Starting…");
       void runTurnRef.current?.(execution.prompt, fresh, config, "execute_plan", "Executing saved plan in a fresh agent session. The plan details are hidden from this chat.");
     } catch (error) {
       activeSessionId.current = previousId;

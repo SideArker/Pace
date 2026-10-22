@@ -1,3 +1,4 @@
+import { baselineBuildPaths, benchmarkProvenance } from "../src/entrypoints/benchmark-provenance.js";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -34,8 +35,9 @@ const fixture: Record<string, string> = {
   "tests.mjs": "import assert from 'node:assert/strict'; import {csvRow} from './src/csv.js'; assert.equal(csvRow(['a','b']), 'a,b\\n'); console.log('basic fixture tests passed');\n",
 };
 const codeSha = hash(JSON.stringify(fixture));
-const sourceFiles = ["src/core/orchestrator.ts", "src/core/orchestrator-artifacts.ts", "src/core/orchestrator-clarification.ts", "src/core/orchestrator-prompts.ts", "src/core/orchestrator-routing.ts", "src/core/orchestrator-skills.ts", "src/core/vex/requests.ts", "src/core/side-answers.ts", "src/integrations/app-server-runner.ts", "src/integrations/app-server-requests.ts", "src/integrations/app-server-usage.ts", "routing-prompts.default.json"];
-await writeFile(join(out, "manifest.json"), JSON.stringify({ version: 1, suitePath, suiteSha256: hash(suiteText), fixtureSha256: codeSha, baselineCommit: baseline ? "f967efb48ef73a52d8f0273751a9864bae39f7a2" : undefined, candidateCommit: (await command("git", ["rev-parse", "HEAD"])).stdout.trim(), sourceSha256: hash((await Promise.all(sourceFiles.map(path => readFile(path, "utf8")))).join("\n")), config, priceSnapshot: PRICE_SNAPSHOT, syntheticPriorHistory: true, fullHistoricalTaskCost: "unknown: seeded prior exchanges have no paid setup usage", measuredCostScope: "All actual model attempts from the evaluated request through its result, including errors; Vex separate", reviewLimit: "Scripted checks plus unblinded human/agent review; no general quality or savings claim", startedAt: new Date().toISOString() }, null, 2));
+const candidateProvenance = await benchmarkProvenance();
+const baselineProvenance = baselineDir ? await benchmarkProvenance(resolve(baselineDir), baselineBuildPaths) : undefined;
+await writeFile(join(out, "manifest.json"), JSON.stringify({ version: 1, suitePath, suiteSha256: hash(suiteText), fixtureSha256: codeSha, baselineCommit: baselineProvenance?.commit, baselineProvenance, baselineScope: "Baseline controller and shipped prompts; candidate store, runner and Vex client are shared", candidateCommit: candidateProvenance.commit, ...candidateProvenance, config, priceSnapshot: PRICE_SNAPSHOT, syntheticPriorHistory: true, fullHistoricalTaskCost: "unknown: seeded prior exchanges have no paid setup usage", measuredCostScope: "All actual model attempts from the evaluated request through its result, including errors; Vex separate", reviewLimit: "Scripted checks plus unblinded human/agent review; no general quality or savings claim", startedAt: new Date().toISOString() }, null, 2));
 const results: Record<string, unknown>[] = [];
 for (const [index, item] of suite.cases.entries()) {
   if (argument("--case") && argument("--case") !== item.id) continue;

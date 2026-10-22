@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { newSession, PaceStore, SessionConflictError } from "../src/core/sessions.js";
 import type { SideAnswer, StageAttempt } from "../src/shared/types.js";
 import { requiredSave } from "../src/core/task-execution.js";
+import { reapplyChanges } from "../src/core/sessions-revisions.js";
 
 const roots: string[] = [];
 afterEach(async () => { vi.restoreAllMocks(); await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
@@ -17,6 +18,17 @@ async function setup() {
 }
 const attempt = (id: string): StageAttempt => ({ id, taskId: "task", generation: 1, stage: "final", role: "main", status: "completed", route: {}, startedAt: "now", observations: [] });
 const side = (id: string): SideAnswer => ({ id, attemptId: id, question: "Question", snapshotAt: "now", route: {}, result: "Answer" });
+
+it("merges JSON objects without mutating inputs or sharing untouched object branches", () => {
+  const base = { nested: { main: "before", side: "before", removed: "old" }, stable: { text: "large output" } };
+  const desired = { nested: { main: "updated", side: "before" }, stable: { text: "large output" } };
+  const latest = { nested: { main: "before", side: "updated", removed: "old" }, stable: { text: "large output" }, unseen: { text: "from disk" } };
+  const inputs = structuredClone([base, desired, latest]);
+  const result = reapplyChanges(base, desired, latest, "") as typeof latest;
+  expect(result).toEqual({ nested: { main: "updated", side: "updated" }, stable: { text: "large output" }, unseen: { text: "from disk" } });
+  result.nested.side = "caller edit"; result.stable.text = "caller edit"; result.unseen.text = "caller edit";
+  expect([base, desired, latest]).toEqual(inputs);
+});
 
 it("rejects stale whole-session snapshots without changing persisted state", async () => {
   const { store, session } = await setup();

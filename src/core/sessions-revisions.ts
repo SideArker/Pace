@@ -79,12 +79,15 @@ export function reapplyChanges(base: unknown, desired: unknown, latest: unknown,
     return [...current.values()];
   }
   if (isRecord(base) && isRecord(desired) && isRecord(latest)) {
-    const result = structuredClone(latest);
-    for (const key of new Set([...Object.keys(base), ...Object.keys(desired)])) {
+    const result = { ...latest };
+    const keys = new Set([...Object.keys(base), ...Object.keys(desired)]);
+    for (const key of keys) {
       const value = reapplyChanges(base[key], desired[key], latest[key], field ? `${field}.${key}` : key);
       if (value === undefined) delete result[key];
       else result[key] = value;
     }
+    // Recursive branches already own their copies; clone only disk-only keys.
+    for (const key of Object.keys(latest)) if (!keys.has(key)) result[key] = structuredClone(latest[key]);
     return result;
   }
   throw new SessionConflictError(field);

@@ -22,6 +22,14 @@ Benchmarks answer three different questions. Keep their results separate.
 
 The route-only runner is at `src/entrypoints/routing-benchmark.ts`. It exercises the same routing request builders and validator as Pace. `npm run benchmark:check` type-checks the TypeScript benchmark modules and Pace source.
 
+Routing, executed workflows, task-control, context-quality, thread-switch and context-models share `src/entrypoints/benchmark-provenance.ts`. Manifests record the actual checkout commit, dirty state, Node version, a sorted `sourceHashes` map and its `sourceSha256`. The conservative source set includes all of `src/`, benchmark drivers, skills, the lockfile, shipped prompts and version catalog. `benchmark/results/` and `benchmark/reports/` are excluded. Compiled drivers also hash `dist/`, so a stale build has its own identity. External suites and editable routing profiles retain their separate fingerprints; the routing manifest also records its effective prompts. Hashes identify local bytes, not remote model revisions or unavailable historical artifacts.
+
+Task-control reads the baseline revision from `--baseline-dir` and fingerprints its actual `dist/` and assets. The baseline arm uses that controller and its shipped prompts with the candidate store, runner and Vex client; `baselineScope` records this boundary. Rebuild the baseline checkout before a new comparison if it is intended to represent its source revision.
+
+The strict routing prompt parser validates the current active schema. The file loader fills absent active sections, fields and choices from the shipped defaults in memory, preserving custom settings and the original file bytes. Explicit invalid values and unknown choices still report errors. Retired workflow options are discarded without mapping them to active actions; the old task-relation request, unused plan-handoff fields and historical default-file hashes have been removed.
+
+For local persistence profiling without model calls, run `node --expose-gc --import tsx benchmark/session-persistence.ts 12`. It uses disposable synthetic sessions, checks concurrent main/side writes, prints JSON metrics, and cleans up its files. See [the before/after measurement](../docs/session-persistence-2026-10-22.md).
+
 ## 1. Routing decisions
 
 ```powershell

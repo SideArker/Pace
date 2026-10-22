@@ -2,8 +2,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_ROUTING_PROMPTS, loadRoutingPrompts, routingPromptFile } from "../src/core/routing/routing-prompts.js";
-import { shapeRequest, stageRequest, taskRelationRequest, type VexRequest } from "../src/core/vex/client.js";
+import { DEFAULT_ROUTING_PROMPTS, loadRoutingPrompts, parseRoutingPrompts, routingPromptFile } from "../src/core/routing/routing-prompts.js";
+import { shapeRequest, stageRequest, type VexRequest } from "../src/core/vex/client.js";
 import { Orchestrator } from "../src/core/orchestrator.js";
 import { PaceStore, newSession } from "../src/core/sessions.js";
 import { decision } from "./routing-fixture.js";
@@ -22,7 +22,6 @@ it("creates an editable routing file and applies changes to Vex requests", async
   edited.workflow.question = "Choose my workflow";
   edited.workflow.choices.single = "Use one agent";
   edited.stage.constraints = "Choose the least costly route";
-  edited.taskRelation.question = "Continue this task?";
   edited.routingRules.workflowResolution = "Custom conversation rule";
   edited.execution.existingThreadInstruction = "Custom thread instruction";
   edited.modelCapabilities["gpt-6-sol"] = "Custom Sol description";
@@ -36,43 +35,61 @@ it("creates an editable routing file and applies changes to Vex requests", async
   expect(stage.constraints).toContain("Choose the least costly route");
   expect(stage.constraints).toContain("full remaining deliverable");
   expect(shape.constraints).toContain("Custom conversation rule");
-  expect(taskRelationRequest("work", [], {}, prompts).question).toBe("Continue this task?");
   expect(prompts.execution.existingThreadInstruction).toBe("Custom thread instruction");
   expect((stage.context.availableModels as { capability: string }[])[0]?.capability).toBe("Custom Sol description");
   expect(JSON.parse(await readFile(path, "utf8"))).toEqual(edited);
 });
 
-it("refreshes the untouched older default while preserving edited prompt files", async () => {
+it("keeps edited files unchanged and fills missing active settings in memory", async () => {
   dir = await mkdtemp(join(tmpdir(), "pace-routing-prompts-"));
-  const legacy = await readFile(new URL("./fixtures/routing-prompts-v1.json", import.meta.url), "utf8");
   const path = join(dir, routingPromptFile);
-  await writeFile(path, legacy);
-  expect(loadRoutingPrompts(dir)).toEqual(DEFAULT_ROUTING_PROMPTS);
-  expect(JSON.parse(await readFile(path, "utf8"))).toEqual(DEFAULT_ROUTING_PROMPTS);
   const edited = structuredClone(DEFAULT_ROUTING_PROMPTS);
   edited.workflow.question = "My custom routing question";
-  await writeFile(path, JSON.stringify(edited));
+  const content = JSON.stringify(edited);
+  await writeFile(path, content);
   expect(loadRoutingPrompts(dir).workflow.question).toBe("My custom routing question");
-  const legacyEdited = JSON.parse(JSON.stringify(edited));
-  delete legacyEdited.workflow.choices.plan;
-  delete legacyEdited.workflow.choices.scout_plan;
-  legacyEdited.workflow.choices.plan_execute = "Old automatic handoff";
-  legacyEdited.workflow.choices.scout_plan_execute = "Old scout handoff";
-  legacyEdited.workflow.choices.plan_verify = "Old verification handoff";
-  delete legacyEdited.taskRelation;
-  delete legacyEdited.routingRules;
-  delete legacyEdited.execution;
-  delete legacyEdited.objectives.afterPlanHandoff;
-  delete legacyEdited.handoff.planExecutionInstruction;
-  await writeFile(path, JSON.stringify(legacyEdited));
-  const migrated = loadRoutingPrompts(dir);
-  expect(migrated.workflow.choices.plan).toBe(DEFAULT_ROUTING_PROMPTS.workflow.choices.plan);
-  expect(migrated.workflow.choices.scout_plan).toBe(DEFAULT_ROUTING_PROMPTS.workflow.choices.scout_plan);
-  expect(Object.keys(migrated.workflow.choices)).toEqual(['single', 'scout', 'plan', 'scout_plan', 'clarify']);
-  expect(JSON.parse(await readFile(path, "utf8"))).toEqual(legacyEdited);
-  expect(loadRoutingPrompts(dir).taskRelation.question).toBe(DEFAULT_ROUTING_PROMPTS.taskRelation.question);
-  expect(loadRoutingPrompts(dir).execution.usageRetryInstruction).toBe(DEFAULT_ROUTING_PROMPTS.execution.usageRetryInstruction);
-  expect(loadRoutingPrompts(dir).objectives.afterPlanHandoff).toBe(DEFAULT_ROUTING_PROMPTS.objectives.afterPlanHandoff);
+  expect(await readFile(path, "utf8")).toBe(content);
+  expect(edited).not.toHaveProperty("taskRelation");
+  expect(edited.objectives).not.toHaveProperty("afterPlanHandoff");
+  expect(edited.handoff).not.toHaveProperty("planObjective");
+  expect(edited.handoff).not.toHaveProperty("planExecutionInstruction");
+  const missing = JSON.parse(content);
+  delete missing.workflow.choices.plan;
+  delete missing.control;
+  delete missing.execution.coverageInstruction;
+  missing.stage = { question: "My stage question" };
+  await writeFile(path, JSON.stringify(missing));
+  const completed = loadRoutingPrompts(dir);
+  expect(completed.workflow.choices.plan).toBe(DEFAULT_ROUTING_PROMPTS.workflow.choices.plan);
+  expect(completed.workflow.question).toBe(edited.workflow.question);
+  expect(completed.control).toEqual(DEFAULT_ROUTING_PROMPTS.control);
+  expect(completed.execution.coverageInstruction).toBe(DEFAULT_ROUTING_PROMPTS.execution.coverageInstruction);
+  expect(completed.stage).toEqual({ question: "My stage question", constraints: DEFAULT_ROUTING_PROMPTS.stage.constraints });
+  expect(await readFile(path, "utf8")).toBe(JSON.stringify(missing));
+  const retired = JSON.parse(content);
+  retired.workflow.choices.plan_execute = "Retired choice";
+  await writeFile(path, JSON.stringify(retired));
+  expect(loadRoutingPrompts(dir).workflow.choices).toEqual(edited.workflow.choices);
+  expect(() => parseRoutingPrompts(retired)).toThrow("unknown choice");
+  retired.workflow.choices.typo = "Unknown active choice";
+  await writeFile(path, JSON.stringify(retired));
+  expect(() => loadRoutingPrompts(dir!)).toThrow("unknown choice");
+});
+
+it("keeps sparse profiles isolated from the shipped defaults", async () => {
+  dir = await mkdtemp(join(tmpdir(), "pace-routing-prompts-"));
+  const path = join(dir, routingPromptFile);
+  await writeFile(path, JSON.stringify({ version: 1, stage: { question: "My question" }, modelCapabilities: { custom: "Custom model" } }));
+  const completed = loadRoutingPrompts(dir);
+  expect(completed.modelCapabilities).toEqual({ custom: "Custom model" });
+  completed.effortCapabilities.low = "Changed by caller";
+  expect(loadRoutingPrompts(dir).effortCapabilities.low).toBe(DEFAULT_ROUTING_PROMPTS.effortCapabilities.low);
+  for (const invalid of [null, { version: 2 }, { version: 1, stage: null }, { version: 1, control: { choices: null } }]) {
+    await writeFile(path, JSON.stringify(invalid));
+    expect(() => loadRoutingPrompts(dir!)).toThrow();
+  }
+  await writeFile(path, "{broken");
+  expect(() => loadRoutingPrompts(dir!)).toThrow("Cannot load");
 });
 
 it("rejects malformed routing text with the field name", async () => {
@@ -81,6 +98,38 @@ it("rejects malformed routing text with the field name", async () => {
   invalid.workflow.choices.scout = "";
   await writeFile(join(dir, routingPromptFile), JSON.stringify(invalid));
   expect(() => loadRoutingPrompts(dir!)).toThrow("workflow.choices.scout");
+});
+
+it("loads legacy task-relation prompts without overwriting user edits", async () => {
+  dir = await mkdtemp(join(tmpdir(), "pace-routing-prompts-"));
+  const legacy = JSON.parse(JSON.stringify(DEFAULT_ROUTING_PROMPTS));
+  delete legacy.control;
+  delete legacy.assessment;
+  delete legacy.side;
+  delete legacy.execution.coverageInstruction;
+  legacy.taskRelation = { question: "Old question", constraints: "Old constraints", choices: { continue: "Continue", replace: "Replace", aside: "Aside" } };
+  legacy.workflow.question = "My custom legacy question";
+  legacy.execution.savedTaskInstruction = "My saved task instruction";
+  delete legacy.workflow.choices.plan;
+  delete legacy.workflow.choices.scout_plan;
+  legacy.workflow.choices.plan_execute = "Old plan workflow";
+  legacy.workflow.choices.scout_plan_execute = "Old scout workflow";
+  legacy.workflow.choices.plan_verify = "Old verification workflow";
+  const path = join(dir, routingPromptFile);
+  const content = JSON.stringify(legacy);
+  await writeFile(path, content);
+  const prompts = loadRoutingPrompts(dir);
+  expect(prompts.workflow.question).toBe("My custom legacy question");
+  expect(prompts.execution.savedTaskInstruction).toBe("My saved task instruction");
+  expect(prompts.execution.coverageInstruction).toBe(DEFAULT_ROUTING_PROMPTS.execution.coverageInstruction);
+  expect(prompts.control).toEqual(DEFAULT_ROUTING_PROMPTS.control);
+  expect(prompts.assessment).toEqual(DEFAULT_ROUTING_PROMPTS.assessment);
+  expect(prompts.side).toEqual(DEFAULT_ROUTING_PROMPTS.side);
+  expect(prompts.workflow.choices).toEqual(DEFAULT_ROUTING_PROMPTS.workflow.choices);
+  expect(await readFile(path, "utf8")).toBe(content);
+  legacy.stage.question = "";
+  await writeFile(path, JSON.stringify(legacy));
+  expect(() => loadRoutingPrompts(dir!)).toThrow("stage.question");
 });
 
 it("passes customized routing and handoff instructions through a turn", async () => {

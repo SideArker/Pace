@@ -1,6 +1,6 @@
 # TODO: benchmarki routingu, kompletności i kontekstu Pace
 
-Docelowe miejsce w repo: `benchmark/TODO.md`. Przygotowano 2026-10-21.
+Przygotowano 2026-10-21. Status zaktualizowano 2026-10-22.
 
 Cel: zbierać rzeczywiste sytuacje z pracy w Pace i na ich podstawie sprawdzać, czy routing prowadzi do poprawnego ukończenia całego zadania przy uzasadnionym koszcie. Krótka odpowiedź nie oznacza prostego rozumowania, a długi raport nie dowodzi kompletności.
 
@@ -10,7 +10,9 @@ To lista przyszłych pomiarów i szablon obserwacji. Nie uruchamia benchmarków 
 
 Zakończony benchmark kontekstu i modeli z 20–21 października obejmuje 16 scenariuszy pilota i 24 potwierdzenia. W badanym zakresie świeży wątek z checkpointem Sola był droższy od kontynuacji; side Luna przyniosła niewielką obserwowaną oszczędność. Nie jest to dowód opłacalności automatycznej rotacji, równoległości ani poprawności decyzji Vexa — modele i efforty były ustalone z góry.
 
-Raport jest obecnie w osobnym worktree: `/home/SideArker/Projects/Pace-context-benchmark/benchmark/reports/context-models-2026-10-21.md`. Nie zakładać, że został przeniesiony do głównego repo. Manifest i surowe wyniki znajdują się w tamtejszym `benchmark/results/context-models-2026-10-20/` i są ignorowane przez Git. Przed kolejnym badaniem zapewnić dostęp do tych materiałów i zapisać ich lokalizację.
+Raport jest już śledzony w głównym repo: [context-models-2026-10-21.md](benchmark/reports/context-models-2026-10-21.md). Historyczne manifesty i surowe wyniki pozostają lokalnymi, ignorowanymi artefaktami; ich dawna lokalizacja to `/home/SideArker/Projects/Pace-context-benchmark/benchmark/results/context-models-2026-10-20/`. Dostępność źródeł trzeba sprawdzić przed ponownym rozliczeniem lub odtworzeniem badania.
+
+[Ograniczona ewaluacja trwałego workflowu z 22.10](docs/task-workflow-evaluation-2026-10-22.md) obejmuje siedem wykonanych przypadków PL/EN i osobny probe decyzji na 14 parafrazach. Controller produkcyjny jest zaimplementowany. Wyniki nie zamykają poniższych badań jakości, długich historii ani niezależnej oceny.
 
 Badano około 16–52 tys. tokenów kontekstu, głównie wydłużonego syntetyczną historią, i dwie dalsze tury. Autorzy checkpointu, chwilowe Sol → Luna → Sol, replay i natywna kompakcja nie mają takiego samego zakresu potwierdzenia jak wybrane porównania A/B. Pełny koszt kompakcji pozostaje nieznany.
 
@@ -23,8 +25,9 @@ Badano około 16–52 tys. tokenów kontekstu, głównie wydłużonego syntetycz
 
 ## Warunki wspólne przed uruchomieniem
 
-- [ ] Sprawdzić i naprawić w osobnym zadaniu przypisywanie usage do aktywnej tury w produkcyjnym `src/integrations/app-server-runner.ts`. Raport wykazał opóźnione usage poprzedniej tury i podwójne naliczanie; korekta benchmarku nie oznacza naprawy produktu.
-- [ ] Potwierdzić pomiar testami opóźnionych zdarzeń, duplikatów, wielu żądań w jednej turze i zmiany modelu. Błędy oraz anulowania zachowują dostępne usage. Nieznany pomiar nie jest zerem.
+- [x] Naprawa produkcyjnego przypisywania usage jest wdrożona: `app-server-runner.ts` koreluje thread/turn, a `app-server-usage.ts` deduplikuje odczyty requestów. Dowody: `tests/usage-attribution.test.ts` i `tests/compaction-accounting.test.ts`.
+- [x] Regresje automatyczne obejmują opóźnione zdarzenia, duplikaty, wiele requestów, zmianę modelu, błędy, anulowanie i niepełny pomiar (`tests/usage-attribution.test.ts`). Nieznany pełny pomiar zachowuje dostępny subtotal.
+- [ ] Potwierdzić naprawę przez replay historycznych surowych logów, gdy będą dostępne; przechodzące fixture’y nie zastępują tego sprawdzenia.
 - [ ] Dla każdego porównania zamrozić commit, konfigurację modeli/effortów, prompty routingu, wersje narzędzi, cennik, zakres uprawnień, dane i rubrykę oceny.
 - [ ] Przed wykonaniem zapisać warianty, liczbę powtórzeń, kolejność, budżet oraz kryteria sukcesu i zatrzymania. Nie dobierać korzystnych wariantów po obejrzeniu holdoutu.
 - [ ] Oddzielić przypadki do strojenia od nowych zadań do potwierdzenia. Po wykorzystaniu holdoutu do strojenia przygotować kolejny.
@@ -54,7 +57,7 @@ Interpretacja intencji, trudności i potrzeby zmiany trasy należy do Vexa. Kate
 - [ ] Przygotować wieloturowe przypadki: kontynuacja trudnego tematu, poprawny krótki follow-up, korekta błędu, ponowiona niespełniona prośba, nowe wymaganie, pytanie boczne i zmiana celu.
 - [ ] Włączyć przypadek inspirowany `5f5be5a1`: pierwsza tura Luna Medium, dziewięć kolejnych Luna Low. Odtworzyć potrzebne fakty i oczekiwany postęp; nie wymagać z góry jednej nazwy modelu jako odpowiedzi.
 - [ ] Sprawdzić poprawkę planu po zakończonym scoucie oraz jawne przejście do wykonania przez `/execute`.
-- [ ] Porównać obecną politykę z trwałym workflowem i decyzją sterującą Vexa, gdy implementacja kandydata będzie dostępna. Oznaczyć symulacje, jeśli produkcja nie obsługuje jeszcze danego zachowania.
+- [ ] Rozszerzyć porównanie z zaimplementowanym trwałym workflowem i decyzją sterującą Vexa poza ograniczoną ewaluację z 22.10. Oddzielić rzeczywiste wykonania od probe z symulowanym Codexem.
 - [ ] Sprawdzić rzeczywiste odpowiedzi i postęp, zmiany etapów, zbędne ponowienia scouta oraz trafność utrzymania lub zmiany trasy. Nowe wymaganie nie jest automatycznie błędem poprzedniej odpowiedzi.
 - [ ] Z góry ustalić protokół kolejnych wiadomości, korekt i zakończenia próby, aby warianty miały porównywalną możliwość dojścia do celu. Nie dopasowywać pomocy użytkownika do wybranego modelu.
 - [ ] Potwierdzić na nowych przypadkach i parafrazach w różnych językach.
@@ -67,7 +70,7 @@ Interpretacja intencji, trudności i potrzeby zmiany trasy należy do Vexa. Kate
 
 - [ ] Przygotować kontrolowane repo z istotnymi zależnościami w różnych miejscach i niezależną mapą wymaganego pokrycia. Oceniać znaczenie dowodów, nie liczbę przeczytanych plików.
 - [ ] Dodać zadanie wymagające wykonania po scoucie, poprawny pełny wynik, wynik częściowy oraz przypadek, w którym brakuje danych i właściwe jest doprecyzowanie.
-- [ ] Porównać obecną ścieżkę z proponowaną oceną domknięcia i ewentualną notatką stanu, gdy będą dostępne.
+- [ ] Porównać obecną ścieżkę z zaimplementowanym assessmentem Vexa; ewentualną nową notatkę stanu traktować jako osobny wariant.
 - [ ] Zmierzyć przedwczesne uznanie celu za ukończony oraz niepotrzebne przedłużanie poprawnie zakończonej pracy. Raport scouta i `turn/completed` nie są dowodem ukończenia celu.
 - [ ] Sprawdzić, czy wykrycie braku prowadzi do jego uzupełnienia lub jasnego oznaczenia ograniczenia. Wliczyć koszt i czas dodatkowej oceny Vexa oraz notatek modelu.
 

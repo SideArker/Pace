@@ -1,3 +1,4 @@
+import { benchmarkProvenance } from "../src/entrypoints/benchmark-provenance.js";
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { appendFile, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
@@ -232,13 +233,10 @@ async function main() {
   if (!cases.length) throw new Error("No matching case");
   await mkdir(dirname(opts.out), { recursive: true });
   await mkdir(opts.out, { recursive: false });
-  const sourceFiles = [fileURLToPath(import.meta.url), resolve("src/integrations/app-server-runner.ts"), resolve("src/integrations/app-server-requests.ts"), resolve("src/integrations/app-server-usage.ts"), resolve("src/core/checkpoint.ts")];
-  const source = Buffer.concat(await Promise.all(sourceFiles.map(file => readFile(file))));
-  const commit = await command("git", ["rev-parse", "HEAD"], process.cwd());
+  const provenance = await benchmarkProvenance();
   await writeFile(join(opts.out, "manifest.json"), JSON.stringify({ suite: opts.suite, route: opts.route,
     suiteSha256: createHash("sha256").update(suiteText).digest("hex"),
-    sourceSha256: createHash("sha256").update(source).digest("hex"),
-    paceCommit: commit.passed ? commit.output.trim() : undefined,
+    ...provenance,
     repeat: opts.repeat, turnTimeoutMinutes: opts.turnTimeoutMinutes, priceSnapshot: PRICE_SNAPSHOT, runId: randomUUID() }, null, 2) + "\n");
   const runs: Run[] = [];
   for (const task of cases) for (let repetition = 1; repetition <= opts.repeat; repetition++) {

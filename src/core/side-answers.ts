@@ -4,8 +4,8 @@ import type { Progress } from "../integrations/codex-types.js";
 import type { Orchestrator, TurnOutcome, RoutingRecord } from "./orchestrator.js";
 import { loadRoutingPrompts } from "./routing/routing-prompts.js";
 import { stageRequest } from "./vex/requests.js";
-import { chosenRoute, validateDecision } from "./routing/router.js";
-import { awaitRouting } from "./orchestrator-helpers.js";
+import { chosenRoute } from "./routing/router.js";
+import { chooseDecision, decisionAudit } from "./vex/decisions.js";
 import { durableRunner, requiredSave, TransitionSaveError } from "./task-execution.js";
 import { costForUsage } from "./routing/pricing.js";
 
@@ -21,24 +21,23 @@ export async function runAside(orchestrator: Orchestrator, question: string, sou
   const request = stageRequest(question, session.turns, enabled, prompts.side.objective, undefined, enabled, prompts, { activeTask: session.activeTask, previousRoute: session.route, hasCodexThread: !!session.threadId });
   const started = performance.now();
   const routing: RoutingRecord[] = [];
-  let failure: unknown;
-  let route: ReturnType<typeof chosenRoute> | undefined;
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      const decision = validateDecision(await awaitRouting(orchestrator.vex.choose(request), signal), request.options);
-      route = chosenRoute(decision.choice, enabled);
+  const selected = await chooseDecision({
+    vex: orchestrator.vex, request, signal,
+    accept: async (decision, attempt) => {
+      const route = chosenRoute(decision.choice, enabled);
       routing.push({ objective: prompts.side.objective, ...decision, attempts: attempt });
-      session.controlDecisions = [...(session.controlDecisions ?? []), { id: randomUUID(), taskId: session.activeTask?.id, role: "aside", stage: "aside", objective: prompts.side.objective, choice: decision.choice, confidence: decision.confidence, probabilities: decision.probabilities, durationMs: Math.round(performance.now() - started), at: snapshotAt, source: "vex", contextAction: "continue", requests: attempt }];
+      session.controlDecisions = [...(session.controlDecisions ?? []), { ...decisionAudit(started, attempt, decision), taskId: session.activeTask?.id, role: "aside", stage: "aside", objective: prompts.side.objective, at: snapshotAt }];
       await requiredSave(orchestrator.store, session, activate);
-      break;
-    } catch (error) { if (error instanceof TransitionSaveError || signal?.aborted) throw error; failure = error; }
-  }
-  if (!route) {
-    session.controlDecisions = [...(session.controlDecisions ?? []), { id: randomUUID(), taskId: session.activeTask?.id, role: "aside", stage: "aside", objective: prompts.side.objective, choice: "unavailable", confidence: 0, probabilities: {}, durationMs: Math.round(performance.now() - started), at: snapshotAt, source: "vex", contextAction: "continue", requests: 2, failed: true, error: String(failure) }];
+      return route;
+    },
+  });
+  if (!selected.ok) {
+    session.controlDecisions = [...(session.controlDecisions ?? []), { ...decisionAudit(started, 2, undefined, selected.failure), taskId: session.activeTask?.id, role: "aside", stage: "aside", objective: prompts.side.objective, at: snapshotAt }];
     await requiredSave(orchestrator.store, session, activate);
     await requiredSave(orchestrator.store, source, activate);
-    throw new Error(`Vex could not choose a side route after two attempts: ${String(failure)}`);
+    throw new Error(`Vex could not choose a side route after two attempts: ${String(selected.failure)}`);
   }
+  const route = selected.value;
   const id = randomUUID();
   let asideAttemptId: string | undefined;
   const snapshot = {

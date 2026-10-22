@@ -52,6 +52,7 @@ function attachBaseline(session: Session, baseline: Session): void {
   Object.defineProperty(session, snapshotBaseline, {
     configurable: true,
     enumerable: true,
+    writable: true,
     value: baseline,
   });
 }
@@ -447,11 +448,13 @@ export class PaceStore {
       if (!baseline) throw new SessionConflictError("unknown snapshot baseline");
       // Compare the JSON values that will actually be persisted. Optional
       // undefined properties inside arrays are not edits to saved records.
-      const base = structuredClone(baseline), desired = JSON.parse(JSON.stringify(captured)) as Session;
+      const desired = JSON.parse(JSON.stringify(captured)) as Session;
       // Metadata belongs to the store, not to a user change.
-      desired.revision = base.revision;
-      desired.updatedAt = base.updatedAt;
-      const merged = reapplyChanges(base, desired, latest, "") as Session;
+      desired.revision = baseline.revision;
+      desired.updatedAt = baseline.updatedAt;
+      // reapplyChanges treats its inputs as read-only; the tracked baseline is
+      // already isolated from the caller and need not be copied a second time.
+      const merged = reapplyChanges(baseline, desired, latest, "") as Session;
       const saved = await this.write(merged, latest.revision ?? 0, activate);
       this.refreshCaller(session, captured, saved);
     });

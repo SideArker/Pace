@@ -50,15 +50,6 @@ function compactState(state: RoutingState): RoutingState {
     } : undefined,
   };
 }
-export function taskRelationRequest(prompt: string, turns: TurnSummary[], state: RoutingState, prompts = DEFAULT_ROUTING_PROMPTS): VexRequest {
-  return {
-    question: prompts.taskRelation.question,
-    context: { latestRequest: excerpt(prompt, 12000), recentConversation: recentConversation(turns), conversationState: compactState(state) },
-    options: Object.entries(prompts.taskRelation.choices).map(([id, description]) => ({ id, description })),
-    constraints: prompts.taskRelation.constraints,
-    decisionType: "routing",
-  };
-}
 export class VexDiagnosticError extends Error {
   constructor(readonly stage: "discovery" | "startup" | "connection" | "tool validation", cause: unknown) {
     super(`${stage}: ${String(cause)}`, { cause });
@@ -95,9 +86,6 @@ function taskContext(
     },
   };
 }
-export const shapeChoices: RoutingChoice[] = Object.entries(
-  DEFAULT_ROUTING_PROMPTS.workflow.choices,
-).map(([id, description]) => ({ id, description }));
 export function shapeRequest(
   prompt: string,
   turns: TurnSummary[],

@@ -63,7 +63,6 @@ export function createExecutionActions({ state, transcript, queue, interactions,
     if (!session || !config) return;
     const target = session;
     const sessionId = target.id;
-    const threadId = session.threadId;
     const controller = new AbortController();
     jobs.current.set(sessionId, { session: target, controller, prompt: "/compact" });
     setRunningIds([...jobs.current.keys()]);

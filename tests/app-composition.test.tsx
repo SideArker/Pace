@@ -11,6 +11,7 @@ import * as models from "../src/integrations/models.js";
 import * as usage from "../src/integrations/usage.js";
 import * as npmVersion from "../src/core/npm-version.js";
 import * as skills from "../src/core/system/skills.js";
+import { Orchestrator } from "../src/core/orchestrator.js";
 
 class Terminal extends Writable {
   isTTY = true;
@@ -115,3 +116,51 @@ it("starts a fresh conversation after planning through the composed session acti
   await ui.submit("/tasks");
   await vi.waitFor(() => expect(ui.stdout.writes.join("")).toContain("Codex has not published a plan"));
 });
+
+for (const command of ["/new", "/plan", "/execute"]) {
+  for (const fail of [false, true]) it(`${command} preserves fresh-session activation and rollback (save failure: ${fail})`, async () => {
+    const ui = await mount();
+    ui.stdin.write("\x1bp");
+    await ui.instance.waitUntilRenderFlush();
+    await vi.waitFor(() => expect(ui.save).toHaveBeenCalledWith(expect.objectContaining({ kind: "planning" })));
+    const source = ui.save.mock.calls.find(([session]) => session.kind === "planning")![0];
+    source.title = "Original plan";
+    source.plan = "# Saved plan\nImplement all requirements.";
+    source.turns.push({ prompt: "Plan request", result: "Saved plan", at: "now" });
+    const turn = vi.spyOn(Orchestrator.prototype, "turn").mockImplementation(async (_prompt, session) => ({
+      session, result: "Execution finished", note: "Test route", route: session.route,
+      durationMs: 1, artifacts: [], stages: [], routing: [],
+    }));
+    let freshWrites = 0;
+    ui.save.mockImplementation(async target => {
+      if (target.id === source.id) return;
+      freshWrites++;
+      // /execute first persists the prepared execution, then activates it.
+      if (fail && (command !== "/execute" || freshWrites > 1)) throw new Error("disk full");
+    });
+    await ui.submit(command);
+    if (command !== "/new") {
+      // Commands with optional arguments first accept completion's trailing space.
+      ui.stdin.write("\r");
+      await ui.instance.waitUntilRenderFlush();
+    }
+    if (fail) {
+      await vi.waitFor(() => expect(ui.stdout.writes.join("")).toContain("disk full"));
+      expect(ui.onClear).not.toHaveBeenCalled();
+      expect(turn).not.toHaveBeenCalled();
+      await ui.submit("/tasks");
+      await vi.waitFor(() => expect(ui.stdout.writes.join("")).toContain("Codex has not published a plan"));
+    } else {
+      await vi.waitFor(() => expect(ui.onClear).toHaveBeenCalledOnce());
+      const fresh = ui.save.mock.calls.find(([session]) => session.id !== source.id)![0];
+      expect(fresh.turns).toEqual([]);
+      expect(fresh.kind).toBe(command === "/new" ? undefined : command === "/plan" ? "planning" : "normal");
+      if (command === "/execute") {
+        await vi.waitFor(() => expect(turn).toHaveBeenCalledOnce());
+        expect(turn.mock.calls[0]?.[0]).toContain(source.plan);
+        expect(turn.mock.calls[0]?.[1].id).toBe(fresh.id);
+        expect(turn.mock.calls[0]?.[6]).toBe("execute_plan");
+      } else expect(turn).not.toHaveBeenCalled();
+    }
+  });
+}

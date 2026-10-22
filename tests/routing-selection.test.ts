@@ -77,7 +77,8 @@ for (const [role, stage] of [["main", "final"], ["scout", "scout"], ["verifier",
       });
       const caller = structuredClone(session);
       await expect(saveRoutingSelection(store, session, scout)).rejects.toThrow("Wait for the current turn");
-      expect(session).toEqual(caller);
+      // The store's enumerable symbol follows spread copies but is not session data.
+      expect(structuredClone(session)).toEqual(caller);
       expect(await store.load(session.projectPath, session.id)).toEqual(running);
       await store.update(session, latest => { latest.attempts![0]!.status = "completed"; });
       await expect(saveRoutingSelection(store, session, scout)).resolves.toMatchObject({ manualWorkflow: scout });

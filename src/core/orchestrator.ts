@@ -449,7 +449,6 @@ export class Orchestrator {
             systemMessage(`Vex routed to ${route.model ?? "Codex default"} at ${route.effort ?? "default"} reasoning`);
           }
         }
-        if (preserveRoute) note = "Vex retained the task stage and lead route";
       if (auto && !preserveRoute) note = usedThreadForClarification ? "Vex clarification delegated to existing Codex thread" : `Vex chose ${shape} workflow`;
       }
       signal?.throwIfAborted();

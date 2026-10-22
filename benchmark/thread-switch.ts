@@ -1,3 +1,4 @@
+import { benchmarkProvenance } from "../src/entrypoints/benchmark-provenance.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Usage } from "@openai/codex-sdk";
@@ -349,7 +350,9 @@ async function main() {
   const runner = new AppServerRunner();
   const trials: Trial[] = [];
   const createdAt = new Date().toISOString();
+  const provenance = await benchmarkProvenance();
   const result = () => ({
+    ...provenance,
     benchmark: "model-switch-threading",
     createdAt,
     options,

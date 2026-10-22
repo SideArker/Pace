@@ -2,6 +2,8 @@
 
 Wdrożono wyłącznie podział kodu z punktu 1. Rekomendacje z punktów 2–3 pozostają propozycjami.
 
+Aktualizacja po dalszym przeglądzie: wdrożono wspólne retry i składanie audytu Vexa, wspólny reset UI nowej rozmowy, pełniejsze fingerprinty benchmarków z rzeczywistym provenance baseline oraz aktualizację `benchmark-TODO.md`. Zgodnie z decyzją użytkownika usunięto nieaktywne prompty, stary request i historyczne hashe migracji. Loader uzupełnia brakujące aktywne ustawienia defaults w pamięci, zachowując edycje użytkownika i plik na dysku. Ograniczono dwie zbędne kopie w persistence po [pomiarze przed i po zmianie](session-persistence-2026-10-22.md). Poniższy tekst zachowuje ustalenia pierwotnego przeglądu; propozycje zmian semantycznych z punktu 3 pozostają poza tym wdrożeniem.
+
 ## 1. Wdrożony podział
 
 | Plik | Linie HEAD → obecnie | Wydzielone odpowiedzialności |

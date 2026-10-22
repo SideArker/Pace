@@ -139,6 +139,27 @@ export function useSessionActions({ state, transcript, queue, conversations, set
     finally { historyBusy.current = false; setHistoryChanging(false); }
   };
 
+  const showFreshSession = (fresh: Session, status: string) => {
+    sessionLines.current.set(fresh.id, []);
+    setSession(fresh);
+    setOpenSessions(old => {
+      const map = new Map<string, Session>();
+      if (session) map.set(session.id, session);
+      for (const s of old) map.set(s.id, s);
+      map.set(fresh.id, fresh);
+      return [...map.values()];
+    });
+    setShowConversationsTab(true);
+    setLines([]);
+    setDraft("");
+    setHistory([]);
+    setPickerFocused(false);
+    setPickerIndex(0);
+    setShowHeader(true);
+    setStatus(status);
+    setApproval(undefined);
+  };
+
   const startNewConversation = async () => {
     if (!session || !config) return;
     const fresh = newSession(project, session.routingMode, undefined, config.autoLaunchSkills);
@@ -159,24 +180,7 @@ export function useSessionActions({ state, transcript, queue, conversations, set
       stopSideQuestion();
       onClear();
       activeSessionId.current = fresh.id;
-      sessionLines.current.set(fresh.id, []);
-      setSession(fresh);
-      setOpenSessions(old => {
-        const map = new Map<string, Session>();
-        if (session) map.set(session.id, session);
-        for (const s of old) map.set(s.id, s);
-        map.set(fresh.id, fresh);
-        return [...map.values()];
-      });
-      setShowConversationsTab(true);
-      setLines([]);
-      setDraft("");
-      setHistory([]);
-      setPickerFocused(false);
-      setPickerIndex(0);
-      setShowHeader(true);
-      setStatus("Ready");
-      setApproval(undefined);
+      showFreshSession(fresh, "Ready");
     } catch (error) {
       activeSessionId.current = previousId;
       if (previousId) setLines(sessionLines.current.get(previousId) ?? []);
@@ -186,5 +190,5 @@ export function useSessionActions({ state, transcript, queue, conversations, set
     }
   };
 
-  return { stopSideQuestion, activateSession, cancelRetry, interrupt, changeHistory, startNewConversation };
+  return { stopSideQuestion, showFreshSession, activateSession, cancelRetry, interrupt, changeHistory, startNewConversation };
 }

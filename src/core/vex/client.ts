@@ -9,16 +9,8 @@ import {
 } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { VexDiagnosticError, type VexRequest } from "./requests.js";
-export { controlRequest, assessmentRequest, shapeChoices, shapeRequest, stageRequest, taskRelationRequest, type RoutingState, type VexRequest } from "./requests.js";
+export { controlRequest, assessmentRequest, shapeRequest, stageRequest, type RoutingState, type VexRequest } from "./requests.js";
 export { VexDiagnosticError } from "./requests.js";
-import type { ModelOption, TurnSummary } from "../../shared/types.js";
-import { PRICE_SNAPSHOT, modelRates } from "../routing/pricing.js";
-import { routeChoices, type RoutingChoice } from "../routing/router.js";
-import {
-  DEFAULT_ROUTING_PROMPTS,
-  type RoutingPrompts,
-} from "../routing/routing-prompts.js";
-
 const require = createRequire(import.meta.url);
 export function vexServerPath(): string | undefined {
   if (process.env.VEX_SERVER_PATH && existsSync(process.env.VEX_SERVER_PATH)) {

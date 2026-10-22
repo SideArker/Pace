@@ -1,6 +1,7 @@
+import { benchmarkProvenance } from "./benchmark-provenance.js";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile, appendFile, stat } from "node:fs/promises";
-import { resolve, join } from "node:path";
+import { join } from "node:path";
 import { newSession, PaceStore } from "../core/sessions.js";
 import { Orchestrator } from "../core/orchestrator.js";
 import { loadRoutingPrompts } from "../core/routing/routing-prompts.js";
@@ -32,8 +33,8 @@ export async function main() {
   const runs: RoutingRun[] = [];
   try {
     await vex.verify();
-    const sources = await Promise.all(["src/core/orchestrator.ts", "src/core/vex/requests.ts", "src/core/routing/router.ts", "src/core/side-answers.ts"].map(path => readFile(resolve(path))));
-    await writeFile(join(options.out, "manifest.json"), JSON.stringify({ suiteSha256: createHash("sha256").update(suiteText).digest("hex"), routerSourceSha256: createHash("sha256").update(Buffer.concat(sources)).digest("hex"), routingPromptsSha256: createHash("sha256").update(JSON.stringify(prompts)).digest("hex"), suite: options.suite, cases: cases.length, repeats: options.repeat, shapeOnly: options.shapeOnly, models, simulatedCodexResults: true, productionController: "Orchestrator.turn", priceSnapshot: PRICE_SNAPSHOT, startedAt: new Date().toISOString() }, null, 2) + "\n");
+    const provenance = await benchmarkProvenance();
+    await writeFile(join(options.out, "manifest.json"), JSON.stringify({ suiteSha256: createHash("sha256").update(suiteText).digest("hex"), ...provenance, routingPromptsSha256: createHash("sha256").update(JSON.stringify(prompts)).digest("hex"), routingPrompts: prompts, suite: options.suite, cases: cases.length, repeats: options.repeat, shapeOnly: options.shapeOnly, models, simulatedCodexResults: true, productionController: "Orchestrator.turn", priceSnapshot: PRICE_SNAPSHOT, startedAt: new Date().toISOString() }, null, 2) + "\n");
     for (let repetition = 1; repetition <= options.repeat; repetition++) {
       for (const item of repetition % 2 ? cases : [...cases].reverse()) {
         const started = performance.now();

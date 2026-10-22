@@ -45,6 +45,7 @@ export function useAppController(onClear: () => void) {
     ...state, store, project, onClear,
     promptQueue: queue.promptQueue,
     stopSideQuestion: sessions.stopSideQuestion,
+    showFreshSession: sessions.showFreshSession,
     rememberSession: conversations.rememberSession,
     add: transcript.add,
   });

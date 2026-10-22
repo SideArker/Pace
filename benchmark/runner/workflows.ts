@@ -1,3 +1,4 @@
+import { benchmarkProvenance } from "../../src/entrypoints/benchmark-provenance.js";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -40,19 +41,14 @@ async function main() {
     if (!commits.has(ref))
       commits.set(ref, await git(repository, `show -s --format=%H ${ref}`));
   }
-  const sourcePaths = [
-    "benchmark/runner/workflows.ts", "benchmark/runner/execute.ts", "benchmark/runner/summary.ts",
-    "src/core/orchestrator.ts",
-    "src/core/orchestrator-artifacts.ts", "src/core/orchestrator-clarification.ts", "src/core/orchestrator-prompts.ts", "src/core/orchestrator-routing.ts", "src/core/orchestrator-skills.ts", "src/core/vex/client.ts", "src/integrations/codex.ts",
-  ];
-  const sourceContents = await Promise.all(sourcePaths.map(path => readFile(resolve(path))));
+  const provenance = await benchmarkProvenance();
   await writeFile(
     join(options.out, "manifest.json"),
     JSON.stringify(
       {
         suite,
         suiteSha256: createHash("sha256").update(suiteText).digest("hex"),
-        runnerSourceSha256: createHash("sha256").update(Buffer.concat(sourceContents)).digest("hex"),
+        ...provenance,
         routingPromptsSha256: createHash("sha256").update(JSON.stringify(routingPrompts)).digest("hex"),
         repository,
         config,
