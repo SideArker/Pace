@@ -15,7 +15,13 @@ import { readUsageLimits, type UsageLimits } from "../integrations/usage.js";
 import { isUsageLimitError, transientRetryAt, transientRetryReason, usageRetryAt } from "../core/usage-retry.js";
 import type { RunningProcess } from "./RunningProcesses.js";
 
-type TurnJob = { session: Session; controller: AbortController; prompt: string; automaticRetry?: boolean };
+type TurnJob = {
+  session: Session; controller: AbortController; prompt: string; automaticRetry?: boolean;
+  operationId?: string;
+  steer?: (prompt: string) => Promise<void>;
+  pendingSteer?: Promise<void>;
+  steeredPrompts?: string[];
+};
 type PendingApproval = Extract<Progress, { kind: "approval" }> & { owner?: AbortController };
 type PendingQuestion = Extract<Progress, { kind: "question" }> & { owner?: AbortController };
 type AddLine = (sessionId: string, role: Line["role"], text: string) => void;
@@ -93,7 +99,7 @@ export function createTurnRunner({
     resetThoughtUsage(sessionId);
     onTurnStart(sessionId);
     rememberSession(turnSession);
-    jobs.current.set(sessionId, { session: turnSession, controller, prompt: text, automaticRetry });
+    jobs.current.set(sessionId, { session: turnSession, controller, prompt: text, automaticRetry, operationId: queuedOperation?.id });
     setRunningIds([...jobs.current.keys()]);
     addFor(sessionId, displayPrompt ? "system" : "you", displayPrompt ?? text);
     setStatusFor(sessionId, "Starting…");
@@ -128,6 +134,10 @@ export function createTurnRunner({
     try {
       const onProgress = Object.assign(
         (progress: Progress) => {
+          if (progress.kind === "steering" && progress.role !== "status") {
+            const job = jobs.current.get(sessionId);
+            if (job?.controller === controller) job.steer = progress.steer;
+          }
           if (progress.kind === "status") {
             setStatusFor(sessionId, progress.text);
             if (activeSessionId.current === sessionId) setSession({ ...turnSession });
@@ -280,7 +290,15 @@ export function createTurnRunner({
         setStatusFor(sessionId, "Failed");
       }
     } finally {
+      const job = jobs.current.get(sessionId);
+      await job?.pendingSteer?.catch(() => {});
       const lastTurn = turnSession.turns.at(-1);
+      if (lastTurn && lastTurn !== previousTurn && job?.steeredPrompts?.length) {
+        lastTurn.steeringPrompts = [...(lastTurn.steeringPrompts ?? []), ...job.steeredPrompts];
+        await store.saveChanges(turnSession, () => activeSessionId.current === sessionId).catch(error => {
+          addFor(sessionId, "error", `Could not save steering history: ${String(error)}`);
+        });
+      }
       if (lastTurn && lastTurn !== previousTurn) {
         const activities = getTurnActivities(sessionId, turnId);
         if (activities.length) lastTurn.activities = activities;

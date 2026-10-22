@@ -18,7 +18,7 @@ export function QueuedMessages({
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="#475569" paddingX={1} width={width} marginTop={marginTop}>
       <Text color="#FBBF24" bold wrap="truncate">
-        ◈ Queued messages ({prompts.length}){showHints ? <Text color="#94A3B8" dimColor> · ↓ select · → edit · Alt+Del remove</Text> : null}
+        ◈ Queued messages ({prompts.length}){showHints ? <Text color="#94A3B8" dimColor> · ↓ select · → edit · S steer · Alt+Del remove</Text> : null}
       </Text>
       {visible.map((prompt, index) => (
         <Box key={index} gap={1}>

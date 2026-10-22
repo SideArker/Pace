@@ -6,6 +6,7 @@ export type ApprovalDecision = "accept" | "decline";
 export type UserQuestion = { id: string; header: string; question: string; options: { label: string; description: string }[]; isOther: boolean; isSecret: boolean };
 export type UserAnswers = Record<string, { answers: string[] }>;
 export type Progress = (
+  | { kind: "steering"; steer?: (prompt: string) => Promise<void> }
   | { kind: "status" | "message" | "error" | "thread" | "system"; text: string }
   | { kind: "route"; route: Route }
   | { kind: "usage"; usage: Usage }

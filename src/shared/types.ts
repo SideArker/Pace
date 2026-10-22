@@ -39,6 +39,7 @@ export type Config = {
 };
 export type TurnSummary = {
   operation?: QueuedOperation;
+  steeringPrompts?: string[];
   /** A saved file edit record, or "none" when a snapshot found no changes. */
   fileEdits?: string;
   prompt: string;

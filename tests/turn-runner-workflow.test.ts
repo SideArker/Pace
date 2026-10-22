@@ -7,6 +7,8 @@ import { newSession, PaceStore } from "../src/core/sessions.js";
 import { Orchestrator } from "../src/core/orchestrator.js";
 import { PromptQueue } from "../src/core/prompt-queue.js";
 import { operation } from "../src/core/operations.js";
+import { steerQueuedPrompt } from "../src/components/queue-steering.js";
+import { retainedConversationPrompt } from "../src/core/orchestrator-helpers.js";
 import type { CodexRunner } from "../src/integrations/codex-types.js";
 import type { Config, Session } from "../src/shared/types.js";
 import { decision } from "./routing-fixture.js";
@@ -82,4 +84,32 @@ it("UI pauses every queued operation after mandatory persistence failure", async
   vi.spyOn(env.store, "saveChanges").mockRejectedValue(new Error("disk full"));
   expect(await env.runTurn("Review", env.source, env.config, "verify_plan")).toBe(false);
   expect(env.calls).toHaveLength(0); expect(env.queue.peekOperation(env.source.id)).toEqual(queued);
+});
+
+it("UI saves accepted steering in turn history and waits before finishing the job", async () => {
+  const env = await fixture();
+  let finishRun!: () => void;
+  let acceptSteer!: () => void;
+  const finishing = new Promise<void>(resolve => { finishRun = resolve; });
+  const accepted = new Promise<void>(resolve => { acceptSteer = resolve; });
+  vi.spyOn(env.runner, "run").mockImplementationOnce(async (...args) => {
+    await args[4]({ kind: "steering", steer: () => accepted });
+    await finishing;
+    await args[4]({ kind: "steering" });
+    return { completed: true, result: "Guided result", threadId: "main-thread" };
+  });
+  const running = env.runTurn("Revise the plan", env.source, env.config);
+  await vi.waitFor(() => expect(env.jobs.current.get(env.source.id)?.steer).toBeTypeOf("function"));
+  env.queue.add(env.source.id, "Prioritize the keyboard flow");
+  const steering = steerQueuedPrompt(env.source.id, 0, env.jobs.current, env.queue);
+  finishRun();
+  await vi.waitFor(() => expect(env.source.turns.at(-1)?.result).toBe("Guided result"));
+  expect(env.jobs.current.has(env.source.id)).toBe(true);
+  acceptSteer(); await steering; expect(await running).toBe(true);
+  expect(env.queue.list(env.source.id)).toEqual([]);
+  expect(env.jobs.current.size).toBe(0);
+  const saved = (await env.store.load(env.root, env.source.id))!;
+  expect(saved.turns.at(-1)?.steeringPrompts).toEqual(["Prioritize the keyboard flow"]);
+  saved.threadId = undefined;
+  expect(retainedConversationPrompt("Continue", saved)).toContain('"steering":["Prioritize the keyboard flow"]');
 });

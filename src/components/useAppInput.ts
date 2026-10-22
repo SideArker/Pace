@@ -71,6 +71,7 @@ export function useAppInput(options: {
   setQueueMenu?: Dispatch<SetStateAction<boolean>>;
   promptQueue?: MutableRefObject<PromptQueue>;
   setQueueVersion?: Dispatch<SetStateAction<number>>;
+  onQueueSteer?: (sessionId: string, index: number) => void;
   onTogglePlan?: () => void;
   onExecutePlan?: () => void;
   onApplyVerification?: () => void;
@@ -329,6 +330,10 @@ export function useAppInput(options: {
         setMenuIndex((value) =>
           (value + (key.upArrow ? -1 : 1) + queuedPrompts.length) % queuedPrompts.length,
         );
+        return;
+      }
+      if (!key.ctrl && !key.meta && input.toLowerCase() === "s") {
+        options.onQueueSteer?.(sessionId, menuIndex);
         return;
       }
       if (key.rightArrow || key.return) {

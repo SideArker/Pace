@@ -7,6 +7,7 @@ import { appServerThreadParams, appServerTurnParams, appUsage } from "./app-serv
 import { appItemProgress, fileChangeProgress } from "./codex-events.js";
 import { contextMeasurement } from "../core/context.js";
 import { commandRisk } from "../core/command-protection.js";
+import { turnImageInput } from "./image-input.js";
 
 type RpcMessage = { id?: number | string; method?: string; params?: unknown; result?: unknown; error?: { message?: string } };
 export type CompactionResult = {
@@ -263,6 +264,8 @@ export class AppServerRunner implements CodexRunner {
     let thread: JsonRecord | undefined;
     let failure: string | undefined;
     let completed = false;
+    let acceptingSteers = false;
+    const pendingSteers = new Set<Promise<void>>();
     const questions = new Map<string, (answers: UserAnswers) => void>();
     let turnResolve!: () => void;
     const turnDone = new Promise<void>(resolve => { turnResolve = resolve; });
@@ -288,6 +291,7 @@ export class AppServerRunner implements CodexRunner {
         return;
       }
       if (message.method === "turn/completed") {
+        acceptingSteers = false;
         for (const id of questions.keys()) void onProgress({ kind: "questionResolved", id });
         questions.clear();
         const turn = isRecord(params.turn) ? params.turn : {};
@@ -303,6 +307,7 @@ export class AppServerRunner implements CodexRunner {
         if (accounting.usage) void onProgress({ kind: "usage", usage: accounting.usage });
       }
       if (message.method === "error" && params.willRetry !== true) {
+        acceptingSteers = false;
         failure = isRecord(params.error) && typeof params.error.message === "string" ? params.error.message : "Codex app-server error";
         turnResolve();
         return;
@@ -318,6 +323,7 @@ export class AppServerRunner implements CodexRunner {
       }
     };
     const server = this.createServer(handleMessage, error => {
+      acceptingSteers = false;
       failure = error.message;
       turnResolve();
     });
@@ -455,7 +461,21 @@ export class AppServerRunner implements CodexRunner {
         if (typeof responseTurn.id !== "string" || !responseTurn.id) throw new Error("Codex app-server did not return a turn id");
         activeTurnId = responseTurn.id;
         for (const pending of buffered.splice(0)) handleMessage(pending);
+        acceptingSteers = !completed && !failure;
+        if (acceptingSteers) await onProgress({ kind: "steering", steer: prompt => {
+          if (!acceptingSteers || signal?.aborted) return Promise.reject(new Error("This turn is no longer accepting steering."));
+          const expectedTurnId = activeTurnId;
+          const pending = awaitAbort(server.request("turn/steer", {
+            threadId: id, expectedTurnId, input: turnImageInput(prompt, mode, artifactDirectory),
+          })).then(response => {
+            if (!isRecord(response) || response.turnId !== expectedTurnId) throw new Error("Codex did not confirm steering for the active turn.");
+          });
+          pendingSteers.add(pending);
+          void pending.finally(() => pendingSteers.delete(pending)).catch(() => {});
+          return pending;
+        } });
         await awaitAbort(turnDone);
+        await Promise.allSettled(pendingSteers);
       } finally { signal?.removeEventListener("abort", abortTurn); }
       if (failure) throw new Error(failure);
       if (!completed) throw new Error("Codex stream ended without turn.completed");
@@ -467,6 +487,10 @@ export class AppServerRunner implements CodexRunner {
       throw new CodexRunError(error instanceof Error ? error.message : String(error), accounting.usage, accounting.context,
         { threadId: activeThreadId, turnId: activeTurnId, route: sourceRoute,
           knownUsage: accounting.knownUsage, usageComplete: !!activeTurnId && accounting.usageComplete });
-    } finally { server.kill(); }
+    } finally {
+      acceptingSteers = false;
+      try { await onProgress({ kind: "steering" }); }
+      finally { server.kill(); }
+    }
   }
 }

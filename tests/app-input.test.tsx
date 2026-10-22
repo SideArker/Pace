@@ -301,6 +301,18 @@ describe("application keyboard input", () => {
     expect(events.setDraft).not.toHaveBeenCalled();
   });
 
+  it("queue menu sends S to steering without removing or editing the selected prompt", async () => {
+    const onQueueSteer = vi.fn();
+    const { options, events, queue, session } = fixture({ queueMenu: true, menuIndex: 1, onQueueSteer });
+    queue.add(session.id, "first"); queue.add(session.id, "steer me");
+    const ui = await mount(options);
+    await ui.key("s");
+    expect(onQueueSteer).toHaveBeenCalledExactlyOnceWith(session.id, 1);
+    expect(queue.list(session.id)).toEqual(["first", "steer me"]);
+    expect(events.setDraft).not.toHaveBeenCalled();
+    expect(events.setQueueMenu).not.toHaveBeenCalled();
+  });
+
   it("queue menu closes when its last prompt is deleted", async () => {
     const { options, events, queue, session } = fixture({ queueMenu: true });
     queue.add(session.id, "last");

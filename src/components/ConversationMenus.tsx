@@ -512,7 +512,7 @@ export function QueueMenu({
       })}
       {prompts.length > 5 ? <Text color="#64748B">{start + 1}–{end} of {prompts.length}</Text> : null}
       <Box marginTop={1}>
-        <Text color="#64748B">↑/↓ select · → edit in composer · Alt+Del/Backspace/d delete · Esc close</Text>
+        <Text color="#64748B">↑/↓ select · S steer now · → edit in composer · Alt+Del/Backspace/d delete · Esc close</Text>
       </Box>
     </Box>
   );

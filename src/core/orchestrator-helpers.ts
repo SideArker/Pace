@@ -66,7 +66,7 @@ export function retainedConversationPrompt(prompt: string, session: Session): st
   if (session.threadId) return prompt;
   const turns = session.turns
     .filter((turn) => !turn.failed)
-    .map((turn) => ({ user: turn.prompt, assistant: turn.result }));
+    .map((turn) => ({ user: turn.prompt, ...(turn.steeringPrompts?.length ? { steering: turn.steeringPrompts } : {}), assistant: turn.result }));
   if (!turns.length) return prompt;
   return `Continue this conversation using only the retained exchanges below. The current user request follows the history.\n\nRetained conversation:\n${JSON.stringify(turns)}\n\nCurrent user request:\n${prompt}`;
 }

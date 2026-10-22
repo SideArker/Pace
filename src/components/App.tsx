@@ -9,6 +9,7 @@ import { FileDiffPanel } from "./FileDiffPanel.js";
 import { McpManager } from "./McpManager.js";
 import { Orchestrator, VexUnavailableError } from "../core/orchestrator.js";
 import { PromptQueue } from "../core/prompt-queue.js";
+import { steerQueuedPrompt } from "./queue-steering.js";
 import { taskAccounting, compactSession } from "../core/task-execution.js";
 import { adoptedSidePrompt, operation, preparePlanExecution, saveRoutingSelection } from "../core/operations.js";
 import { AppServerRunner } from "../integrations/codex.js";
@@ -821,6 +822,9 @@ export default function App({ onClear }: { onClear: () => void }) {
         text: turn.displayPrompt ?? turn.prompt,
         spaceBefore: newLines.length > 0,
       });
+      for (const prompt of turn.steeringPrompts ?? []) newLines.push({
+        id: id++, role: "you", text: `Steering: ${prompt}`, spaceBefore: false,
+      });
       for (const action of turn.activities ?? []) newLines.push({
         id: id++, role: "activity", text: action.text, spaceBefore: false,
         activity: { category: action.category, detail: action.detail, completed: true,
@@ -1235,6 +1239,13 @@ export default function App({ onClear }: { onClear: () => void }) {
     resumeMenu, setResumeMenu, resumeChoices, missingProjectPaths, add,
     convoMenu, setConvoMenu, session, store, setSession, renderSessionTurns,
     draft, setDraft, setHistory, queueMenu, setQueueMenu, promptQueue, setQueueVersion,
+    onQueueSteer: (sessionId, index) => {
+      void steerQueuedPrompt(sessionId, index, jobs.current, promptQueue.current).then(prompt => {
+        addFor(sessionId, "you", `Steering: ${prompt}`);
+        setQueueVersion(value => value + 1);
+        if (activeSessionId.current === sessionId) setQueueMenu(false);
+      }).catch(error => addFor(sessionId, "error", `Could not steer: ${error instanceof Error ? error.message : String(error)}`));
+    },
     onTogglePlan: () => { void startOrTogglePlanning(); },
     onExecutePlan: () => { void handleExecutePlan(); },
     onApplyVerification: applyVerification,
