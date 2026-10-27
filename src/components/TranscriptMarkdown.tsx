@@ -1,28 +1,10 @@
 import { Box, Text } from "ink";
-import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { terminalLink } from "../core/system/links.js";
 import stringWidth from "string-width";
 
 type MarkdownRun = { text: string; color?: string; bold?: boolean; italic?: boolean; underline?: boolean; dimColor?: boolean; code?: boolean; url?: string };
 
 type Table = { header: string[]; rows: string[][]; align: ("left" | "center" | "right")[] };
-
-function terminalLinkTarget(destination: string): string | undefined {
-  const href = destination.startsWith("<") && destination.endsWith(">") ? destination.slice(1, -1) : destination;
-  if (!href || /[\u0000-\u001f\u007f]/.test(href)) return undefined;
-  if (/^[a-z][a-z\d+.-]*:/i.test(href) && !/^[a-z]:[\\/]/i.test(href)) {
-    try {
-      const url = new URL(href);
-      return ["http:", "https:", "mailto:", "file:"].includes(url.protocol) ? url.href : undefined;
-    } catch { return undefined; }
-  }
-  return pathToFileURL(resolve(process.cwd(), href)).href;
-}
-
-function terminalLink(text: string, destination: string): string {
-  const target = terminalLinkTarget(destination);
-  return target ? `\u001b]8;;${target}\u001b\\${text}\u001b]8;;\u001b\\` : text;
-}
 
 function markdownRuns(source: string): MarkdownRun[] {
   const runs: MarkdownRun[] = [];
@@ -38,7 +20,7 @@ function markdownRuns(source: string): MarkdownRun[] {
     else if (token.startsWith("*") || token.startsWith("_")) runs.push({ text: token.slice(1, -1), italic: true });
     else {
       const link = /^\[([^\]]+)\]\((.+)\)$/.exec(token)!;
-      runs.push({ text: `${link[1]} (${link[2]})`, color: "#38BDF8", underline: true, url: link[2] });
+      runs.push({ text: link[1]!, color: "#38BDF8", underline: true, url: link[2] });
     }
     offset = index + token.length;
   }

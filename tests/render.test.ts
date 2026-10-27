@@ -193,7 +193,8 @@ describe("Markdown transcript", () => {
       outputsExpanded: false, detailsExpanded: false,
     }), { columns: 80 });
     expect(output).toContain("\u001b]8;;https://example.com/page\u001b\\");
-    expect(output).toContain("docs (https://example.com/page)");
+    expect(withoutAnsi(output)).toContain("Read docs.");
+    expect(withoutAnsi(output)).not.toContain("https://example.com/page");
     expect(output).toContain("\u001b]8;;\u001b\\");
   });
 
@@ -223,7 +224,8 @@ describe("Markdown transcript", () => {
     expect(output).toContain("bold");
     expect(output).toContain("italic");
     expect(output).toContain("code");
-    expect(output).toContain("docs (https://example.com)");
+    expect(withoutAnsi(output)).toContain("docs");
+    expect(withoutAnsi(output)).not.toContain("https://example.com");
     expect(output).toContain("• first item");
     expect(output).toContain("│ quoted");
     expect(output).toContain("const answer = 42;");
