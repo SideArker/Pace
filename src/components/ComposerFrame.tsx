@@ -27,9 +27,9 @@ export function ComposerFrame({ children, width, session, shellMode, approvalMod
   const hints = (
     <Box flexDirection={wide ? "row" : "column"} justifyContent={wide ? "space-between" : "flex-start"} width={wide ? undefined : "100%"} flexGrow={wide ? 1 : 0} flexShrink={1}>
       <Text color={isPlanning ? "#A855F7" : "#64748B"} wrap="truncate">
-        {isPlanning ? "/execute to run plan · /verify to review · Shift+Enter newline" : "type / for commands · Shift+Enter newline · Alt+V image"}
+        {isPlanning ? "/execute to run plan · /verify to review · Shift+Enter newline" : "/ for commands · Shift+Enter newline"}
       </Text>
-      {width >= 72 ? <Text color="#64748B" wrap="truncate">{isPlanning ? "Alt+P/Ctrl+P toggle plan" : "type ! to run commands"}</Text> : null}
+      {width >= 72 ? <Text color="#64748B" wrap="truncate">{isPlanning ? "Alt+P/Ctrl+P toggle plan" : "! for shell"}</Text> : null}
     </Box>
   );
   return (

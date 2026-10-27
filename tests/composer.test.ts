@@ -198,7 +198,7 @@ it("keeps the full context footer visible beside hints at medium widths", () => 
     const output = renderToString(React.createElement(ComposerFrame, {
       width, shellMode: false, approvalMode: "full-access", children: React.createElement(Text, null, "Input"),
     }), { columns: width });
-    expect(output).toContain("type ! to run commands");
+    expect(output).toContain("! for shell");
     expect(output).toContain("○ Context ? · auto · Full Access");
     expect(output.split("\n").every(line => line.length <= width)).toBe(true);
   }
@@ -367,7 +367,7 @@ it("frames input with command help and compact routing mode below it", () => {
   }), { columns: 80 });
   expect(output).not.toContain("Auto routing");
   expect(output).not.toContain("/help for commands");
-  expect(output).toContain("type ! to run commands");
+  expect(output).toContain("! for shell");
   expect(output).not.toContain("!cmd for bash");
   expect(output).toContain("Context ? · auto · Request Approval");
   expect(output).toContain("Context ?");
@@ -376,15 +376,15 @@ it("frames input with command help and compact routing mode below it", () => {
   expect(output).toContain("Shift");
   const lines = output.split("\n");
   expect(lines.filter(line => line.includes("───"))).toHaveLength(2);
-  expect(output.indexOf("type / for commands")).toBeLessThan(output.indexOf("type ! to run commands"));
+  expect(output.indexOf("/ for commands")).toBeLessThan(output.indexOf("! for shell"));
 });
 
 it("keeps both composer hints on one footer row in wide terminals", () => {
   const output = renderToString(React.createElement(ComposerFrame, {
     width: 140, shellMode: false, children: React.createElement(Text, null, "Input"),
   }), { columns: 140 });
-  const hintLine = output.split("\n").find(line => line.includes("type / for commands"));
-  expect(hintLine).toContain("type ! to run commands");
+  const hintLine = output.split("\n").find(line => line.includes("/ for commands"));
+  expect(hintLine).toContain("! for shell");
 });
 
 it("keeps context visible below input in narrow terminals", () => {
