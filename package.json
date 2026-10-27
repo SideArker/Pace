@@ -3,7 +3,6 @@
     "@inkjs/ui": "^2.0.0",
     "@modelcontextprotocol/sdk": "^1.30.1",
     "@openai/codex": "0.160.0",
-    "@openai/codex-sdk": "0.160.0",
     "@sidearker/vex-mcp": "^0.1.1",
     "bonjour-service": "^1.4.4",
     "ink": "^7.1.1",
@@ -35,14 +34,9 @@
     "dev": "tsx src/entrypoints/cli.ts",
     "build": "tsc",
     "start": "node dist/entrypoints/cli.js",
-    "benchmark": "tsx benchmark/runner/workflows.ts",
-    "benchmark:thread-switch": "tsx benchmark/thread-switch.ts",
-    "benchmark:context-quality": "tsx benchmark/context-quality.ts",
-    "benchmark:routing": "npm run build && node dist/entrypoints/routing-benchmark.js",
-    "benchmark:grade": "tsx benchmark/grading/grade.ts",
+    "benchmark": "tsx src/entrypoints/cli.ts benchmark",
     "benchmark:check": "tsc -p benchmark/tsconfig.json",
-    "prepare": "npm run build",
-    "benchmark:task-control": "tsx benchmark/task-control.ts"
+    "prepare": "npm run build"
   },
   "repository": {
     "type": "git",
