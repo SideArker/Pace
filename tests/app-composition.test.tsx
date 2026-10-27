@@ -13,6 +13,8 @@ import * as npmVersion from "../src/core/npm-version.js";
 import * as skills from "../src/core/system/skills.js";
 import { Orchestrator } from "../src/core/orchestrator.js";
 
+vi.mock("../src/benchmark/preferences.js",()=>({loadPreferences:async()=>undefined,savePreferences:async()=>{},baselineChoices:async()=>[]}));
+
 class Terminal extends Writable {
   isTTY = true;
   columns = 120;
@@ -164,3 +166,23 @@ for (const command of ["/new", "/plan", "/execute"]) {
     }
   });
 }
+
+it("opens Benchmark Center through the composed debug command without starting a turn", async () => {
+  const ui = await mount();
+  const turn = vi.spyOn(Orchestrator.prototype, "turn");
+  await ui.submit("/benchmark");
+  await vi.waitFor(() => expect(ui.stdout.writes.join("")).toContain("Benchmark Center"));
+  expect(turn).not.toHaveBeenCalled();
+  ui.stdin.write("\x1b");
+  await ui.instance.waitUntilRenderFlush();
+});
+it('opens benchmark results during a main job and blocks Start without cancelling the job',async()=>{
+ const ui=await mount();let complete:(value:any)=>void=()=>{};let mainSignal:AbortSignal|undefined;
+ const turn=vi.spyOn(Orchestrator.prototype,'turn').mockImplementation(async(_prompt,session,_config,_progress,signal)=>{mainSignal=signal;return await new Promise(resolve=>{complete=()=>resolve({session,result:'Finished mock main job',route:session.route,note:'Mock route',durationMs:1,stages:[],routing:[],artifacts:[]});});});
+ await ui.submit('Keep this mocked job active');await vi.waitFor(()=>expect(turn).toHaveBeenCalledOnce());
+ await ui.submit('/benchmark');await vi.waitFor(()=>expect(ui.stdout.writes.join('')).toContain('Benchmark Center'));
+ for(const ready of ['❯ Routing · Vex only','❯ quick','❯ Start']){ui.stdin.write('\r');await vi.waitFor(()=>expect(ui.stdout.writes.join('')).toContain(ready));await ui.instance.waitUntilRenderFlush();}
+ ui.stdin.write('\r');await ui.instance.waitUntilRenderFlush();
+ await vi.waitFor(()=>expect(ui.stdout.writes.join('')).toContain('Wait for main/side jobs'));
+ expect(turn).toHaveBeenCalledOnce();expect(mainSignal?.aborted).toBe(false);complete(undefined);
+});

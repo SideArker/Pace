@@ -7,6 +7,7 @@ import { Composer } from "../Composer.js";
 import { ComposerFrame } from "../ComposerFrame.js";
 import { FileDiffPanel } from "../FileDiffPanel.js";
 import { HeaderLogo, HeaderStatus } from "../Header.js";
+import { BenchmarkManager } from "../BenchmarkManager.js";
 import { McpManager } from "../McpManager.js";
 import { ApprovalModeMenu, CommandMenu, ConvoMenu, ManualWorkflowMenu, ModelMenu, QueueMenu } from "../Menus.js";
 import { saveClipboardImage } from "../pasted-images.js";
@@ -56,6 +57,11 @@ export function AppView({ model }: { model: AppController }) {
   const composerChromeRows = contentWidth < 50 || (contentWidth >= 72 && contentWidth < 112) ? 6 : 5;
   const extraWorkingRows = (busy && session && liveUsage[session.id] ? 1 : 0) + (busy && workingTip ? 1 : 0);
   const maxComposerRows = Math.max(1, terminalRows - composerChromeRows - extraWorkingRows - 1);
+
+  if (model.benchmarkOpen) return <BenchmarkManager width={terminalColumns} height={Math.max(1, terminalRows - 1)}
+    canStart={() => model.jobs.current.size || model.sideAbort.current || model.titleAborts.current.size || model.shells.current.size || model.remoteHost.current || [...model.sessionRecords.current.values()].some(record => record.deferredTurn || record.queuedPrompts?.length || model.promptQueue.current.operations(record.id).length)
+      ? "Wait for main/side jobs, title jobs, shells, remote host and queued/deferred work to finish before Start. Results remain available." : undefined}
+    onClose={() => { model.setBenchmarkOpen(false); onClear(); setTranscriptRevision(value => value + 1); }} />;
 
   if (diffOpen && session) return <FileDiffPanel store={store} session={session} width={terminalColumns} height={Math.max(1, terminalRows - 1)}
     onClose={() => { setDiffOpen(false); onClear(); setTranscriptRevision(value => value + 1); }}
