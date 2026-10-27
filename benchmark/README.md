@@ -182,3 +182,149 @@ a new output directory:
 Keep the interrupted attempt and its partial usage in the all-attempt audit.
 After a usage-limit stop, respect the limit and wait for a new authorized
 continuation; do not substitute another model or retry in a loop.
+
+## Benchmark Center (debug checkouts)
+
+`/benchmark` and `pace benchmark` open the same Ink panel. Select Run, a category
+and a named profile, review the call/time limits and estimated-cost scope, then
+choose **Start**. Preview, list, result browsing and grading never start models.
+The panel accepts arrows, Enter and Esc. Esc during execution cancels only that
+benchmark. Results remain accessible while Pace has active jobs; Start requires
+main/side/title jobs, shells, queues and deferred work to finish (and the remote
+host to stop). The normal conversation and its model configuration are unchanged.
+
+```bash
+npm run dev -- benchmark --help
+npm run dev -- benchmark list
+npm run dev -- benchmark run routing --profile quick --preview
+npm run dev -- benchmark run diagnostics --profile quick
+npm run dev -- benchmark run workflows --profile validation --max-turns 150 --max-usd 5
+npm run dev -- benchmark results
+npm run dev -- benchmark results RUN_ID --files
+npm run dev -- benchmark resume RUN_ID --preview
+npm run dev -- benchmark resume RUN_ID
+```
+
+A headless `run` requires a category and `--profile`; it is an explicit Start.
+Unknown or inapplicable options fail preflight. Installed npm builds reject the
+command and execution services before opening a backend, downloading or calling a
+model. Debug continues to mean a checkout outside `node_modules/@sidearker/pace`;
+it is not a security sandbox.
+
+| Category | Profiles | Measurement boundary |
+| --- | --- | --- |
+| routing | quick, standard, holdout, shape-only | Production controller/validator, real Vex, simulated Codex reports |
+| workflows | quick, standard, validation, agentic | Original arms, resolved Git commits, alternating order, checks and manual rubric |
+| task-control | quick, standard, paraphrases | Candidate-only by default; select a built baseline for an explicit comparison |
+| context-quality | quick, standard, real-repo | Original four context strategies with independent setup per arm |
+| thread-switch | quick, standard | Shared setup, fresh/same thread switch turns; setup remains separately recorded |
+| context-models | quick, standard, confirmation-A, confirmation-B, probe | Original pilot matrix and preregistered selected confirmation pairs |
+| diagnostics | quick, standard | Synthetic persistence, GC and process metrics; no model/account |
+| memory | unavailable | Requires integration in plan 02 |
+
+Quick and Standard retain each family's methodology. For context/model study both
+execute the complete preregistered pilot; Quick does not silently truncate its
+matrix. Confirmation requires `--source RUN_ID` pointing to a completed frozen
+pilot with passing execution, context/note reviews and fixture checks for the selected pair; source, suite and review-evidence hashes must still match. No family C recommendation was
+selected by the original protocol, so no automatic confirmation-C profile is
+invented. Task-control's baseline wizard discovers sibling built checkouts, accepts
+another built checkout, or offers candidate-only. It does not create branches or
+worktrees. `baselineScope` still means baseline controller/shipped prompts with
+candidate store, runner and Vex client shared.
+
+Each run gets a new ID under the checkout's `benchmark/results/`, independent of
+caller cwd. `center-manifest.json` records schema/profile versions, effective
+configuration and prompts, prices, source/build and fixture hashes, resolved
+commits and ordered trial keys. `events.jsonl`, partial `accounting.json` and
+`state.json` preserve progress, failures and unknown usage. `segment-N/` contains
+the original family artifact format. The all-attempt ledger includes errors and
+uncertain interrupted calls; family comparisons include only compatible,
+quality-passing pairs. Vex and Codex are separate. Dollars are Standard API
+equivalents, not subscription allowance or account billing. A dollar threshold
+stops subsequent calls after reported cost reaches it; missing cost stays unknown
+and the current call can exceed the threshold. Call limits include Vex and native
+compaction operations as well as Codex turns. Internal model requests within a turn are not separately capped. The per-turn/decision timeout is enforced by benchmark transports.
+
+Resume checks source/config/fixture identity and resource ownership. It skips
+completed trial keys. A failed or uncertain trial restarts from an independent
+fixture/thread in a new segment, retaining its earlier calls and costs. Completed
+artifacts are not overwritten. Changing sources, baseline build, suite, model
+settings, prompts or budgets requires a new run. Locks include host/PID/start
+identity and worker ownership; an active worker prevents crash recovery. Child
+processes are owned by a separate process group on Unix (a process tree on Windows)
+and disposable fixtures live in run-scoped scratch directories. Losing the supervisor cancels its worker; orphaned work is stopped and the run remains resumable. Run locks also serialize review and derived-analysis writes. A recovery interrupted while claiming a stale lock reports its marker for inspection instead of guessing ownership.
+
+Results provides raw answers, diffs, checks, usage and family summaries. Review
+records a manual decision, context/summary/checkpoint assessments where applicable,
+notes, severity (minor/major/critical), evidence and affected behavior. Checks and
+manual quality remain separate. Workflow grading retains original prompt/commit
+identity validation and its quality-passing pair report. Historical files stay
+readable, with their version or an unknown-format limitation; unknown formats do
+not receive a fabricated importer or score. The last selections are saved atomically
+to `~/.pace/benchmark-center.json`, separate from versioned profiles and model config.
+
+For compatible context/model results the result menu and CLI expose:
+
+```bash
+npm run dev -- benchmark analyze RUN_ID
+npm run dev -- benchmark summarize RUN_ID
+npm run dev -- benchmark reaccount RUN_ID
+```
+
+Python 3 is checked before analyze/summarize. Its absence leaves raw results and
+review intact. Reaccount writes a separately labeled `accounting-corrected.json`
+using the study's recorded price protocol; it preserves `run.json` and refuses to
+overwrite an existing correction. A missing or changed recorded price protocol is refused. Original accounting is never replaced by new
+catalog prices. Raw study summaries retain within-family variation; they do not
+combine families into one universal score.
+
+### Pinned external project datasets
+
+Existing checkout fixtures remain the default. No public dataset URL is assumed.
+For workflows, the preview wizard or `--dataset MANIFEST.json` can select:
+
+```json
+{
+  "version": 1,
+  "repository": "https://example.invalid/your-dataset.git",
+  "commit": "0123456789abcdef0123456789abcdef01234567",
+  "project": "projects/example",
+  "scenariosVersion": "v1",
+  "checksums": {"host-only/grader.js": "<64-character SHA-256>"}
+}
+```
+
+Supply your actual repository, full SHA and checksums. HTTPS must not contain
+credentials; file URLs support local integration tests. Git downloads to a staged
+cache under `~/.cache/pace/benchmark-datasets`, verifies the pinned commit and
+checksums, rejects traversal/symlinks/submodules, exports only the selected project,
+then publishes the cache atomically. Every cache reuse verifies its content;
+`--offline` accepts only an already verified entry. Corrupt cache is an error and
+must be removed explicitly before refetching. A trial gets a separate Git repository
+with only that project and a new initial commit, without origin or source Git objects.
+Host-only memory/graders are excluded from the agent workspace. Download and
+preparation events are recorded separately from inference.
+
+The current runners **do not enforce filesystem/network isolation** against the
+host's files and remote repository. Consequently every available run is labeled
+uncontrolled and `--controlled` fails before downloading or inference, with the
+specific missing-isolation reason. Exporting a project and pinning its SHA do not
+prove OS isolation. Memory generation, its dataset publication and A/B integration
+belong to plan 02.
+
+### Testing Benchmark Center
+
+```bash
+npm run build
+npm run benchmark:check
+npm test -- tests/benchmark-*.test.* benchmark/grading/grade.test.ts tests/build-mode.test.ts tests/app-composition.test.tsx
+```
+
+The suites use fake model transports, disposable Git repositories and synthetic
+sessions. They cover CLI/panel parity, execution and cancellation, crash recovery,
+frozen resume, accounting, grading, dataset verification and debug gates. CLI
+regressions also check strict arguments, read-only commands, exit codes and signal
+handler cleanup. Storage tests reject private artifact paths and ambiguous lock
+recovery; preference tests use a temporary home and preserve the user config.
+These tests make no paid model calls and do not establish model quality or OS
+isolation. Run `npm test` for the full application regression suite.
