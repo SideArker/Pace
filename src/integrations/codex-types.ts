@@ -1,11 +1,12 @@
-import type { Usage } from "@openai/codex-sdk";
-import type { ApprovalMode, Route, Task } from "../shared/types.js";
+import type { ApprovalMode, Route, Task, Usage } from "../shared/types.js";
 import type { ContextMeasurement } from "../shared/types.js";
 
 export type ApprovalDecision = "accept" | "decline";
 export type UserQuestion = { id: string; header: string; question: string; options: { label: string; description: string }[]; isOther: boolean; isSecret: boolean };
 export type UserAnswers = Record<string, { answers: string[] }>;
 export type Progress = (
+  | { kind: "prompt"; threadId: string; input: unknown[] }
+  | { kind: "handoff"; text: string }
   | { kind: "steering"; steer?: (prompt: string) => Promise<void> }
   | { kind: "status" | "error" | "thread" | "system"; text: string }
   | { kind: "message"; text: string; id?: string; completed?: boolean }

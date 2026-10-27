@@ -1,6 +1,6 @@
 import type { ApprovalMode, Route } from "../shared/types.js";
 import { realpath } from "node:fs/promises";
-import type { Usage } from "@openai/codex-sdk";
+import type { Usage } from "../shared/types.js";
 import { CodexRunError, type ApprovalDecision, type CodexRunner, type Execution, type Progress, type RunnerMode, type UserAnswers } from "./codex-types.js";
 import { AppServer, isRecord, type AppServerConnection, type JsonRecord } from "./app-server-process.js";
 import { appServerThreadParams, appServerTurnParams } from "./app-server-protocol.js";
@@ -29,11 +29,17 @@ function eventTurnId(params: JsonRecord): unknown {
 
 export class AppServerRunner implements CodexRunner {
   constructor(
-    private readonly createServer: (
+    private readonly createServer?: (
       onMessage: (message: RpcMessage) => void,
       onExit: (error: Error) => void,
-    ) => AppServerConnection = (onMessage, onExit) => new AppServer(onMessage, onExit),
+    ) => AppServerConnection,
+    private readonly onEvent?: (message: RpcMessage) => void | Promise<void>,
+    private readonly includeVex = true,
   ) {}
+
+  private server(onMessage: (message: RpcMessage) => void, onExit: (error: Error) => void): AppServerConnection {
+    return this.createServer?.(onMessage, onExit) ?? new AppServer(onMessage, onExit, this.includeVex);
+  }
 
   async compact(
     threadId: string,
@@ -101,7 +107,7 @@ export class AppServerRunner implements CodexRunner {
         finish();
       }
     };
-    const server = this.createServer(handleMessage, error => { failure = error.message; finish(); });
+    const server = this.server((message) => { void this.onEvent?.(message); handleMessage(message); }, error => { failure = error.message; finish(); });
     const measurement = () => ({ turnId: activeTurnId, route: sourceRoute, usage: accounting.usage,
       knownUsage: accounting.knownUsage, usageComplete: !!activeTurnId && accounting.usageComplete });
     let cancelled = !!signal?.aborted;
@@ -236,7 +242,7 @@ export class AppServerRunner implements CodexRunner {
         void onProgress(progress);
       }
     };
-    const server = this.createServer(handleMessage, error => {
+    const server = this.server((message) => { void this.onEvent?.(message); handleMessage(message); }, error => {
       acceptingSteers = false;
       failure = error.message;
       turnResolve();
@@ -301,7 +307,9 @@ export class AppServerRunner implements CodexRunner {
         await onProgress({ kind: "status", text: "Working…" });
         signal?.throwIfAborted();
         turnRequested = true;
-        const turnResponse = await awaitAbort(server.request("turn/start", appServerTurnParams(prompt, cwd, route, id, mode, trustedFolders, approvalMode, artifactDirectory)));
+        const turnParams = appServerTurnParams(prompt, cwd, route, id, mode, trustedFolders, approvalMode, artifactDirectory);
+        await onProgress({ kind: "prompt", threadId: id, input: turnParams.input });
+        const turnResponse = await awaitAbort(server.request("turn/start", turnParams));
         const responseTurn = isRecord(turnResponse) && isRecord(turnResponse.turn) ? turnResponse.turn : {};
         if (typeof responseTurn.id !== "string" || !responseTurn.id) throw new Error("Codex app-server did not return a turn id");
         activeTurnId = responseTurn.id;

@@ -8,9 +8,44 @@ import { durableRunner } from "../src/core/task-execution.js";
 import { newSession, PaceStore } from "../src/core/sessions.js";
 import { taskSummary } from "../src/core/tasks.js";
 import type { CodexRunner, Progress } from "../src/integrations/codex-types.js";
+import { serverArgs } from "../src/integrations/app-server-process.js";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
+
+it("planning retains native plan events and interactive questions inside the artifact-only sandbox", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pace-native-planning-")); roots.push(root);
+  let requestHandler: (message: any) => void = () => {};
+  const calls: { method: string; params: any }[] = [], progress: Progress[] = [], replies: unknown[] = [];
+  const runner = new AppServerRunner(onMessage => ({
+    setRequestHandler(handler) { requestHandler = handler; }, notify() {}, kill() {},
+    respond(_id, value) {
+      replies.push(value);
+      queueMicrotask(() => onMessage({ method: "turn/completed", params: { threadId: "planning-thread", turn: { id: "planning-turn", status: "completed" } } }));
+    },
+    async request(method, params) {
+      calls.push({ method, params });
+      if (method === "thread/start") return { thread: { id: "planning-thread" } };
+      if (method === "turn/start") {
+        queueMicrotask(() => {
+          onMessage({ method: "turn/plan/updated", params: { threadId: "planning-thread", turnId: "planning-turn", plan: [{ step: "Inspect dependencies", status: "inProgress" }] } });
+          requestHandler({ id: 9, method: "item/tool/requestUserInput", params: { questions: [{ id: "scope", question: "Which deployment target?", options: [{ label: "Local", description: "Local project" }] }] } });
+        });
+        return { turn: { id: "planning-turn" } };
+      }
+      return {};
+    },
+  }));
+  await runner.run("Write a plan", process.cwd(), { model: "gpt-6.1-sol", effort: "medium" }, undefined, event => {
+    progress.push(event);
+    if (event.kind === "question") event.respond({ scope: { answers: ["Local"] } });
+  }, undefined, "planning", [process.cwd()], "full-access", root);
+  expect(progress.find(event => event.kind === "tasks")).toEqual({ kind: "tasks", items: [{ text: "Inspect dependencies", completed: false }] });
+  expect(progress.some(event => event.kind === "question")).toBe(true);
+  expect(replies).toEqual([{ answers: { scope: { answers: ["Local"] } } }]);
+  expect(calls.find(call => call.method === "turn/start")?.params).toMatchObject({ cwd: root, approvalPolicy: "never", sandboxPolicy: { type: "workspaceWrite", writableRoots: [root], networkAccess: false, excludeSlashTmp: true, excludeTmpdirEnvVar: true } });
+  expect(serverArgs()).toContain("default_mode_request_user_input");
+});
 
 it("streams a message snapshot under one ID and uses the completed text as authoritative", () => {
   const events = new AppServerProgress("/project");
