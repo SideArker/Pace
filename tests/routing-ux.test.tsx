@@ -39,7 +39,8 @@ it.each([[18, 2], [24, 4], [42, 8]])("shows height %s capacity %s across Pace an
     const output = renderToString(<BottomPanel width={width} height={height} conversations={{ choices, selectedIndex: 15, focused: true }} queuedPrompts={Array.from({ length: 8 }, (_, i) => `queue-${i}`)} />, { columns: width });
     expect(output.match(/row-\d{3}/g)).toHaveLength(count);
     expect(output).toContain("row-015");
-    expect(output).toContain("This pace");
+    expect(output).not.toContain("This pace");
+    expect(output).not.toContain("row-000");
     expect(output).toContain("Saved conversations");
     expect(output).toContain("queue-1");
     expect(output).not.toContain(`queue-${height < 24 ? 2 : 4}`);

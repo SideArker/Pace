@@ -52,8 +52,10 @@ export function ConversationPicker({
     const { start } = menuWindow(items.length, Math.max(0, waiting >= 0 ? waiting : selected), limit);
     return items.slice(start, start + limit);
   };
-  const visiblePace = windowFor(pace, paceLimit);
-  const visibleSaved = windowFor(saved, savedLimit);
+  // Browse one continuous list; reserve separate previews only while unfocused.
+  const { start, end } = menuWindow(filteredChoices.length, anchor, maxItems);
+  const visiblePace = focused ? pace.filter(({ index }) => index >= start && index < end) : windowFor(pace, paceLimit);
+  const visibleSaved = focused ? saved.filter(({ index }) => index >= start && index < end) : windowFor(saved, savedLimit);
   const showHints = width === undefined || width >= 50;
 
   // Group counts for headers
@@ -81,7 +83,7 @@ export function ConversationPicker({
         if (!visible.length) return null;
         return (
           <React.Fragment key={section}>
-            {section === "pace" ? (
+            {section === "pace" && (!focused || visible[0]?.index === pace[0]?.index) ? (
               <Text color="#64748B" bold>This pace ({pace.length})</Text>
             ) : null}
             {visible.map(({ choice, index }, position) => {

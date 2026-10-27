@@ -132,8 +132,36 @@ describe("Conversation editing and undo logic", () => {
     const compact = renderToString(React.createElement(ConversationPicker, {
       choices, activeId: "local-running", selectedIndex: 2, focused: true, maxItems: 2,
     }), { columns: 80 });
-    expect(compact).toContain("Running here");
+    expect(compact).toContain("Done here");
     expect(compact).toContain("Newer saved");
+    expect(compact).not.toContain("Running here");
+    expect(compact).not.toContain("This pace");
+  });
+
+  it.each([false, true])("scrolls This pace away with its first conversation (saved sections: %s)", includeSaved => {
+    const choices = Array.from({ length: 10 }, (_, index) => ({
+      id: `row-${index.toString().padStart(3, "0")}`,
+      prompt: `Task ${index}`,
+      state: "ready" as const,
+      section: includeSaved && index >= 4 ? "saved" as const : "pace" as const,
+    }));
+    const views = [
+      { selectedIndex: 0, ids: ["row-000", "row-001", "row-002"], showHeader: true },
+      { selectedIndex: 2, ids: ["row-001", "row-002", "row-003"], showHeader: false },
+      { selectedIndex: 3, ids: ["row-002", "row-003", "row-004"], showHeader: false },
+      { selectedIndex: 4, ids: ["row-003", "row-004", "row-005"], showHeader: false },
+      { selectedIndex: 9, ids: ["row-007", "row-008", "row-009"], showHeader: false },
+    ];
+    // Browse within This pace, across sections, to the end, then back to the top.
+    for (const { selectedIndex, ids, showHeader } of [...views, ...views.toReversed()]) {
+      const output = renderToString(React.createElement(ConversationPicker, {
+        choices, selectedIndex, focused: true, maxItems: 3,
+      }), { columns: 100 });
+      expect(output.match(/row-\d{3}/g)).toEqual(ids);
+      expect(output).toContain(`▶ ${choices[selectedIndex]!.id}`);
+      expect(output.includes("This pace")).toBe(showHeader);
+      expect(output).toContain("Showing 3 of 10");
+    }
   });
 
   it("moves a resumed conversation to This pace after a new message", () => {
