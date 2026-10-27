@@ -29,6 +29,34 @@ function View({ lines, status, resetKey = 0, showHeader = true, expanded = false
 }
 
 describe("native terminal history", () => {
+  it("redraws streamed text and appends only its authoritative completion to history", async () => {
+    const stdout = new TerminalOutput();
+    const stdin = new PassThrough() as PassThrough & { isTTY: boolean; setRawMode: (enabled: boolean) => void };
+    stdin.isTTY = true;
+    stdin.setRawMode = () => {};
+    const question: Line = { id: 1, role: "you", text: "Inspect feature", spaceBefore: false };
+    const partial: Line = { id: 2, role: "codex", text: "Inspecting", spaceBefore: false, streaming: true };
+    const instance = render(<View lines={[question, partial]} status="Working" showHeader={false} />, {
+      stdin, stdout, stderr: new PassThrough(), interactive: true, patchConsole: false,
+      alternateScreen: false, maxFps: 1000,
+    });
+    try {
+      await instance.waitUntilRenderFlush();
+      instance.rerender(<View lines={[question, { ...partial, text: "Inspecting files" }]} status="Working" showHeader={false} />);
+      await instance.waitUntilRenderFlush();
+      const final = { ...partial, text: "Inspection finished.", streaming: false };
+      instance.rerender(<View lines={[question, final]} status="Ready" showHeader={false} />);
+      await instance.waitUntilRenderFlush();
+      instance.rerender(<View lines={[question, final]} status="Waiting" showHeader={false} />);
+      await instance.waitUntilRenderFlush();
+    } finally { instance.unmount(); }
+    const output = stdout.writes.join("");
+    expect(output.match(/Inspect feature/g)).toHaveLength(1);
+    expect(output.match(/Inspection finished\./g)).toHaveLength(1);
+    expect(output).toContain("Inspecting files");
+    expect(output).not.toContain("\x1b[2J");
+  });
+
   it("places a new view at top after clearing old history", async () => {
     const stdout = new TerminalOutput();
     const stdin = new PassThrough() as PassThrough & { isTTY: boolean; setRawMode: (enabled: boolean) => void };
