@@ -1,4 +1,4 @@
-import type { Usage } from "@openai/codex-sdk";
+import type { Usage } from "../shared/types.js";
 import type { Execution } from "./codex-types.js";
 import { isRecord } from "./app-server-process.js";
 import { appUsage } from "./app-server-protocol.js";

@@ -1,5 +1,4 @@
-import type { Usage } from "@openai/codex-sdk";
-import type { ApprovalMode, Route } from "../shared/types.js";
+import type { ApprovalMode, Route, Usage } from "../shared/types.js";
 import { turnImageInput } from "./image-input.js";
 import { isRecord } from "../shared/config.js";
 import type { RunnerMode } from "./codex-types.js";

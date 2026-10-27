@@ -1,4 +1,3 @@
-import type { ThreadEvent } from "@openai/codex-sdk";
 import type { Progress } from "./codex-types.js";
 import { isRecord } from "../shared/config.js";
 import { isAbsolute, relative } from "node:path";
@@ -18,51 +17,6 @@ function toolTitle(server: string, tool: string, args: unknown): string {
   const name = /read/i.test(tool) ? "Read" : /edit|write|patch/i.test(tool) ? "Edit"
     : /exec|command|shell|bash/i.test(tool) ? "Bash" : /search/i.test(tool) ? "Search" : "Tool";
   return `${name}(${target ?? `${server}/${tool}`})`;
-}
-
-export function eventProgress(event: ThreadEvent): Progress | undefined {
-  if (event.type === "error") return { kind: "error", text: event.message };
-  if (event.type === "turn.failed")
-    return { kind: "error", text: event.error.message };
-  if (event.type === "turn.started")
-    return { kind: "status", text: "Working…" };
-  if (
-    event.type !== "item.started" &&
-    event.type !== "item.updated" &&
-    event.type !== "item.completed"
-  )
-    return undefined;
-  const item = event.item;
-  if (item.type === "reasoning")
-    return { kind: "activity", id: item.id, category: "thinking", title: "Thinking", detail: item.text, completed: event.type === "item.completed" };
-  if (item.type === "agent_message" && event.type === "item.completed")
-    return { kind: "message", text: item.text };
-  if (item.type === "command_execution")
-    return {
-      kind: "activity", id: item.id, category: "command",
-      title: `${item.status === "in_progress" ? "Running" : item.status === "failed" ? "Failed" : "Ran"}: ${item.command}${item.exit_code === undefined ? "" : ` (exit ${item.exit_code})`}`,
-      detail: item.aggregated_output, completed: event.type === "item.completed",
-      outcome: item.status === "failed" || (item.exit_code !== undefined && item.exit_code !== 0) ? "failure" : "success",
-    };
-  if (item.type === "file_change")
-    return {
-      kind: "activity", id: item.id, category: "files",
-      title: `${item.status === "failed" ? "Failed to edit" : "Edited"} ${item.changes.length === 1 ? item.changes[0]!.path : `${item.changes.length} files`}`,
-      detail: item.changes.map(change => `${change.kind} ${change.path}`).join("\n"), completed: event.type === "item.completed",
-      outcome: item.status === "failed" ? "failure" : "success",
-    };
-  if (item.type === "web_search")
-    return { kind: "activity", id: item.id, category: "search", title: `Web search: ${item.query}`, completed: event.type === "item.completed" };
-  if (item.type === "mcp_tool_call")
-    return {
-      kind: "activity", id: item.id, category: "tool", title: toolTitle(item.server, item.tool, item.arguments),
-      detail: item.error?.message, completed: event.type === "item.completed",
-      outcome: item.status === "failed" || item.error ? "failure" : "success",
-    };
-  if (item.type === "todo_list")
-    return { kind: "tasks", items: item.items.map(step => ({ text: step.text, completed: step.completed })) };
-  if (item.type === "error") return { kind: "error", text: item.message };
-  return undefined;
 }
 
 export function fileChangeProgress(item: JsonRecord, completed: boolean, project: string): Progress {
