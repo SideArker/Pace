@@ -1,3 +1,4 @@
+import { projectVexRequest } from "./context.js";
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -141,9 +142,10 @@ export class VexRouter {
     return this.connecting;
   }
   async choose(request: VexRequest): Promise<unknown> {
+    const projected = projectVexRequest(request);
     await this.start();
     const result = await this.client!.callTool(
-      { name: "vex_choose", arguments: request },
+      { name: "vex_choose", arguments: projected.request },
       undefined,
       // Vex allows its provider request 45 seconds; leave time for its MCP response.
       { timeout: 60000 },

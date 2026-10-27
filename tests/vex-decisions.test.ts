@@ -6,7 +6,7 @@ import { createTurnRouting } from "../src/core/orchestrator-routing.js";
 import { Orchestrator, type RoutingRecord } from "../src/core/orchestrator.js";
 import { newSession, PaceStore } from "../src/core/sessions.js";
 import { requiredSave, TransitionSaveError } from "../src/core/task-execution.js";
-import { DEFAULT_ROUTING_PROMPTS as prompts } from "../src/core/routing/routing-prompts.js";
+import { DEFAULT_ROUTING_PROMPTS as prompts, routingPromptProfile } from "../src/core/routing/routing-prompts.js";
 import { stageRequest, type VexRequest } from "../src/core/vex/requests.js";
 import { decision } from "./routing-fixture.js";
 
@@ -51,6 +51,9 @@ for (const aside of [false, true]) {
     expect(audit).toHaveLength(1);
     expect(audit[0]).toMatchObject({ taskId: "task", role: label, stage: aside ? "aside" : "final", source: "vex", contextAction: "continue", requests: 2, choice: "0:medium" });
     expect(audit[0]!.durationMs).toBeGreaterThanOrEqual(0);
+    expect(audit[0]).toMatchObject({ promptProfile: routingPromptProfile(prompts), usage: "unknown", costUsd: "unknown",
+      requestAttempts: [{ attempt: 1, retry: false, status: "error", error: "Error: Invalid Vex routing decision" }, { attempt: 2, retry: true, status: "success" }] });
+    expect(audit[0]!.requestAttempts!.every(item => item.durationMs >= 0)).toBe(true);
     expect(Number.isFinite(Date.parse(audit[0]!.at))).toBe(true);
     if ("routing" in result) {
       expect(result.routing[0]).not.toHaveProperty("choiceLabel");
@@ -65,7 +68,7 @@ for (const aside of [false, true]) {
     expect(env.vex.choose).toHaveBeenCalledTimes(2);
     expect(env.runner.run).not.toHaveBeenCalled();
     expect((await env.store.load(env.session.projectPath, env.session.id))?.controlDecisions).toEqual([
-      expect.objectContaining({ choice: "unavailable", failed: true, error: "Error: provider offline", requests: 2, role: label }),
+      expect.objectContaining({ choice: "unavailable", failed: true, error: "Error: provider offline", requests: 2, role: label, usage: "unknown", costUsd: "unknown", requestAttempts: [expect.objectContaining({ status: "error", retry: false }), expect.objectContaining({ status: "error", retry: true })] }),
     ]);
     if (aside) expect(env.session.controlDecisions?.at(-1)?.failed).toBe(true);
   });
@@ -109,4 +112,17 @@ for (const verifier of [false, true]) it(`records ${verifier ? "verifier" : "sco
   env.vex.choose.mockRejectedValue(new Error("offline"));
   await expect(env.call()).rejects.toThrow();
   expect(env.session.controlDecisions?.at(-1)?.role).toBe(verifier ? "verifier" : "main");
+});
+
+it("records the effective user profile, and a local payload failure makes zero provider calls", async () => {
+  const env = await fixture(false);
+  const custom = structuredClone(prompts); custom.stage.question = "Custom route question";
+  const choose = createTurnRouting({ vex: env.vex, session: env.session, prompts: custom, verifierTurn: false, routing: [], save: () => requiredSave(env.store, env.session, false), onProgress: () => {} }).choose;
+  const request = stageRequest("Work", [], models, "Complete", undefined, models, custom);
+  await choose(request, "Complete");
+  expect(env.session.controlDecisions!.at(-1)!.promptProfile).toEqual(routingPromptProfile(custom));
+  request.context.activeTask = { criteria: [{ id: "c", text: "criterion ".repeat(10_000), required: true }] };
+  await expect(choose(request, "Too large")).rejects.toThrow("byte budget");
+  expect(env.vex.choose).toHaveBeenCalledOnce();
+  expect(env.session.controlDecisions!.at(-1)).toMatchObject({ failed: true, requests: 0, requestAttempts: [], usage: "unknown", costUsd: "unknown" });
 });
