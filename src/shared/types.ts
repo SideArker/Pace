@@ -126,6 +126,9 @@ export type AttemptObservation = {
   kind: "activity" | "tasks" | "answer" | "artifacts";
   text?: string; items?: Pick<Task, "text" | "completed">[]; paths?: string[];
 };
+export type PromptProfile = {
+  schemaVersion: 1; profileId: string; profileVersion: string; fingerprint: string;
+};
 export type StageAttempt = {
   pricing?: import("../core/routing/pricing.js").PriceSnapshot;
   id: string; taskId: string; generation: number; stage: string; role: AgentRole;

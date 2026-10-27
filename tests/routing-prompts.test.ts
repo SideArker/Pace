@@ -162,3 +162,22 @@ it("passes customized routing and handoff instructions through a turn", async ()
   expect(seen[0]).toContain("Original task:");
   expect(seen[1]).toContain("Custom report instruction:");
 });
+
+it("fingerprints parsed effective profiles independently of object key order and distinguishes schema from profile versions", async () => {
+  const { routingPromptProfile } = await import("../src/core/routing/routing-prompts.js");
+  const original = routingPromptProfile(DEFAULT_ROUTING_PROMPTS);
+  function reverse(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map(reverse);
+    if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).reverse().map(([key, item]) => [key, reverse(item)]));
+    return value;
+  }
+  expect(routingPromptProfile(parseRoutingPrompts(reverse(DEFAULT_ROUTING_PROMPTS)))).toEqual(original);
+  const changed = structuredClone(DEFAULT_ROUTING_PROMPTS);
+  changed.stage.question += " Custom override";
+  expect(routingPromptProfile(changed).fingerprint).not.toBe(original.fingerprint);
+  changed.profile = { id: "custom", version: "2.3" };
+  expect(routingPromptProfile(changed)).toMatchObject({ schemaVersion: 1, profileId: "custom", profileVersion: "2.3" });
+  dir = await mkdtemp(join(tmpdir(), "pace-profile-"));
+  await writeFile(join(dir, routingPromptFile), JSON.stringify({ version: 1 }));
+  expect(routingPromptProfile(loadRoutingPrompts(dir))).toEqual(original);
+});

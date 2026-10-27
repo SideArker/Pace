@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import type { PromptProfile } from "../../shared/types.js";
 import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +14,7 @@ const choiceIds = ["single", "scout", "plan", "scout_plan", "clarify"] as const;
 
 export type RoutingPrompts = {
   version: 1;
+  profile?: { id: string; version: string };
   control: { question: string; constraints: string; choices: Record<"continue" | "aside" | "reroute" | "replan" | "replace" | "clarify" | "adopt_side", string> };
   assessment: { question: string; constraints: string; choices: Record<"closed" | "partial" | "unknown", string> };
   side: { objective: string; instruction: string };
@@ -78,8 +81,12 @@ export function parseRoutingPrompts(value: unknown): RoutingPrompts {
   const { stage, objectives, handoff, routingRules, execution, side } = value;
   if (!isRecord(stage) || !isRecord(objectives) || !isRecord(handoff) || !isRecord(routingRules) || !isRecord(execution) || !isRecord(side))
     throw new Error("routing-prompts.json: stage, objectives, handoff, routingRules, execution, and side must be objects");
+  if (value.profile !== undefined && !isRecord(value.profile)) throw new Error("routing-prompts.json: profile must be an object");
   return {
     version: 1,
+    profile: value.profile === undefined ? { id: "pace-task-workflows", version: "2026-10-22" } : {
+      id: nonempty(value.profile.id, "profile.id"), version: nonempty(value.profile.version, "profile.version"),
+    },
     control: parseSection(value.control, ["continue", "aside", "reroute", "replan", "replace", "clarify", "adopt_side"], "control"),
     assessment: parseSection(value.assessment, ["closed", "partial", "unknown"], "assessment"),
     side: {
@@ -168,4 +175,16 @@ export function loadRoutingPrompts(
   } catch (error) {
     throw new Error(`Cannot load ${path}: ${String(error)}`);
   }
+}
+
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (isRecord(value)) return Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])]));
+  return value;
+}
+/** Hash the parsed effective config, including user overrides, independently of key order. */
+export function routingPromptProfile(prompts: RoutingPrompts): PromptProfile {
+  const parsed = parseRoutingPrompts(prompts);
+  return { schemaVersion: parsed.version, profileId: parsed.profile!.id, profileVersion: parsed.profile!.version,
+    fingerprint: createHash("sha256").update(JSON.stringify(canonical(parsed))).digest("hex") };
 }
