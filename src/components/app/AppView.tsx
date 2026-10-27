@@ -29,7 +29,7 @@ export function AppView({ model }: { model: AppController }) {
     backgroundApprovals, backgroundQuestions, processes, approval, question, pickerFocused, cancelArmed,
     shellMode, draft, setDraft, setSelection, submit, history, add, historyChanging, resumeMenu,
     registeredCommands, matches, selection, commandArgsWithSkills, token, selectedAutoSkill,
-    changeAutoLaunch, focusQueuedOrPicker, handleQueueEdit, handleQueueDelete, usageWarning,
+    changeAutoLaunch, focusQueuedOrPicker, handleQueueEdit, handleQueueDelete,
     commandDescriptionsWithSkills, skillCommands, pickerChoices, missingProjectPaths, activeSessionId,
     pickerIndex, pickerSearch, showConversationsTab, sortedSessions, usageLimits, usageError,
   } = model;
@@ -132,7 +132,6 @@ export function AppView({ model }: { model: AppController }) {
           placeholder={modelMenu || approvalMenu || resumeMenu || convoMenu || queueMenu || manualMenu ? "Close menu to type" : shellMode ? "Bash command; ! returns to Pace" : vexState !== "connected" ? "Vex unavailable; manual turns work" : busy ? "Type next prompt to queue it" : "Ask Pace or type /"}
         />
       </ComposerFrame>
-      {usageWarning ? <Text color="#FBBF24">{usageWarning}</Text> : null}
       {!modelMenu && !approvalMenu && !resumeMenu && !convoMenu && !queueMenu && !manualMenu && matches.length > 0 ? (
         <CommandMenu
           matches={matches}
