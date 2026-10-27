@@ -36,17 +36,47 @@ async function readClipboardImage(): Promise<Buffer | undefined> {
   if (process.env.WSL_DISTRO_NAME) {
     const script = "Add-Type -AssemblyName System.Windows.Forms; $image = [System.Windows.Forms.Clipboard]::GetImage(); if ($image) { $stream = New-Object System.IO.MemoryStream; $image.Save($stream, [System.Drawing.Imaging.ImageFormat]::Png); [Console]::Write([Convert]::ToBase64String($stream.ToArray())) }";
     const encoded = await clipboardBytes("powershell.exe", ["-NoProfile", "-NonInteractive", "-STA", "-Command", script]);
-    if (encoded) return Buffer.from(encoded.toString("utf8").trim(), "base64");
+    if (encoded) {
+      const bytes = Buffer.from(encoded.toString("utf8").trim(), "base64");
+      if (imageExtension(bytes)) return bytes;
+    }
   }
-  if (process.platform === "darwin") return clipboardBytes("pngpaste", ["-"]);
-  for (const format of ["image/png", "image/jpeg", "image/gif", "image/webp"]) {
-    if (process.env.WAYLAND_DISPLAY) {
+  if (process.platform === "darwin") {
+    const bytes = await clipboardBytes("pngpaste", ["-"]);
+    if (bytes && imageExtension(bytes)) return bytes;
+  }
+  if (process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === "wayland") {
+    const direct = await clipboardBytes("wl-paste", ["--no-newline"]);
+    if (direct && imageExtension(direct)) return direct;
+    for (const format of ["image/png", "image/jpeg", "image/gif", "image/webp"]) {
       const bytes = await clipboardBytes("wl-paste", ["--no-newline", "--type", format]);
       if (bytes && imageExtension(bytes)) return bytes;
     }
+  }
+  const direct = await clipboardBytes("xclip", ["-selection", "clipboard", "-o"]);
+  if (direct && imageExtension(direct)) return direct;
+  for (const format of ["image/png", "image/jpeg", "image/gif", "image/webp"]) {
     const bytes = await clipboardBytes("xclip", ["-selection", "clipboard", "-t", format, "-o"]);
     if (bytes && imageExtension(bytes)) return bytes;
   }
+  return undefined;
+}
+
+export async function readClipboardText(): Promise<string | undefined> {
+  if (process.env.WSL_DISTRO_NAME) {
+    const bytes = await clipboardBytes("powershell.exe", ["-NoProfile", "-NonInteractive", "-STA", "-Command", "Get-Clipboard"]);
+    if (bytes) return bytes.toString("utf8").replace(/\r\n/g, "\n");
+  }
+  if (process.platform === "darwin") {
+    const bytes = await clipboardBytes("pbpaste", []);
+    if (bytes) return bytes.toString("utf8");
+  }
+  if (process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === "wayland") {
+    const bytes = await clipboardBytes("wl-paste", ["--no-newline"]);
+    if (bytes && !imageExtension(bytes)) return bytes.toString("utf8");
+  }
+  const bytes = await clipboardBytes("xclip", ["-selection", "clipboard", "-o"]);
+  if (bytes && !imageExtension(bytes)) return bytes.toString("utf8");
   return undefined;
 }
 
@@ -55,7 +85,7 @@ export async function saveClipboardImage(targetFolder: string): Promise<string |
   if (!bytes) return undefined;
   if (bytes.length > MAX_IMAGE_BYTES) throw new Error("Clipboard image exceeds 15 MB.");
   const extension = imageExtension(bytes);
-  if (!extension) throw new Error("Clipboard contains an unsupported image format.");
+  if (!extension) return undefined;
   await mkdir(targetFolder, { recursive: true });
   const path = join(targetFolder, `${randomUUID()}.${extension}`);
   await writeFile(path, bytes, { flag: "wx" });

@@ -5,9 +5,12 @@ import { turnImageInput } from "../src/integrations/image-input.js";
 it("recognizes clipboard image signatures", () => {
   expect(imageExtension(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))).toBe("png");
   expect(imageExtension(Buffer.from([255, 216, 255]))).toBe("jpg");
+  expect(imageExtension(Buffer.from("GIF87a"))).toBe("gif");
   expect(imageExtension(Buffer.from("GIF89a"))).toBe("gif");
   expect(imageExtension(Buffer.concat([Buffer.from("RIFF0000WEBP")]))).toBe("webp");
   expect(imageExtension(Buffer.from("plain text"))).toBeUndefined();
+  expect(imageExtension(Buffer.from(""))).toBeUndefined();
+  expect(imageExtension(Buffer.from("RIFF0000WAV "))).toBeUndefined();
 });
 
 it("attaches every pasted image to main turns only", () => {

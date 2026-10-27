@@ -99,8 +99,15 @@ export function Composer({ value, onChange, onSubmit, onImagePaste, history, dis
       }
       return;
     }
-    if (!shellMode && onImagePaste && ((key.ctrl && input === "v") || (key.meta && input === "v"))) {
-      void onImagePaste().then(marker => { if (active.current && marker) insertLatest.current(`${value ? " " : ""}${marker} `); });
+    if (!shellMode && onImagePaste && key.ctrl && input === "v") {
+      void onImagePaste().then(pasted => {
+        if (!active.current || !pasted) return;
+        if (pasted.startsWith("[Pace image: ")) {
+          insertLatest.current(`${value ? " " : ""}${pasted} `);
+        } else {
+          changeDraft(insertPastedBlock(value, cursor, pasted.replace(/\r\n?/g, "\n"), pastedBlocks));
+        }
+      });
       return;
     }
     if (key.meta && input.toLowerCase() === "a") { onAutoLaunchToggle?.(); return; }

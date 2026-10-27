@@ -10,7 +10,7 @@ import { HeaderLogo, HeaderStatus } from "../Header.js";
 import { BenchmarkManager } from "../BenchmarkManager.js";
 import { McpManager } from "../McpManager.js";
 import { ApprovalModeMenu, CommandMenu, ConvoMenu, ManualWorkflowMenu, ModelMenu, QueueMenu } from "../Menus.js";
-import { saveClipboardImage } from "../pasted-images.js";
+import { readClipboardText, saveClipboardImage } from "../pasted-images.js";
 import { QuestionPanel } from "../QuestionPanel.js";
 import { RunningProcesses } from "../RunningProcesses.js";
 import { TaskPanel } from "../TaskPanel.js";
@@ -106,10 +106,10 @@ export function AppView({ model }: { model: AppController }) {
             try {
               const targetDir = session ? store.conversationDir(session.projectPath, session.id) : join(store.sessionDir(project), "pasted-images");
               const path = await saveClipboardImage(targetDir);
-              if (!path) add("info", "No image found in clipboard. On WSL, use Alt+V when terminal handles Ctrl+V.");
-              return path ? `[Pace image: ${path}]` : undefined;
+              if (path) return `[Pace image: ${path}]`;
+              return await readClipboardText();
             } catch (error) {
-              add("error", `Could not paste image: ${String(error)}`);
+              add("error", `Could not paste: ${String(error)}`);
               return undefined;
             }
           }}
