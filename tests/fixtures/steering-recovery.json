@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "scope": "Offline durability and request-contract checks with scripted decisions; not model quality evaluation",
+  "cases": [
+    { "id": "pl-restart", "language": "pl", "goal": "Dokończ obsługę kolejki bez zmiany publicznego API", "criterion": "Zachowaj kolejność operacji", "steering": "Najpierw sprawdź testy kolejki; szczególnie interesuje mnie błąd podczas zapisu.", "followups": ["Kontynuuj zapisany task", "Sprawdź pozostałe braki"], "historyTurns": 20, "historyRepeat": 2000 },
+    { "id": "en-restart", "language": "en", "goal": "Finish queue handling while preserving the public API", "criterion": "Preserve operation order", "steering": "Check the queue tests first, especially the failure during persistence.", "followups": ["Continue the saved task", "Check the remaining gaps"], "historyTurns": 20, "historyRepeat": 2000 }
+  ]
+}

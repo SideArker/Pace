@@ -219,3 +219,17 @@ it("UI saves accepted steering in turn history and waits before finishing the jo
   saved.threadId = undefined;
   expect(retainedConversationPrompt("Continue", saved)).toContain('"steering":["Prioritize the keyboard flow"]');
 });
+
+for (const state of ["pending", "unknown"] as const) it(`restart keeps ${state} steering paused instead of draining it as a new task`, async () => {
+  const env = await fixture();
+  const queued = operation("Check persistence first", env.source.id, "task");
+  env.source.queuedPrompts = [queued];
+  env.source.steeringRecords = [{ version: 1, id: queued.id, sessionId: env.source.id, taskId: "task", turnKey: "before-restart", role: "main", text: queued.text, state, createdAt: "now" }];
+  await env.store.saveChanges(env.source, false);
+  const loaded = (await new PaceStore(env.store.baseDir).load(env.root, env.source.id))!;
+  expect(loaded.queuedPrompts).toEqual([queued]);
+  expect(await env.runTurn(queued.text, loaded, env.config, undefined, undefined, false, queued)).toBe(false);
+  await expect(env.orchestrator.turn(queued.text, loaded, env.config, () => {}, undefined, false, undefined, undefined, queued)).rejects.toThrow("already recorded as steering");
+  expect(env.calls).toHaveLength(0);
+  expect(loaded.activeTask!.id).toBe("task");
+});
