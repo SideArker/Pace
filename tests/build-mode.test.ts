@@ -5,6 +5,7 @@ import { commands } from "../src/components/app/commands.js";
 it("exposes feedback commands for this checkout build", () => {
   expect(isDebugBuild).toBe(true);
   expect(commands).toContain("/feedback");
+  expect(commands).toContain("/benchmark");
 });
 
 it("detects npm-installed Pace packages on Unix and Windows paths", () => {

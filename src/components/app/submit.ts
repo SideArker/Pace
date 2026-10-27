@@ -32,7 +32,7 @@ export function createSubmit({ state, transcript, queue, routing, completion, se
   exit: () => void;
 }) {
   const { historyBusy, switchingSession, session, config, setDraft, shellMode, setHistory,
-    setShellMode, jobs, setQueueVersion, skills, setSelection, runTurnRef, setMcpOpen,
+    setShellMode, jobs, setQueueVersion, skills, setSelection, runTurnRef, setMcpOpen, setBenchmarkOpen,
     approvalMenu, setApprovalMenu, setConfig, latestConfig, setDiffOpen, setConvoMenu, vexState } = state;
   const { add } = transcript;
   const { promptQueue } = queue;
@@ -56,12 +56,13 @@ export function createSubmit({ state, transcript, queue, routing, completion, se
     }
     const text = shellMode ? raw.trim() : normalizeNewCommand(raw);
     if (!text) return;
-    if (!isDebugBuild && /^\/feedback(?:\s|$)/.test(text)) {
+    if (!isDebugBuild && /^\/(?:feedback|benchmark)(?:\s|$)/.test(text)) {
       setDraft("");
-      add("error", "/feedback is available only in a debug build of Pace.");
+      add("error", `${text.split(/\s/)[0]} is available only in a debug build of Pace.`);
       return;
     }
     setHistory(old => [...old.slice(-99), raw]);
+    if (/^\/benchmark(?:\s|$)/.test(text)) { setDraft(""); if (text !== "/benchmark") add("error", "Type /benchmark without arguments."); else setBenchmarkOpen(true); return; }
     if (text === "!") {
       add("info", shellMode ? "$ !" : "> !");
       setShellMode((value) => !value);

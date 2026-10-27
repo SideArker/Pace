@@ -1,3 +1,4 @@
+import { isDebugBuild } from "../../core/build-mode.js";
 import type { Dispatch, SetStateAction } from "react";
 import type { Session } from "../../shared/types.js";
 import type { PaceStore } from "../../core/sessions.js";
@@ -28,6 +29,7 @@ export async function showCommandInfo(command: string, parts: string[], {
       "info",
       "/plan [prompt] · /execute · /verify [file] [prompt] · /models · /mcp [list] · /auto · /manual [model] [effort] · /workflow [name|auto] · /approval [full-access|request-approval|limited] · /remote · /tasks · /new · /convo · /diff · /undo · /redo · /compact · /context · /retry · /cancelretry · /btw <q> · /adopt <side-answer-id> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /stats · /clear · /exit · Esc cancels automatic retry; Esc twice/Ctrl+C cancels other turns · Ctrl+Z undo · Ctrl+Y redo · Alt+P/Ctrl+P plan · Alt+E/Ctrl+E execute · ! Bash · Ctrl+O toggle command, diff, and reasoning details · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
     );
+    if (isDebugBuild) add("info", "/benchmark opens Benchmark Center (debug only). Preview and results make no model calls; Start requires idle jobs and queues.");
     add("info", "With multiple open conversations, press Down from the input to focus the picker. Use arrows and Enter to switch; Esc returns to input. Ctrl+C cancels the selected turn. /exit quits.");
     return;
   }
