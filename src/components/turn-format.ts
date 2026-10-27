@@ -1,4 +1,4 @@
-import type { Usage } from "@openai/codex-sdk";
+import type { Usage } from "../shared/types.js";
 import type { Route } from "../shared/types.js";
 import { costForUsage } from "../core/routing/pricing.js";
 import type { UsageLimits, UsageWindow } from "../integrations/usage.js";

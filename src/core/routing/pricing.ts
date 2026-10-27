@@ -2,8 +2,7 @@ import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { Usage } from "@openai/codex-sdk";
-import type { Effort, ModelOption, Route } from "../../shared/types.js";
+import type { Effort, ModelOption, Route, Usage } from "../../shared/types.js";
 import { EFFORTS, isRecord } from "../../shared/config.js";
 import { atomicJson } from "../sessions.js";
 

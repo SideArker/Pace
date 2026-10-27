@@ -103,7 +103,7 @@ export class PaceStore {
       const config = parseConfig(
         JSON.parse(await readFile(join(this.baseDir, "config.json"), "utf8")),
       );
-      // An untouched config from older Pace versions meant "use the SDK default".
+      // An untouched config from older Pace versions meant "use the Codex default".
       if (config.routingMode === "auto" && !config.models.length && !config.defaultRoute.model)
         return structuredClone(DEFAULT_CONFIG);
       return config;

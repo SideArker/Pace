@@ -1,5 +1,4 @@
-import type { Usage } from "@openai/codex-sdk";
-import type { ApprovalMode, CheckpointNote, Session, CheckpointRecord, CheckpointGeneration } from "../shared/types.js";
+import type { ApprovalMode, CheckpointNote, Session, CheckpointRecord, CheckpointGeneration, Usage } from "../shared/types.js";
 import type { CodexRunner, Progress } from "../integrations/codex.js";
 import { CodexRunError } from "../integrations/codex-types.js";
 import { costForUsage } from "./routing/pricing.js";
