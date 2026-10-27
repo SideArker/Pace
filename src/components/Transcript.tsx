@@ -8,6 +8,9 @@ export { letterGradients } from "./Header.js";
 export type Line = {
   id: number;
   role:
+    | "plan"
+    | "handoff"
+    | "debug"
     | "you"
     | "codex"
     | "side"
@@ -140,7 +143,14 @@ export function Transcript({
           marginTop={line.spaceBefore ? 1 : 0}
           width={width}
         >
-          {line.role === "you" ? (
+          {line.role === "plan" || line.role === "handoff" || line.role === "debug" ? (
+            <Box flexDirection="column" borderLeft borderStyle="single" borderTop={false} borderRight={false} borderBottom={false} borderColor="#C084FC" paddingLeft={1}>
+              <Text color="#C084FC" bold>{expanded ? "▾" : "▸"} {line.role === "plan" ? "Execution plan" : line.role === "handoff" ? "Scout handoff · full report sent to completion" : "Local debug trace"} · Ctrl+O {expanded ? "collapse" : "expand"}</Text>
+              {line.role === "plan" ? <MarkdownText source={expanded ? line.text : line.text.split("\n").slice(0, 9).join("\n")} width={Math.max(10, width - 3)} />
+                : <Text color="#CBD5E1">{expanded ? line.text : line.role === "handoff" ? handoffSummary(line.text) : line.text.split("\n")[0]}</Text>}
+              {!expanded && (line.role !== "plan" || line.text.split("\n").length > 9) ? <Text dimColor>More content folded · Ctrl+O to reveal</Text> : null}
+            </Box>
+          ) : line.role === "you" ? (
             <Box gap={1} width={width}>
               <Box flexShrink={0}>
                 <Text color="#38BDF8" bold>
@@ -295,4 +305,8 @@ export function Transcript({
       ))}
     </Box>
   );
+}
+
+function handoffSummary(text: string): string {
+  try { return (JSON.parse(text) as { summary: string }).summary; } catch { return "Saved scout report"; }
 }

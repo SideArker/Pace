@@ -1,4 +1,4 @@
-import type { Session } from "../shared/types.js";
+import type { Session, TurnSummary } from "../shared/types.js";
 import { formatTurnFooter } from "./turn-format.js";
 import type { Line } from "./Transcript.js";
 
@@ -9,11 +9,17 @@ export function linesFromSession(targetSession: Session, firstId: number, artifa
 } {
   const lines: Line[] = [];
   let id = firstId;
+  if (targetSession.executionSource) lines.push({ id: id++, role: "plan", text: targetSession.executionSource.plan, spaceBefore: false });
   for (const turn of targetSession.turns) {
     lines.push({
       id: id++, role: turn.displayPrompt ? "system" : "you",
       text: turn.displayPrompt ?? turn.prompt, spaceBefore: lines.length > 0,
     });
+    for (const message of turn.systemMessages ?? []) lines.push({
+      id: id++, role: "system", text: message, spaceBefore: false,
+    });
+    for (const prompt of turn.steeringPrompts ?? []) lines.push({ id: id++, role: "you", text: `Steering: ${prompt}`, spaceBefore: false });
+    for (const handoff of handoffsForTurn(turn)) lines.push({ id: id++, role: "handoff", text: handoff, spaceBefore: false });
     for (const action of turn.activities ?? []) lines.push({
       id: id++, role: "activity", text: action.text, spaceBefore: false,
       activity: { category: action.category, detail: action.detail, completed: true,
@@ -44,4 +50,9 @@ export function linesFromSession(targetSession: Session, firstId: number, artifa
     text: `Automatic ${targetSession.deferredTurn.reason ?? "usage"} retry: ${targetSession.deferredTurn.reason === "network" ? "checking connection" : `resuming after ${new Date(targetSession.deferredTurn.retryAt).toLocaleString()}`}. Press Esc to cancel.`,
   });
   return { lines, nextId: id };
+}
+
+/** Stage data is authoritative; traces recover reused handoffs after a resumed scout. */
+export function handoffsForTurn(turn: TurnSummary): string[] {
+  return [...new Set([...(turn.scoutHandoff ? [turn.scoutHandoff] : []), ...(turn.stages ?? []).flatMap(stage => stage.handoff ? [stage.handoff] : [])])];
 }

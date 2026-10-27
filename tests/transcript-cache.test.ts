@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { PaceStore, newSession } from "../src/core/sessions.js";
 import { TranscriptLineCache } from "../src/components/transcript-cache.js";
 import { linesFromSession } from "../src/components/session-transcript.js";
+import { createTranscriptActions } from "../src/components/app/transcript-actions.js";
 import type { Line } from "../src/components/Transcript.js";
 
 let directory: string;
@@ -35,6 +36,7 @@ it("restores an evicted conversation from saved turns after background completio
   const completed = newSession(project, "manual");
   completed.turns = [{
     prompt: "Inspect code", result: "Found issue", at: "2026-10-13T12:00:00Z",
+    systemMessages: ["Pace switched to planning mode", "Vex chose plan"],
     activities: [{ category: "command", text: "Ran: build", detail: "success", durationMs: 900 }],
     artifacts: ["artifacts/report.md"],
   }];
@@ -48,12 +50,43 @@ it("restores an evicted conversation from saved turns after background completio
 
   const loaded = await store.load(project, completed.id);
   expect(loaded).toBeDefined();
+  expect(loaded!.turns[0]?.systemMessages).toEqual([
+    "Pace switched to planning mode", "Vex chose plan",
+  ]);
   const { lines, nextId } = linesFromSession(loaded!, 10, reference => `/${reference}`);
   cache.set(completed.id, lines, completed.id);
   expect(cache.has("other")).toBe(false);
   expect(cache.get(completed.id)).toEqual(lines);
-  expect(lines.map(item => item.role)).toEqual(["you", "activity", "codex", "meta", "artifact", "divider"]);
+  expect(lines.map(item => item.role)).toEqual(["you", "system", "system", "activity", "codex", "meta", "artifact", "divider"]);
+  expect(lines.filter(item => item.role === "system").map(item => item.text)).toEqual([
+    "Pace switched to planning mode", "Vex chose plan",
+  ]);
   expect(lines.find(item => item.role === "codex")?.text).toBe("Found issue");
   expect(lines.find(item => item.role === "artifact")?.text).toBe("/artifacts/report.md");
-  expect(nextId).toBe(16);
+  expect(nextId).toBe(18);
+});
+
+it("renders saved system messages when rebuilding the active transcript", () => {
+  const session = newSession("/project", "manual");
+  session.turns = [{
+    prompt: "Inspect code", result: "Found issue", at: "2026-10-13T12:00:00Z",
+    systemMessages: ["Pace switched to planning mode", "Vex chose plan"],
+  }];
+  let rendered: Line[] = [];
+  const actions = createTranscriptActions({
+    store: {} as PaceStore,
+    nextId: { current: 1 },
+    activeSessionId: { current: session.id },
+    sessionLines: { current: new Map() },
+    preSessionLines: { current: [] },
+    lastReasoningTokens: { current: new Map() },
+    setLines: value => { rendered = typeof value === "function" ? value(rendered) : value; },
+    setProcesses: () => {},
+  });
+
+  actions.renderSessionTurns(session);
+
+  expect(rendered.filter(item => item.role === "system").map(item => item.text)).toEqual([
+    "Pace switched to planning mode", "Vex chose plan",
+  ]);
 });

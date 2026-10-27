@@ -3,7 +3,7 @@ import type { Progress } from "../../integrations/codex.js";
 import type { Session } from "../../shared/types.js";
 import type { PaceStore } from "../../core/sessions.js";
 import { artifactPath } from "../../core/system/artifacts.js";
-import { formatTurnFooter } from "../turn-format.js";
+import { linesFromSession } from "../session-transcript.js";
 import { formatCommandActivity } from "../shell-runner.js";
 import { updateProcesses, type RunningProcess } from "../RunningProcesses.js";
 import type { Line } from "../Transcript.js";
@@ -81,65 +81,7 @@ export function createTranscriptActions({
     if (activeSessionId.current === sessionId) setLines(updated);
   };
   const renderSessionTurns = (targetSession: Session) => {
-    const newLines: Line[] = [];
-    let id = nextId.current;
-    for (const turn of targetSession.turns) {
-      newLines.push({
-        id: id++,
-        role: turn.displayPrompt ? "system" : "you",
-        text: turn.displayPrompt ?? turn.prompt,
-        spaceBefore: newLines.length > 0,
-      });
-      for (const prompt of turn.steeringPrompts ?? []) newLines.push({
-        id: id++, role: "you", text: `Steering: ${prompt}`, spaceBefore: false,
-      });
-      for (const action of turn.activities ?? []) newLines.push({
-        id: id++, role: "activity", text: action.text, spaceBefore: false,
-        activity: { category: action.category, detail: action.detail, completed: true,
-          outcome: action.outcome, durationMs: action.durationMs, tokens: action.tokens },
-      });
-      for (const item of turn.questions ?? []) newLines.push({
-        id: id++, role: "question", text: `${item.question}\nYou: ${item.answer}`, spaceBefore: false,
-      });
-      newLines.push({
-        id: id++,
-        role: turn.cancelled ? "meta" : turn.failed ? "error" : "codex",
-        text: turn.result,
-        spaceBefore: false,
-      });
-      if (turn.intent === "verify_plan" && !turn.failed) newLines.push({
-        id: id++, role: "verify-actions",
-        text: "Planner: `/plan <zmiany>` · verifier: użyj `v <wiadomość>`",
-        action: "revise-plan",
-        spaceBefore: false,
-      });
-      if (!turn.failed && (turn.stages?.length ?? 1) > 0) {
-        newLines.push({
-          id: id++,
-          role: "meta",
-          text: formatTurnFooter(turn.route, turn.routeNote, turn.usage, turn.durationMs, turn.estimatedCostUsd),
-          spaceBefore: false,
-        });
-      }
-      for (const artifact of turn.artifacts ?? []) {
-        newLines.push({
-          id: id++,
-          role: "artifact",
-          text: artifactPath(store, targetSession, artifact),
-          spaceBefore: false,
-        });
-      }
-      newLines.push({
-        id: id++,
-        role: "divider",
-        text: "",
-        spaceBefore: false,
-      });
-    }
-    if (targetSession.deferredTurn) newLines.push({
-      id: id++, role: "meta", spaceBefore: false,
-      text: `Automatic ${targetSession.deferredTurn.reason ?? "usage"} retry: ${targetSession.deferredTurn.reason === "network" ? "checking connection" : `resuming after ${new Date(targetSession.deferredTurn.retryAt).toLocaleString()}`}. Press Esc to cancel.`,
-    });
+    const { lines: newLines, nextId: id } = linesFromSession(targetSession, nextId.current, reference => artifactPath(store, targetSession, reference));
     nextId.current = id;
     sessionLines.current.set(targetSession.id, newLines);
     if (activeSessionId.current === targetSession.id) setLines(newLines);
