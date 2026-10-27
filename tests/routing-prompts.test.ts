@@ -17,6 +17,7 @@ it("creates an editable routing file and applies changes to Vex requests", async
   dir = await mkdtemp(join(tmpdir(), "pace-routing-prompts-"));
   const initial = loadRoutingPrompts(dir);
   expect(initial).toEqual(DEFAULT_ROUTING_PROMPTS);
+  expect(initial.control.choices).not.toHaveProperty("aside");
   const path = join(dir, routingPromptFile);
   const edited = JSON.parse(await readFile(path, "utf8"));
   edited.workflow.question = "Choose my workflow";
@@ -90,6 +91,19 @@ it("keeps sparse profiles isolated from the shipped defaults", async () => {
   }
   await writeFile(path, "{broken");
   expect(() => loadRoutingPrompts(dir!)).toThrow("Cannot load");
+});
+
+it("removes the retired automatic aside choice from existing customized prompt files", async () => {
+  dir = await mkdtemp(join(tmpdir(), "pace-routing-prompts-"));
+  const path = join(dir, routingPromptFile);
+  const customized = structuredClone(DEFAULT_ROUTING_PROMPTS);
+  (customized.control.choices as Record<string, string>).aside = "Old automatic aside option";
+  await writeFile(path, JSON.stringify(customized));
+
+  const prompts = loadRoutingPrompts(dir);
+
+  expect(prompts.control.choices).not.toHaveProperty("aside");
+  expect(JSON.parse(await readFile(path, "utf8")).control.choices).toHaveProperty("aside");
 });
 
 it("rejects malformed routing text with the field name", async () => {

@@ -1,3 +1,4 @@
+import { taskCriteria } from "./task-assessment.js";
 import { randomUUID } from "node:crypto";
 import type { AgentRole, Session, StageAttempt, WorkflowShape } from "../shared/types.js";
 import type { CodexRunner, Execution, Progress } from "../integrations/codex-types.js";
@@ -33,6 +34,7 @@ export function durableRunner(
     const id = randomUUID();
     const taskId = session.activeTask?.id ?? session.id;
     const record: StageAttempt = {
+      taskCriteria: structuredClone(taskCriteria(session.activeTask)),
       pricing: structuredClone(PRICE_SNAPSHOT),
       id, taskId, generation: session.activeTask?.workflow?.generation ?? 0, role, stage,
       status: "running", route: { ...route }, threadId, startedAt: new Date().toISOString(), observations: [],

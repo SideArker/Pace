@@ -1,3 +1,6 @@
+import { redactTrace, type PromptTrace } from "./prompt-trace.js";
+import { projectVexRequest } from "./vex/context.js";
+import { limitedAssessment } from "./task-assessment.js";
 import type { Session, TaskAssessment } from "../shared/types.js";
 import type { Progress } from "../integrations/codex-types.js";
 import { assessmentRequest, type VexRequest, type VexRouter } from "./vex/client.js";
@@ -16,7 +19,7 @@ export class VexUnavailableError extends Error {
   }
 }
 export function createTurnRouting({
-  vex, session, prompts, verifierTurn, routing, save, onProgress, signal,
+  vex, session, prompts, verifierTurn, routing, save, onProgress, signal, trace,
 }: {
   vex: Pick<VexRouter, "choose">;
   session: Session;
@@ -26,15 +29,20 @@ export function createTurnRouting({
   save: () => Promise<void>;
   onProgress: (progress: Progress) => void;
   signal?: AbortSignal;
+  trace?: PromptTrace;
 }) {
   const choose = async (
     request: VexRequest,
     objective: string,
   ): Promise<RoutingDecision> => {
+    const entry: PromptTrace["vex"][number] = { objective, request: redactTrace(request) };
+    try { entry.request = redactTrace(projectVexRequest(request).request); } catch { /* The decision validator records projection failures. */ }
+    trace?.vex.push(entry);
     const decisionStarted = performance.now();
     const result = await chooseDecision({
-      vex, request, signal, checkAborted: () => signal?.throwIfAborted(),
-      accept: async (decision, attempt) => {
+      vex, request, signal, prompts, checkAborted: () => signal?.throwIfAborted(),
+      accept: async (decision, attempt, details) => {
+        entry.decision = redactTrace(decision);
         routing.push({
           objective,
           choice: decision.choice,
@@ -44,7 +52,7 @@ export function createTurnRouting({
           attempts: attempt,
         });
         session.controlDecisions = [...(session.controlDecisions ?? []), {
-          ...decisionAudit(decisionStarted, attempt, decision),
+          ...decisionAudit(decisionStarted, attempt, decision, undefined, details),
           taskId: session.activeTask?.id, stage: session.activeTask?.workflow?.stage,
           role: verifierTurn ? "verifier" : request.context.stageObjective === prompts.objectives.scout ? "scout" : "main", objective, at: new Date().toISOString(),
         }];
@@ -53,8 +61,9 @@ export function createTurnRouting({
       },
     });
     if (result.ok) return result.value;
+    entry.error = String(result.failure);
     session.controlDecisions = [...(session.controlDecisions ?? []), {
-      ...decisionAudit(decisionStarted, 2, undefined, result.failure),
+      ...decisionAudit(decisionStarted, result.details.requestAttempts.length, undefined, result.failure, result.details),
       taskId: session.activeTask?.id, stage: session.activeTask?.workflow?.stage,
       role: verifierTurn ? "verifier" : "main", objective, at: new Date().toISOString(),
     }];
@@ -69,11 +78,17 @@ export function createTurnRouting({
       const record = session.controlDecisions!.at(-1)!;
       record.attemptId = attemptId; record.taskId = attempt.taskId; record.role = attempt.role; record.stage = attempt.stage;
       const currentAttempt = session.attempts!.find(item => item.id === attemptId)!;
-      currentAttempt.assessment = { value: decision.choice as TaskAssessment, evidence: currentAttempt.observations.length, decisionId: record.id };
-      if (updateTask && session.activeTask) session.activeTask.assessment = decision.choice as TaskAssessment;
+      currentAttempt.assessment = limitedAssessment(currentAttempt, session.activeTask, decision.choice as TaskAssessment, record.id, record.projection?.requiredEvidenceOmitted ?? false);
+      if (updateTask && session.activeTask) session.activeTask.assessment = currentAttempt.assessment.value;
       await save();
     } catch (error) {
       if (error instanceof TransitionSaveError) throw error;
+      const currentAttempt = session.attempts!.find(item => item.id === attemptId)!;
+      const record = session.controlDecisions?.at(-1);
+      if (record?.failed) {
+        record.attemptId = attemptId; record.taskId = attempt.taskId; record.role = attempt.role; record.stage = attempt.stage;
+        currentAttempt.assessment = limitedAssessment(currentAttempt, session.activeTask, undefined, record.id, true);
+      }
       if (updateTask && session.activeTask) session.activeTask.assessment = "unknown";
       onProgress({ kind: "error", text: `Task completion is unknown: ${String(error)}` });
       await save();
