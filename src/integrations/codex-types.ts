@@ -7,7 +7,8 @@ export type UserQuestion = { id: string; header: string; question: string; optio
 export type UserAnswers = Record<string, { answers: string[] }>;
 export type Progress = (
   | { kind: "steering"; steer?: (prompt: string) => Promise<void> }
-  | { kind: "status" | "message" | "error" | "thread" | "system"; text: string }
+  | { kind: "status" | "error" | "thread" | "system"; text: string }
+  | { kind: "message"; text: string; id?: string; completed?: boolean }
   | { kind: "route"; route: Route }
   | { kind: "usage"; usage: Usage }
   | { kind: "activity"; id: string; category: "thinking" | "command" | "files" | "tool" | "search" | "plan"; title: string; detail?: string; completed: boolean; outcome?: "success" | "failure" }

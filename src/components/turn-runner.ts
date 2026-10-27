@@ -24,7 +24,7 @@ type TurnJob = {
 };
 type PendingApproval = Extract<Progress, { kind: "approval" }> & { owner?: AbortController };
 type PendingQuestion = Extract<Progress, { kind: "question" }> & { owner?: AbortController };
-type AddLine = (sessionId: string, role: Line["role"], text: string) => void;
+type AddLine = (sessionId: string, role: Line["role"], text: string, options?: Pick<Line, "sourceId" | "streaming">) => void;
 type Status = (sessionId: string, value: string) => void;
 
 export type { TurnJob, PendingApproval, PendingQuestion };
@@ -93,6 +93,7 @@ export function createTurnRunner({
     let recoveredSession: Session | undefined;
     let activeRoute: Route = turnSession.route;
     let emittedMessages = 0;
+    const streamingMessages = new Map<string, string>();
     const controller = new AbortController();
     const turnId = ++turnSequence.current;
     const sessionId = turnSession.id;
@@ -157,7 +158,7 @@ export function createTurnRunner({
           }
           if (progress.kind === "system") addFor(sessionId, "system", progress.text);
           if (progress.kind === "activity") {
-            activityFor(sessionId, { ...progress, id: `turn-${turnId}-${progress.id}` });
+            activityFor(sessionId, { ...progress, id: `turn-${turnId}-${progress.attemptId ?? "main"}-${progress.id}` });
             setStatusFor(sessionId, progress.category === "command" ? formatCommandStatus(progress.title) : progress.title);
           }
           if (progress.kind === "tasks") {
@@ -169,10 +170,15 @@ export function createTurnRunner({
           if (progress.kind === "questionResolved") dismissQuestion(progress.id, sessionId);
           if (progress.kind === "error") addFor(sessionId, "error", progress.text);
           if (progress.kind === "message") {
-            setStatusFor(sessionId, "Finishing response…");
-            if (progress.text.trim()) {
-              addFor(sessionId, "codex", progress.text);
-              emittedMessages++;
+            setStatusFor(sessionId, progress.completed === false ? "Responding…" : "Finishing response…");
+            const sourceId = progress.id ? `turn-${turnId}-${progress.attemptId ?? "main"}-${progress.id}` : undefined;
+            if (progress.text.trim() || sourceId && streamingMessages.has(sourceId)) {
+              addFor(sessionId, "codex", progress.text, sourceId ? { sourceId, streaming: progress.completed === false } : undefined);
+              if (progress.completed !== false && progress.text.trim()) emittedMessages++;
+              if (sourceId) {
+                if (progress.completed === false) streamingMessages.set(sourceId, progress.text);
+                else streamingMessages.delete(sourceId);
+              }
             }
           }
         },
@@ -306,6 +312,7 @@ export function createTurnRunner({
         setStatusFor(sessionId, "Failed");
       }
     } finally {
+      for (const [sourceId, text] of streamingMessages) addFor(sessionId, "codex", text, { sourceId, streaming: false });
       const job = jobs.current.get(sessionId);
       await job?.pendingSteer?.catch(() => {});
       const lastTurn = turnSession.turns.at(-1);

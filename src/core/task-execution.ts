@@ -50,6 +50,10 @@ export function durableRunner(
     let progressSave: Promise<void> | undefined;
     let saveAgain = false;
     let autosaveTimer: ReturnType<typeof setInterval> | undefined;
+    const activityObservations = new Map<string, number>();
+    const messageObservations = new Map<string, number>();
+    let tasksObservation: number | undefined;
+    let lastMessageObservation: number | undefined;
     const saveProgress = () => {
       if (progressSave) { saveAgain = true; return progressSave; }
       progressSave = (async () => {
@@ -78,9 +82,20 @@ export function durableRunner(
     const progress = (event: Progress) => {
       const attempt = current();
       if (event.kind === "thread") attempt.threadId = event.text;
-      if (event.kind === "activity") attempt.observations.push({ kind: "activity", text: `${event.category}: ${event.title}${event.detail ? `\n${event.detail}` : ""}${event.outcome ? `\nOutcome: ${event.outcome}` : ""}` });
+      if (event.kind === "activity") {
+        const index = activityObservations.get(event.id) ?? attempt.observations.length;
+        activityObservations.set(event.id, index);
+        attempt.observations[index] = { kind: "activity", text: `${event.category}: ${event.title}${event.detail ? `\n${event.detail}` : ""}${event.outcome ? `\nOutcome: ${event.outcome}` : ""}` };
+      }
+      if (event.kind === "message" && event.id) {
+        const index = messageObservations.get(event.id) ?? attempt.observations.length;
+        messageObservations.set(event.id, index);
+        attempt.observations[index] = { kind: "answer", text: event.text };
+        lastMessageObservation = index;
+      }
       if (event.kind === "tasks") {
-        attempt.observations.push({ kind: "tasks", items: event.items });
+        tasksObservation ??= attempt.observations.length;
+        attempt.observations[tasksObservation] = { kind: "tasks", items: event.items };
         if (role === "main") session.tasks = updateAgentTasks(session.tasks, event.items);
         if (role === "verifier") {
           session.verifier ??= { route: { ...route } };
@@ -116,7 +131,8 @@ export function durableRunner(
       attempt.result = execution.result; attempt.threadId = execution.threadId ?? attempt.threadId; attempt.turnId = execution.turnId;
       attempt.usage = execution.usage; attempt.knownUsage = execution.knownUsage ?? execution.usage;
       attempt.usageComplete = execution.usageComplete ?? !!execution.usage;
-      attempt.observations.push({ kind: "answer", text: execution.result });
+      if (lastMessageObservation === undefined || attempt.observations[lastMessageObservation]?.text !== execution.result)
+        attempt.observations.push({ kind: "answer", text: execution.result });
       finish(attempt, started);
       setStageStatus(attempt.status);
       await persistResult();

@@ -86,27 +86,41 @@ export function fileChangeProgress(item: JsonRecord, completed: boolean, project
   };
 }
 
+export function reasoningSummaryParts(summary: unknown): string[] {
+  if (typeof summary === "string") return [summary];
+  if (!Array.isArray(summary)) return [];
+  return summary.map(part => typeof part === "string" ? part
+    : isRecord(part) && part.type === "summary_text" && typeof part.text === "string" ? part.text : "");
+}
+
+export function appPlanProgress(plan: unknown): Extract<Progress, { kind: "tasks" }> {
+  const steps = Array.isArray(plan) ? plan.filter(isRecord) : [];
+  return { kind: "tasks", items: steps.flatMap(step => {
+    const text = step.step ?? step.text;
+    return typeof text === "string" && text.trim()
+      ? [{ text, completed: step.status === "completed" || step.completed === true }] : [];
+  }) };
+}
+
 export function appItemProgress(item: JsonRecord, event: string, project: string): Progress | undefined {
   const id = typeof item.id === "string" ? item.id : "codex-item";
   const completed = event === "item/completed";
   switch (item.type) {
-    case "reasoning": return { kind: "activity", id, category: "thinking", title: "Thinking", detail: typeof item.summary === "string" ? item.summary : undefined, completed };
-    case "agentMessage": return completed && typeof item.text === "string" ? { kind: "message", text: item.text } : undefined;
+    case "reasoning": return { kind: "activity", id, category: "thinking", title: "Thinking", detail: reasoningSummaryParts(item.summary).filter(Boolean).join("\n\n") || undefined, completed };
+    case "agentMessage": return typeof item.text === "string" ? { kind: "message", id, text: item.text, completed } : undefined;
     case "commandExecution": return {
       kind: "activity", id, category: "command",
       title: `${completed ? item.status === "failed" || item.status === "declined" ? "Failed" : "Ran" : "Running"}: ${String(item.command ?? "command")}${typeof item.exitCode === "number" ? ` (exit ${item.exitCode})` : ""}`,
       detail: typeof item.aggregatedOutput === "string" ? item.aggregatedOutput : undefined,
       completed,
-      outcome: item.status === "failed" || item.status === "declined" || (typeof item.exitCode === "number" && item.exitCode !== 0) ? "failure" : "success",
+      outcome: completed ? item.status === "failed" || item.status === "declined" || (typeof item.exitCode === "number" && item.exitCode !== 0) ? "failure" : "success" : undefined,
     };
     case "fileChange": return fileChangeProgress(item, completed, project);
     case "webSearch": return { kind: "activity", id, category: "search", title: `Web search: ${String(item.query ?? "")}`, completed };
     case "mcpToolCall": return { kind: "activity", id, category: "tool", title: toolTitle(String(item.server ?? "unknown"), String(item.tool ?? "unknown"), item.arguments), completed, outcome: item.status === "failed" || item.error ? "failure" : "success" };
     case "plan": {
       const steps = Array.isArray(item.steps) ? item.steps.filter(isRecord) : [];
-      if (steps.length) return { kind: "tasks", items: steps.map(step => ({
-        text: String(step.step ?? step.text ?? ""), completed: step.status === "completed" || step.completed === true,
-      })).filter(step => step.text) };
+      if (steps.length) return appPlanProgress(steps);
       return { kind: "activity", id, category: "plan", title: "Plan", detail: typeof item.text === "string" ? item.text : undefined, completed };
     }
     default: return undefined;

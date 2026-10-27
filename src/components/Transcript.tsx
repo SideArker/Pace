@@ -33,12 +33,13 @@ export type Line = {
   };
   action?: "revise-plan" | "continue-verifier";
   sourceId?: string;
+  streaming?: boolean;
 };
 
 // Ink can only append settled lines to terminal history. Keep running activity
 // live, along with later lines that may still need to be redrawn.
 export function splitTranscript(lines: Line[]): { history: Line[][]; live: Line[] } {
-  let settledEnd = lines.findIndex(line => line.activity && !line.activity.completed);
+  let settledEnd = lines.findIndex(line => line.streaming || line.activity && !line.activity.completed);
   if (settledEnd < 0) settledEnd = lines.length;
   while (settledEnd > 0 && lines[settledEnd - 1]?.activity?.category === "thinking") settledEnd--;
 

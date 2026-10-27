@@ -4,7 +4,8 @@ import type { Usage } from "@openai/codex-sdk";
 import { CodexRunError, type ApprovalDecision, type CodexRunner, type Execution, type Progress, type RunnerMode, type UserAnswers } from "./codex-types.js";
 import { AppServer, isRecord, type AppServerConnection, type JsonRecord } from "./app-server-process.js";
 import { appServerThreadParams, appServerTurnParams } from "./app-server-protocol.js";
-import { appItemProgress, fileChangeProgress } from "./codex-events.js";
+import { fileChangeProgress } from "./codex-events.js";
+import { AppServerProgress } from "./app-server-progress.js";
 import { TurnUsage } from "./app-server-usage.js";
 import { registerAppServerRequests } from "./app-server-requests.js";
 import { turnImageInput } from "./image-input.js";
@@ -179,6 +180,7 @@ export class AppServerRunner implements CodexRunner {
     let completed = false;
     let acceptingSteers = false;
     const pendingSteers = new Set<Promise<void>>();
+    const events = new AppServerProgress(cwd);
     const questions = new Map<string, (answers: UserAnswers) => void>();
     let turnResolve!: () => void;
     const turnDone = new Promise<void>(resolve => { turnResolve = resolve; });
@@ -226,11 +228,10 @@ export class AppServerRunner implements CodexRunner {
         return;
       }
       const item = isRecord(params.item) ? params.item : undefined;
-      if (!item) return;
-      if (item.type === "agentMessage" && message.method === "item/completed" && typeof item.text === "string") {
+      if (item?.type === "agentMessage" && message.method === "item/completed" && typeof item.text === "string") {
         result = item.text;
       }
-      const progress = appItemProgress(item, message.method ?? "", cwd);
+      const progress = events.observe(message.method ?? "", params);
       if (progress) {
         void onProgress(progress);
       }

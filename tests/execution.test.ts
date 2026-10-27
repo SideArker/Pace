@@ -997,8 +997,8 @@ it('preserves all completed agent messages across multiple turn steps in AppServ
   }));
   const execution = await runner.run('work', process.cwd(), { model: 'gpt-6-sol', effort: 'high' }, undefined, event => { progress.push(event); });
   expect(progress.filter(event => event.kind === 'message')).toEqual([
-    { kind: 'message', text: 'Step 1 starting' },
-    { kind: 'message', text: 'Step 2 done' },
+    { kind: 'message', id: 'msg-1', text: 'Step 1 starting', completed: true },
+    { kind: 'message', id: 'msg-2', text: 'Step 2 done', completed: true },
   ]);
   expect(execution.result).toBe('Step 2 done');
 });

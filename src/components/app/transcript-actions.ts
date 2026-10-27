@@ -22,11 +22,13 @@ type TranscriptOptions = {
 export function createTranscriptActions({
   store, nextId, activeSessionId, sessionLines, preSessionLines, lastReasoningTokens, setLines, setProcesses
 }: TranscriptOptions) {
-  const addFor = (sessionId: string, role: Line["role"], text: string) => {
+  const addFor = (sessionId: string, role: Line["role"], text: string, options?: Pick<Line, "sourceId" | "streaming">) => {
     const old = sessionLines.current.get(sessionId) ?? [];
-    const updated: Line[] = [...old, {
+    const index = options?.sourceId ? old.findIndex(line => line.sourceId === options.sourceId) : -1;
+    const updated: Line[] = index >= 0 ? old.map((line, at) => at === index ? { ...line, text, ...options } : line) : [...old, {
       id: nextId.current++, role, text,
       spaceBefore: role === "you" && old.length > 0,
+      ...options,
     }];
     sessionLines.current.set(sessionId, updated);
     if (activeSessionId.current === sessionId) setLines(updated);
