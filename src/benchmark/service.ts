@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, appendFile, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { verifyFrozenSources } from './drivers/context-models-continue.js';
+import { verifyFrozenSources } from './frozen.js';
 import { benchmarkProvenance } from '../entrypoints/benchmark-provenance.js';
 import { acquireLock, assertDebug, atomicJson, atomicWrite, hash, json, resultsRoot, repositoryRoot, runDirectory } from './storage.js';
 import { preflight } from './preflight.js';
@@ -37,7 +37,7 @@ export async function startRun(selection: Selection, options: Options={}) {
     const provenance=await benchmarkProvenance();
     const id=`${preview.profile.category}-${new Date().toISOString().replace(/[^0-9]/g,'')}-${randomUUID().slice(0,8)}`;
     const dir=join(root,id);await mkdir(dir);
-    const manifest:RunManifest={schemaVersion:1,id,createdAt:new Date().toISOString(),preview,...provenance,priceSnapshot:preview.profile.category==='context-models'?(await import('./drivers/context-models-support.js')).PRICES:JSON.parse(await readFile(join(repositoryRoot,'versions.json'),'utf8')).pricing,controlled:false};
+    const manifest:RunManifest={schemaVersion:1,id,createdAt:new Date().toISOString(),preview,...provenance,priceSnapshot:JSON.parse(await readFile(join(repositoryRoot,'versions.json'),'utf8')).pricing,controlled:false};
     await atomicJson(join(dir,'center-manifest.json'),manifest);
     await release.setRun(id);runRelease=await acquireLock(dir);await runRelease.setRun(id);
     return await execute(dir,manifest,1,{...options,registerChild:async pid=>{await release.registerChild(pid);await runRelease!.registerChild(pid);}});
@@ -93,7 +93,7 @@ async function execute(dir: string, manifest: RunManifest, segment: number, opti
     calls: previous.allAttempts, knownUsd: previous.codex.knownSubtotalUsd + previous.vex.knownSubtotalUsd });
   const fromTs = import.meta.url.endsWith('.ts');
   const worker = fileURLToPath(new URL(fromTs ? './worker.ts' : './worker.js', import.meta.url));
-  const args = [...(manifest.preview.profile.category === 'diagnostics' ? ['--expose-gc'] : []),
+  const args = [
     ...(fromTs ? ['--import', 'tsx'] : []), worker, payload];
   const blocked = options.canStart?.();
   if (blocked) throw new Error(blocked);

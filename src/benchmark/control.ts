@@ -1,16 +1,13 @@
 import { appendFileSync } from 'node:fs';
 import type { Route } from '../shared/types.js';
-import type { Usage } from '@openai/codex-sdk';
-import type { Config } from '../shared/types.js';
-import type { RoutingPrompts } from '../core/routing/routing-prompts.js';
+import type { Usage } from '../shared/types.js';
 import { assertDebug } from './storage.js';
 import { costForUsage, type PriceSnapshot } from '../core/routing/pricing.js';
 import { randomUUID } from 'node:crypto';
 import type { Event } from './types.js';
-type Context = { signal: AbortSignal; events: string; completed: Set<string>; maxTurns: number; timeoutMs?: number; maxUsd?: number; calls: number; knownUsd: number; trial?: string; trialAttempt?: string; segment?: number; prices?: PriceSnapshot; effective?: {config:Config;prompts:RoutingPrompts}; onEvent?: (event: Event)=>void };
+type Context = { signal: AbortSignal; events: string; completed: Set<string>; maxTurns: number; timeoutMs?: number; maxUsd?: number; calls: number; knownUsd: number; trial?: string; trialAttempt?: string; segment?: number; prices?: PriceSnapshot; onEvent?: (event: Event)=>void };
 let context: Context | undefined;
 export function configureControl(value: Context | undefined) { context=value; }
-export function effectiveConfiguration() { return context?.effective; }
 export function emit(kind: string, fields: Record<string,unknown>={}) {
   if(!context) return;
   const event={at:new Date().toISOString(),kind,segment:context.segment,trialAttempt:context.trialAttempt,...fields};
