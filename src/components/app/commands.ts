@@ -20,6 +20,8 @@ export const commands = [
   "/btw",
   "/adopt",
   "/artifacts",
+  "/links",
+  "/debug",
   "/trust",
   "/skills",
   "/stats",
@@ -48,6 +50,8 @@ export const commandArguments: Record<string, string> = {
   "/skills": "[folder|enable|disable|auto|off]",
   "/btw": "<question>",
   "/adopt": "<side-answer-id>",
+  "/links": "[number]",
+  "/debug": "[turn-number]",
 };
 export const skillArguments = (skillName: string): string => {
   if (skillName === "caveman") return "[mode]";
@@ -73,6 +77,8 @@ export const commandDescriptions: Record<string, string> = {
   "/btw": "Ask a read-only side question with a separate agent",
   "/adopt": "Forward a selected side answer to the active task",
   "/artifacts": "Show generated artifacts",
+  "/links": "List transcript links; /links <number> opens a link",
+  "/debug": "Inspect local prompt provenance and separate routing decisions",
   "/trust": "Manage trusted project folders",
   "/skills": "Discover and manage agent skills",
   "/stats": "Show conversation stats and token costs",

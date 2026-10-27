@@ -1,3 +1,5 @@
+import { markdownLinks, openLink } from "../../core/system/links.js";
+import { debugTurn } from "../../core/prompt-trace.js";
 import { isDebugBuild } from "../../core/build-mode.js";
 import type { Dispatch, SetStateAction } from "react";
 import type { Session } from "../../shared/types.js";
@@ -10,7 +12,7 @@ import { contextPercent, measuredContext } from "../../core/context.js";
 import { currentManifestSource, newerPaceVersion, refreshVersionManifest } from "../../core/routing/pricing.js";
 import type { Line } from "../Transcript.js";
 
-export const infoCommands = ["/help", "/tasks", "/mcp", "/context", "/version", "/artifacts", "/stats"];
+export const infoCommands = ["/help", "/links", "/debug", "/tasks", "/mcp", "/context", "/version", "/artifacts", "/stats"];
 
 type InfoOptions = {
   session: Session;
@@ -27,10 +29,27 @@ export async function showCommandInfo(command: string, parts: string[], {
   if (command === "/help") {
     add(
       "info",
-      "/plan [prompt] · /execute · /verify [file] [prompt] · /models · /mcp [list] · /auto · /manual [model] [effort] · /workflow [name|auto] · /approval [full-access|request-approval|limited] · /remote · /tasks · /new · /convo · /diff · /undo · /redo · /compact · /context · /retry · /cancelretry · /btw <q> · /adopt <side-answer-id> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /stats · /clear · /exit · Esc cancels automatic retry; Esc twice/Ctrl+C cancels other turns · Ctrl+Z undo · Ctrl+Y redo · Alt+P/Ctrl+P plan · Alt+E/Ctrl+E execute · ! Bash · Ctrl+O toggle command, diff, and reasoning details · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
+      "/plan [prompt] · /execute · /verify [file] [prompt] · /models · /mcp [list] · /auto · /manual [model] [effort] · /workflow [name|auto] · /approval [full-access|request-approval|limited] · /remote · /tasks · /new · /convo · /diff · /undo · /redo · /compact · /context · /retry · /cancelretry · /btw <q> · /adopt <side-answer-id> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /stats · /clear · /exit · Esc cancels automatic retry; Esc twice/Ctrl+C cancels other turns · Ctrl+Z undo · Ctrl+Y redo · Alt+P/Ctrl+P plan · Alt+E/Ctrl+E execute · ! Bash · /links [number] lists/opens Markdown links · /debug [turn] inspects local prompts · Ctrl+O toggle plan, scout, command, diff, and reasoning details · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",
     );
     if (isDebugBuild) add("info", "/benchmark opens Benchmark Center (debug only). Preview and results make no model calls; Start requires idle jobs and queues.");
     add("info", "With multiple open conversations, press Down from the input to focus the picker. Use arrows and Enter to switch; Esc returns to input. Ctrl+C cancels the selected turn. /exit quits.");
+    return;
+  }
+  if (command === "/debug") {
+    const index = parts.length ? Number(parts[0]) - 1 : session.turns.length - 1;
+    if (parts.length > 1 || !Number.isInteger(index) || !session.turns[index]) { add("error", "Use /debug [turn-number] for a saved turn."); return; }
+    add("debug", debugTurn(session, index));
+    return;
+  }
+  if (command === "/links") {
+    const sources = session.turns.flatMap(turn => [turn.prompt, turn.result, ...(turn.stages ?? []).flatMap(stage => stage.handoff ? [stage.handoff] : [])]);
+    if (session.executionSource) sources.push(session.executionSource.plan);
+    const links = sources.flatMap(source => markdownLinks(source));
+    if (!parts.length) { add("info", links.length ? links.map((link, i) => `${i + 1}. ${link.label} → ${link.target}`).join("\n") + "\nOpen with /links <number>." : "No supported Markdown links in this conversation."); return; }
+    const index = Number(parts[0]) - 1;
+    if (parts.length !== 1 || !Number.isInteger(index) || !links[index]) { add("error", "Select a link number from /links."); return; }
+    try { await openLink(links[index]!.target); add("info", `Opened ${links[index]!.label}`); }
+    catch (error) { add("error", `Could not open link: ${String(error)}`); }
     return;
   }
   if (command === "/tasks") {

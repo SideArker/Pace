@@ -12,6 +12,7 @@ import type { CodexRunner } from "../src/integrations/codex-types.js";
 import { CodexRunError } from "../src/integrations/codex-types.js";
 import type { VexRequest } from "../src/core/vex/requests.js";
 import { decision } from "./routing-fixture.js";
+import { buildAsidePrompt } from "../src/core/side-answers.js";
 
 vi.mock("../src/core/routing/pricing.js", async original => {
   const module = await original<typeof import("../src/core/routing/pricing.js")>();
@@ -22,6 +23,22 @@ afterEach(async () => { vi.restoreAllMocks(); await Promise.all(roots.splice(0).
 const config: Config = { routingMode: "auto", defaultRoute: { model: "gpt-6.1-sol", effort: "medium" }, models: [{ model: "gpt-6.1-sol", efforts: ["medium", "high"] }] };
 const usage = { input_tokens: 100, cached_input_tokens: 20, cache_write_input_tokens: 0, output_tokens: 10, reasoning_output_tokens: 0 };
 const report = JSON.stringify({ summary: "Located code; implementation remains", findings: [], checks: [], risks: [], nextSteps: ["Implement"] });
+
+it("bounds the model-facing aside snapshot while retaining recent evidence and the full Pace record", () => {
+  const session = newSession(process.cwd(), "auto");
+  session.activeTask = { id: "task", originalRequest: "Inspect the feature", instructions: [], latestOutcome: "Still investigating" };
+  const observations = Array.from({ length: 434 }, (_, index) => ({ kind: "activity" as const, text: `${index}: ${"x".repeat(2_600)}` }));
+  session.attempts = [{ id: "attempt", taskId: "task", generation: 1, stage: "final", role: "main", status: "completed", route: {}, startedAt: "now", observations, result: "Main attempt complete" }];
+  const fullLength = JSON.stringify(session.attempts[0]!.observations).length;
+
+  const prompt = buildAsidePrompt("Summarize the work so far", session, "Answer the side question", "now");
+
+  expect(prompt.length).toBeLessThan(100_000);
+  expect(prompt).toContain("Summarize the work so far");
+  expect(prompt).toContain("433:");
+  expect(prompt).toContain("Older or excess context omitted");
+  expect(JSON.stringify(session.attempts[0]!.observations)).toHaveLength(fullLength);
+});
 async function setup(shape = "single") {
   const root = await mkdtemp(join(tmpdir(), "pace-workflow-")); roots.push(root);
   const store = new PaceStore(join(root, "storage")); const session = newSession(root, "auto");
@@ -66,14 +83,25 @@ it("deliberate replan creates a new workflow generation and reruns only explicit
   expect(new Set(env.session.attempts?.map(item => item.id)).size).toBe(4);
 });
 
-for (const action of ["continue", "reroute", "replace", "aside", "clarify"]) it(`executes semantic ${action} for identical short follow-up`, async () => {
+for (const action of ["continue", "reroute", "replace", "clarify"]) it(`executes semantic ${action} for identical short follow-up`, async () => {
   const env = await setup(); await env.orchestrator.turn("Implement the feature", env.session, config, () => {});
   const id = env.session.activeTask?.id; const thread = env.session.threadId; const route = structuredClone(env.session.route);
   const before = env.calls.length; env.setAction(action);
   const outcome = await env.orchestrator.turn("OK", env.session, config, () => {});
   if (action === "clarify") expect(env.calls).toHaveLength(before);
-  else if (action === "aside") { expect(outcome.role).toBe("aside"); expect(outcome.session.sideAnswers).toHaveLength(1); expect(env.session.threadId).toBe(thread); expect(env.session.route).toEqual(route); }
   else { expect(env.calls).toHaveLength(before + 1); expect(env.calls.at(-1)?.[3]).toBe(thread); expect(env.session.activeTask?.id === id).toBe(action !== "replace"); }
+});
+
+it("removes automatic aside from task control while preserving explicit /btw", async () => {
+  const env = await setup();
+  await env.orchestrator.turn("Implement the feature", env.session, config, () => {});
+  await env.orchestrator.turn("Continue the feature", env.session, config, () => {});
+  const control = env.requests.find(request => request.question === DEFAULT_ROUTING_PROMPTS.control.question)!;
+  expect(control.options.map(option => option.id)).not.toContain("aside");
+
+  const outcome = await env.orchestrator.turn("/btw Explain this detail", env.session, config, () => {});
+  expect(outcome.role).toBe("aside");
+  expect(env.session.sideAnswers).toHaveLength(1);
 });
 
 it("does not start a stage if its mandatory start save fails", async () => {
@@ -145,7 +173,7 @@ it("bounds assessment and continuation evidence after huge command output withou
   await env.orchestrator.turn("Implement and test", env.session, config, progress);
   await env.orchestrator.turn("Continue", env.session, config, progress);
   expect(errors).toEqual([]);
-  expect(env.session.activeTask?.assessment).toBe("partial");
+  expect(env.session.activeTask?.assessment).toBe("unknown");
   const loaded = (await env.store.load(env.root, env.session.id))!;
   expect(loaded.attempts?.[0]?.observations.some(item => item.text?.includes(output))).toBe(true);
   expect(env.requests.filter(item => item.options[0]?.id === "closed").every(item => (item.context.projection as { truncated?: boolean })?.truncated)).toBe(true);
@@ -446,4 +474,42 @@ it("concurrent side snapshots attach each result to its own durable attempt", as
   const saved = (await env.store.load(env.root, env.session.id))!;
   expect(saved.sideAnswers).toHaveLength(2);
   for (const answer of saved.sideAnswers!) expect(saved.attempts!.find(item => item.id === answer.attemptId)?.result).toBe(answer.result);
+});
+
+// Freeze request ordering and lead ownership before durability/projection changes.
+for (const action of ["continue", "reroute", "replan"]) it(`regression: ${action} keeps the established routing protocol`, async () => {
+  const env = await setup("single");
+  await env.orchestrator.turn("Implement", env.session, config, () => {});
+  const before = env.requests.length;
+  const lead = structuredClone(env.session.activeTask!.workflow!.mainRoute);
+  env.setAction(action);
+  await env.orchestrator.turn("Continue the same task", env.session, config, () => {});
+  expect(env.requests.slice(before).map(item => item.options[0]?.id)).toEqual(
+    action === "continue" ? ["continue", "closed"] : action === "reroute" ? ["continue", "0:medium", "closed"] : ["continue", "single", "0:medium", "closed"],
+  );
+  expect(env.session.activeTask!.workflow!.mainRoute).toEqual(lead);
+});
+
+it("regression: explicit manual lead survives restart without consulting routing choices", async () => {
+  const env = await setup();
+  env.session.routingMode = "manual";
+  env.session.manualWorkflow = { shape: "single", routes: { final: { model: "gpt-6.1-sol", effort: "high" } } };
+  const manual = { ...config, routingMode: "manual" as const };
+  await env.orchestrator.turn("Work", env.session, manual, () => {});
+  const loaded = (await new PaceStore(env.store.baseDir).load(env.root, env.session.id))!;
+  await env.orchestrator.turn("Continue", loaded, manual, () => {});
+  expect(env.calls.map(call => call[2])).toEqual(Array(2).fill({ model: "gpt-6.1-sol", effort: "high" }));
+  expect(env.requests.every(request => request.options[0]?.id === "closed")).toBe(true);
+});
+
+it("ordinary continuation records control but does not repeat workflow choice or transcript chatter", async () => {
+  const env = await setup("scout");
+  await env.orchestrator.turn("Inspect and implement routing", env.session, config, () => {});
+  const before = env.requests.length;
+  const notices: string[] = [];
+  await env.orchestrator.turn("Continue with the remaining changes and verification", env.session, config, event => { if (event.kind === "system") notices.push(event.text); });
+  expect(env.requests.slice(before).some(request => request.options.some(option => option.id === "single"))).toBe(false);
+  expect(notices.some(text => /Vex chose|retained.*workflow|lead route/.test(text))).toBe(false);
+  expect(env.session.turns.at(-1)?.promptTrace?.vex.some(entry => entry.objective === "task control")).toBe(true);
+  expect(env.session.turns.at(-1)?.scoutHandoff).toBe(env.session.turns[0]?.scoutHandoff);
 });
