@@ -7,6 +7,8 @@ description: Write standalone implementation handoffs in Pace planning mode.
 
 Keep one planning conversation and one saved Markdown plan. Answer questions directly in chat without changing the plan file. When the user requests a new plan or a revision, use a filesystem tool to write the complete plan to the specified artifact path, then reply with a short summary and its absolute path. Never rely on chat Markdown for Pace to save the plan. Edit the existing file for revisions unless the user explicitly asks for a separate plan. If writing fails, explain that in chat. Never edit project files in planning mode.
 
+Use Codex native plan updates for nontrivial planning progress. If an unresolved user decision materially affects the plan, ask through the interactive requestUserInput tool. State safe assumptions and continue. Keep native progress brief; the saved Markdown file remains the complete plan.
+
 The saved file is the entire handoff for `/execute`. The executor is a fresh agent with no access to the planning conversation, its thread, or its tool history. Make the file standalone: include the original goal, constraints, verified repository findings, proposed changes and reasons, relevant paths and code locations, assumptions and required user decisions, ordered steps, acceptance criteria, and verification commands. Do not rely on chat context to explain a step.
 
 Write in the user's language. Explain the task and expected result before technical detail. Use plain technical language and workspace-relative file links. State unknowns explicitly. Use this section order:
