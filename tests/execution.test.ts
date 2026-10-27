@@ -4,13 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Orchestrator } from '../src/core/orchestrator.js';
 import { PaceStore, newSession, undoConversationTurn } from '../src/core/sessions.js';
-import { AppServerRunner, appServerThreadParams, appServerTurnParams, appUsage, codexOptions, eventProgress, SdkRunner, type CodexRunner, type Progress } from '../src/integrations/codex.js';
+import { AppServerRunner, appServerThreadParams, appServerTurnParams, appUsage, type CodexRunner, type Progress } from '../src/integrations/codex.js';
 import { serverArgs } from '../src/integrations/app-server-process.js';
 import type { Config, Route } from '../src/shared/types.js';
 import type { VexRequest } from '../src/core/vex/client.js';
 import { decision, singleVex } from './routing-fixture.js';
 import { checkpointDue } from '../src/core/checkpoint.js';
-import { sdkThreadOptions } from '../src/integrations/sdk-runner.js';
 import { executePlanPrompt } from '../src/core/orchestrator-helpers.js';
 
 vi.mock("../src/core/routing/pricing.js", async original => {
@@ -126,7 +125,7 @@ it('routes a continuation into the Codex thread when Pace lacks the original tas
     return decision(request, request.options[0]?.id === 'continue' ? 'continue' : request.options.some(option => option.id === 'closed') ? 'partial' : request.options[0]?.id ?? '1:high');
   } };
   const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('BRO CONTINUE', session, config, () => {});
-  expect(requests[0]?.options.map(option => option.id)).toEqual(['continue', 'aside', 'reroute', 'replan', 'replace', 'clarify']);
+  expect(requests[0]?.options.map(option => option.id)).toEqual(['continue', 'reroute', 'replan', 'replace', 'clarify']);
   expect(requests[1]?.options.map(option => option.id)).toEqual(['single', 'plan', 'scout_plan']);
   expect(sentThread).toBe('thread-with-history');
   expect(sentPrompt).toContain("Use this Codex thread's earlier conversation and tool history");
@@ -186,7 +185,7 @@ it('runs a read-only scout, reroutes after handoff, and sums stage costs', async
     if (progress.kind === 'system') notices.push(progress.text);
   });
   expect(notices).toEqual([
-    "Vex chose scout: A read-only scout identifies relevant files, behavior, and tests; second agent completes the request from a structured handoff. Use when broad or uncertain repository exploration can materially reduce completion-agent work. Include both stages in total Codex cost.",
+    'Vex chose scout workflow.',
     "Vex routed to gpt-6-luna at low reasoning",
     "Vex routed to gpt-6-sol at high reasoning",
   ]);
@@ -198,6 +197,10 @@ it('runs a read-only scout, reroutes after handoff, and sums stage costs', async
   expect(requests[2]?.options.map(option => option.id)).toEqual(['0:low', '1:medium', '1:high']);
   expect((requests[2]?.context.availableModels as { id: string }[]).map(model => model.id)).toContain('gpt-6-sol');
   expect(calls[1]?.prompt).toContain('Parser is defined here');
+  expect(calls[1]?.prompt).toContain(session.turns.at(-1)!.scoutHandoff!);
+  expect(session.turns.at(-1)?.promptTrace?.calls[1]?.assembledPrompt).toBe(calls[1]?.prompt);
+  expect(session.turns.at(-1)?.promptTrace?.vex[0]?.request).toBeDefined();
+  expect(calls[1]?.prompt).not.toContain('Using the latest user request, recent conversation, and task state');
   expect(calls[1]?.prompt).not.toContain('Retained conversation:');
   expect(calls[1]?.prompt).not.toContain('unshared scout history');
   expect(requests.find(item => item.context.priorStageHandoff)?.context.priorStageHandoff).toContain('src/a.ts');
@@ -620,13 +623,6 @@ it('rejects disabled models and lets manual mode keep its route', async () => {
   await expect(orchestrator.turn('work', session, { ...config, models: [{ model: 'gpt-6-luna', efforts: ['low'] }] }, () => {})).rejects.toThrow('no longer enabled');
 });
 
-it('exposes SDK activity with stable IDs and the available reasoning summary', () => {
-  expect(eventProgress({ type: 'item.started', item: { id: 'x', type: 'command_execution', command: 'test', aggregated_output: '', status: 'in_progress' } })).toMatchObject({ kind: 'activity', id: 'x', completed: false });
-  expect(eventProgress({ type: 'item.completed', item: { id: 'thought', type: 'reasoning', text: 'Checking files' } })).toMatchObject({ category: 'thinking', detail: 'Checking files' });
-  expect(eventProgress({ type: 'item.completed', item: { id: 'failed', type: 'command_execution', command: 'false', aggregated_output: '', status: 'failed', exit_code: 1 } })).toMatchObject({ outcome: 'failure' });
-  expect(eventProgress({ type: 'item.completed', item: { id: 'read', type: 'mcp_tool_call', server: 'files', tool: 'read_file', arguments: { path: 'src/a.ts' }, status: 'completed' } })).toMatchObject({ title: 'Read(src/a.ts)', outcome: 'success' });
-});
-
 it('uses Codex app-server sandbox values for threads and turns', () => {
   const usage = { input_tokens: 20, cached_input_tokens: 4, cache_write_input_tokens: 0, output_tokens: 8, reasoning_output_tokens: 2 };
   expect(appUsage({ last: { inputTokens: 20, cachedInputTokens: 4, outputTokens: 8, reasoningOutputTokens: 2 } })).toEqual(usage);
@@ -654,16 +650,9 @@ it('uses Codex app-server sandbox values for threads and turns', () => {
   expect(JSON.stringify(planning)).not.toContain('/trusted');
 });
 
-it('scopes SDK planning writes to the artifact working directory', async () => {
-  dir = await mkdtemp(join(tmpdir(), 'pace-sdk-policy-'));
-  const project = join(dir, 'project');
-  const artifacts = join(dir, 'artifacts');
-  await mkdir(project);
-  await mkdir(artifacts);
-  expect(await sdkThreadOptions(project, {}, 'planning', [project, join(dir, 'trusted')], artifacts)).toMatchObject({
-    workingDirectory: artifacts, sandboxMode: 'workspace-write', approvalPolicy: 'never', networkAccessEnabled: false, additionalDirectories: [],
-  });
-  expect(await sdkThreadOptions(project, {}, 'side', [artifacts], artifacts)).toMatchObject({ workingDirectory: project, sandboxMode: 'read-only', additionalDirectories: [] });
+it('can disable Vex MCP for isolated App Server benchmark runs', () => {
+  expect(serverArgs(false)).toContain('mcp_servers={}');
+  expect(serverArgs(false).some(argument => argument.startsWith('mcp_servers.vex.'))).toBe(false);
 });
 
 it('declines a destructive Codex command before showing an approval prompt', async () => {
@@ -837,7 +826,7 @@ it('saves agent questions and redacts secret answers in the conversation', async
   });
   expect((await store.latest(process.cwd()))?.turns.at(-1)?.questions).toEqual([
     { question: 'Which scope?', answer: 'All' },
-    { question: 'What token?', answer: '[hidden]' },
+    { question: '[hidden]', answer: '[hidden]' },
   ]);
 });
 
@@ -961,28 +950,9 @@ it('retains observed usage when a turn fails after model work', async () => {
     .rejects.toMatchObject({ message: 'limit', usage: { input_tokens: 100, output_tokens: 20 } });
 });
 
-it('gives Codex independent Vex MCP access without key in command arguments', () => {
-  expect(codexOptions('/installed/vex/dist/index.js')).toMatchObject({ config: { mcp_servers: { vex: {
-    command: process.execPath,
-    args: ['/installed/vex/dist/index.js', 'mcp', 'serve'],
-    env_vars: expect.arrayContaining(['OPENROUTER_API_KEY', 'TYPESAFE_API_KEY', 'JEV_API_KEY']),
-  } } } });
-});
-
-it('delivers every streamed SDK event to benchmark observer', async () => {
-  const seen: string[] = [];
-  const runner = new SdkRunner({}, async event => { seen.push(event.type); });
-  const thread = { id: 'thread-1', async runStreamed() { return { events: (async function* () {
-    yield { type: 'item.completed', item: { type: 'agent_message', id: 'message-1', text: 'done' } };
-    yield { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 } };
-  })() }; } };
-  (runner as unknown as { codex: { startThread: () => typeof thread } }).codex = { startThread: () => thread };
-  await runner.run('work', process.cwd(), { model: 'gpt-6-sol', effort: 'high' }, undefined, () => {});
-  expect(seen).toEqual(['item.completed', 'turn.completed']);
-});
-
 it('preserves all completed agent messages across multiple turn steps in AppServerRunner', async () => {
   const progress: Progress[] = [];
+  const observed: string[] = [];
   const runner = new AppServerRunner(onMessage => ({
     setRequestHandler() {}, notify() {}, respond() {}, kill() {},
     async request(method: string) {
@@ -994,28 +964,12 @@ it('preserves all completed agent messages across multiple turn steps in AppServ
       });
       return method === 'turn/start' ? { turn: { id: 'turn-1' } } : {};
     },
-  }));
+  }), message => { if (message.method) observed.push(message.method); });
   const execution = await runner.run('work', process.cwd(), { model: 'gpt-6-sol', effort: 'high' }, undefined, event => { progress.push(event); });
   expect(progress.filter(event => event.kind === 'message')).toEqual([
     { kind: 'message', id: 'msg-1', text: 'Step 1 starting', completed: true },
     { kind: 'message', id: 'msg-2', text: 'Step 2 done', completed: true },
   ]);
   expect(execution.result).toBe('Step 2 done');
-});
-
-it('preserves all completed agent messages across multiple turn steps in SdkRunner', async () => {
-  const progress: Progress[] = [];
-  const runner = new SdkRunner({});
-  const thread = { id: 'thread-1', async runStreamed() { return { events: (async function* () {
-    yield { type: 'item.completed', item: { type: 'agent_message', id: 'msg-1', text: 'Step 1 starting' } };
-    yield { type: 'item.completed', item: { type: 'agent_message', id: 'msg-2', text: 'Step 2 done' } };
-    yield { type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 } };
-  })() }; } };
-  (runner as unknown as { codex: { startThread: () => typeof thread } }).codex = { startThread: () => thread };
-  const execution = await runner.run('work', process.cwd(), { model: 'gpt-6-sol', effort: 'high' }, undefined, event => { progress.push(event); });
-  expect(progress.filter(event => event.kind === 'message')).toEqual([
-    { kind: 'message', text: 'Step 1 starting' },
-    { kind: 'message', text: 'Step 2 done' },
-  ]);
-  expect(execution.result).toBe('Step 2 done');
+  expect(observed).toEqual(['item/completed', 'item/completed', 'turn/completed']);
 });

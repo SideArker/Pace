@@ -1,3 +1,4 @@
+import { promptChange } from "./prompt-trace.js";
 import type { OperationIntent, Session } from "../shared/types.js";
 import type { TaskRelation } from "./active-task.js";
 import type { RoutingPrompts } from "./routing/routing-prompts.js";
@@ -46,7 +47,12 @@ export function prepareTurnPrompt({
   const promptWithHandoff = handoff
     ? `${baseExecutionPrompt}\n\n${prompts.handoff.reportInstruction}\n${handoff}`
     : baseExecutionPrompt;
-  return { promptWithHandoff, resumingDeferred };
+  return { promptWithHandoff, resumingDeferred, sections: [
+    ...promptChange("Pace clarification", prompt, basePrompt),
+    ...promptChange("Pace saved task / continuation / retry", basePrompt, safePrompt),
+    ...promptChange("Pace coverage and available/active skills", safePrompt, baseExecutionPrompt),
+    ...promptChange("Validated scout handoff (intentional transfer)", baseExecutionPrompt, promptWithHandoff),
+  ] };
 }
 
 export function prepareRunnerPrompt({
@@ -65,10 +71,13 @@ export function prepareRunnerPrompt({
   const runThreadId = intent === "continue_verify" ? session.verifier?.threadId ?? session.verifierThreadId : checkpoint || intent === "verify_plan" ? undefined : session.threadId;
   const checkpointTurn = checkpoint ? session.turns.findIndex(turn => turn.at === checkpoint.sourceTurnAt) : -1;
   const promptWithHistory = checkpoint
-    ? checkpointHandoff(checkpoint.note, session.turns.slice(checkpointTurn + 1).filter(turn => !turn.failed).slice(-3).map(turn => ({ user: turn.prompt.slice(0, 1000), assistant: turn.result.slice(0, 1000) })), executionPrompt)
-    : retainedConversationPrompt(executionPrompt, intent === "verify_plan" || intent === "revise_plan" ? { ...session, threadId: undefined, turns: [] } : session);
+    ? retainedConversationPrompt(checkpointHandoff(checkpoint.note, session.turns.slice(checkpointTurn + 1).filter(turn => !turn.failed).slice(-3).map(turn => ({ user: turn.prompt.slice(0, 1000), assistant: turn.result.slice(0, 1000) })), executionPrompt), { ...session, threadId: undefined, turns: [] })
+    : retainedConversationPrompt(executionPrompt, intent === "verify_plan" || intent === "revise_plan" ? { ...session, threadId: undefined, turns: [] } : { ...session, threadId: runThreadId }, verifierTurn ? "verifier" : "main");
   const selectedAutoSkills = !runThreadId && !verifierTurn && intent !== "revise_plan" && !planningTurn
     ? skills.filter(skill => session.autoLaunchSkills?.includes(skill.name)) : [];
   const runnerPrompt = autoLaunchPrompt(promptWithHistory, selectedAutoSkills);
-  return { runnerPrompt, runThreadId, checkpoint };
+  return { runnerPrompt, runThreadId, checkpoint, sections: [
+    ...promptChange("Pace retained history / checkpoint", executionPrompt, promptWithHistory),
+    ...promptChange("Pace on-launch skills", promptWithHistory, runnerPrompt),
+  ] };
 }

@@ -1,6 +1,6 @@
+import { tracedRunner, redactTrace, promptChange, type PromptTrace } from "./prompt-trace.js";
 import { randomUUID } from "node:crypto";
-import type { Usage } from "@openai/codex-sdk";
-import type { Config, Route, Session, AgentRole, OperationIntent, QueuedOperation, WorkflowShape } from "../shared/types.js";
+import type { Config, Route, Session, AgentRole, OperationIntent, QueuedOperation, WorkflowShape, Usage } from "../shared/types.js";
 import type { CodexRunner, Progress } from "../integrations/codex.js";
 import type { UserAnswers } from "../integrations/codex-types.js";
 import {
@@ -92,6 +92,8 @@ export class Orchestrator {
       intent = "adopt_side";
     }
     if (queuedOperation) {
+      if (session.steeringRecords?.some(record => record.id === queuedOperation?.id))
+        throw new Error("This queued operation is already recorded as steering; review delivery before submitting a new message.");
       validateOperationTarget(session, queuedOperation);
       const operationId = queuedOperation.id;
       const completed = session.turns.find(turn => turn.operation?.id === operationId && !turn.failed);
@@ -125,6 +127,7 @@ export class Orchestrator {
       const side = session.sideAnswers!.find(item => item.id === queuedOperation.sourceSideId)!;
       side.adopted = true;
     }
+    if (intent === "execute_plan" && session.executionSource) displayPrompt ??= "Executing saved plan in a fresh agent session.";
     const verifierTurn = intent === "verify_plan" || intent === "continue_verify";
     // A stale or concurrent attempt record must never gate a new prompt. Live
     // executions are already owned by their runner; new turns can proceed on
@@ -150,6 +153,9 @@ export class Orchestrator {
     const save = () => requiredSave(this.store, session, activateOnSave);
     const stages: StageRecord[] = [];
     const routing: RoutingRecord[] = [];
+    const trace: PromptTrace = { version: 1, request: redactTrace(prompt), sections: [], calls: [], vex: [] };
+    const runner = tracedRunner(this.runner, trace);
+    const secretValues: string[] = [];
     const systemMessages: string[] = [];
     const answeredQuestions: { question: string; answer: string }[] = [];
     const systemMessage = (text: string) => {
@@ -157,7 +163,7 @@ export class Orchestrator {
       onProgress({ kind: "system", text });
     };
     const { choose, assess } = createTurnRouting({
-      vex: this.vex, session, prompts, verifierTurn, routing, save, onProgress, signal,
+      vex: this.vex, session, prompts, verifierTurn, routing, save, onProgress, signal, trace,
     });
     const previousPlanRoute = intent === "verify_plan" && session.planRoute
       ? { ...session.planRoute }
@@ -249,7 +255,6 @@ export class Orchestrator {
           );
         if (!verifierTurn && intent !== "revise_plan" && (priorTask || session.turns.length) && intent !== "execute_plan") {
           control = intent === "adopt_side" ? "continue" : (await choose(controlRequest(request, session, prompts), "task control")).choice;
-          if (control === "aside") return this.aside(prompt, session, config, onProgress, signal, activateOnSave);
           if (control === "adopt_side") {
             const sources = (session.sideAnswers ?? []).filter(item => item.result && !item.error && item.taskId === session.activeTask?.id);
             const selected = await choose({ question: "Which side answer did the user select to pass to the main task?", constraints: "Select only the side finding referred to by the user. Do not forward every answer.", context: { request, sources }, options: sources.map(item => ({ id: item.id, description: item.question })), decisionType: "routing" }, "side source");
@@ -279,9 +284,8 @@ export class Orchestrator {
             workflowRequest.options = workflowRequest.options.filter(option => option.id !== "clarify");
           shape = (await choose(workflowRequest, "workflow")).choice;
         }
-        if (shape !== "clarify" && intent !== "verify_plan" && intent !== "revise_plan") {
-          const desc = prompts.workflow.choices[shape as keyof typeof prompts.workflow.choices] ?? shape;
-          systemMessage(`Vex chose ${shape}: ${desc}`);
+        if (!preserveWorkflow && shape !== "clarify" && intent !== "verify_plan" && intent !== "revise_plan") {
+          systemMessage(`Vex chose ${shape} workflow.`);
         }
         if (shape === "clarify") {
 
@@ -326,8 +330,7 @@ export class Orchestrator {
               ).choice;
               if (shape === "clarify") throw new Error("Vex still requires clarification. Select a workflow or a manual route.");
             }
-            const desc = prompts.workflow.choices[shape as keyof typeof prompts.workflow.choices] ?? shape;
-            systemMessage(`Vex chose ${shape}: ${desc}`);
+            systemMessage(`Vex chose ${shape} workflow.`);
           } else {
             const result =
               taskRelation === "continue" && priorTask
@@ -414,8 +417,8 @@ export class Orchestrator {
           onProgress(progress);
         };
         const firstHandoff = await runPlanningStage({
-          request, routingTurns, enabled, prompts, routingState, choose, runner: durableRunner(this.runner, this.store, session, "scout", "scout", activateOnSave, async id => { scoutAttemptId = id; }),
-          session, signal, onProgress: stageProgress, stages,
+          request, routingTurns, enabled, prompts, routingState, choose, runner: durableRunner(runner, this.store, session, "scout", "scout", activateOnSave, async id => { scoutAttemptId = id; }),
+          session, signal, onProgress: stageProgress, stages, skills,
           routeOverride: manualWorkflow?.routes.scout,
         });
         handoff = firstHandoff;
@@ -424,6 +427,7 @@ export class Orchestrator {
         await save();
         await assess(attempt.id, false);
       }
+      if (handoff) onProgress({ kind: "handoff", text: handoff });
       if ((auto || manualWorkflow) && !preserveRoute && intent !== "continue_verify") {
         const objective = intent === "verify_plan"
           ? "Independently verify the saved implementation plan against the repository. Identify concrete errors, missing steps, risks, and propose precise plan changes. Do not edit or save the plan."
@@ -462,16 +466,18 @@ export class Orchestrator {
         kind: "status",
         text: `${note}: ${route.model ?? "Codex default"} · ${route.effort ?? "default"}`,
       });
-      const { promptWithHandoff, resumingDeferred } = prepareTurnPrompt({
+      const { promptWithHandoff, resumingDeferred, sections: turnSections } = prepareTurnPrompt({
         prompt, session, intent, userClarification, taskRelation, priorTask,
         usedThreadForClarification, prompts, skills, handoff,
       });
       const executionPrompt = intent === "verify_plan" || intent === "continue_verify"
         ? `${promptWithHandoff}\n\nIndependently verify the plan. Propose precise changes for every finding. Work read-only; do not edit or save the plan.`
         : planningTurn ? planningPrompt(promptWithHandoff, session.projectPath, planPath!, planBefore ?? session.plan, await loadPlanningInstructions(), intent === "revise_plan" ? session.turns.at(-1)?.result : undefined) : promptWithHandoff;
-      const { runnerPrompt, runThreadId, checkpoint } = prepareRunnerPrompt({
+      const { runnerPrompt, runThreadId, checkpoint, sections: runnerSections } = prepareRunnerPrompt({
         executionPrompt, session, intent, verifierTurn, planningTurn, skills,
       });
+      trace.workflow = shape;
+      trace.sections = redactTrace([...turnSections, ...promptChange("Pace planning / verifier instructions", promptWithHandoff, executionPrompt), ...runnerSections]);
       if (checkpoint) onProgress({ kind: "status", text: "Starting fresh thread from checkpoint…" });
       const stageStart = performance.now();
       if (!verifierTurn) session.undoneTurns = undefined;
@@ -481,7 +487,7 @@ export class Orchestrator {
       }
       const role = verifierTurn ? "verifier" : "main";
       let completedAttemptId: string | undefined;
-      const execution = await durableRunner(this.runner, this.store, session, role, verifierTurn ? "verify" : planningTurn ? "plan" : "final", activateOnSave, async id => { completedAttemptId = id; }).run(
+      const execution = await durableRunner(runner, this.store, session, role, verifierTurn ? "verify" : planningTurn ? "plan" : "final", activateOnSave, async id => { completedAttemptId = id; }).run(
         runnerPrompt,
         session.projectPath,
         route,
@@ -496,7 +502,9 @@ export class Orchestrator {
             onProgress({ ...progress, respond: (answers: UserAnswers) => {
               for (const item of progress.questions) {
                 const answer = answers[item.id]?.answers[0];
-                if (answer) answeredQuestions.push({ question: item.question, answer: item.isSecret ? "[hidden]" : answer });
+                if (item.isSecret) secretValues.push(item.question, item.header, ...item.options.flatMap(option => [option.label, option.description]), ...(answers[item.id]?.answers ?? []));
+                Object.assign(trace, redactTrace(trace, secretValues));
+                if (answer) answeredQuestions.push({ question: item.isSecret ? "[hidden]" : item.question, answer: item.isSecret ? "[hidden]" : answer });
               }
               progress.respond(answers);
             } });
@@ -570,6 +578,8 @@ export class Orchestrator {
           route,
           routeNote: note,
           ...(systemMessages.length ? { systemMessages } : {}),
+          ...(handoff ? { scoutHandoff: handoff } : {}),
+          promptTrace: redactTrace(trace, secretValues),
           questions: answeredQuestions,
           durationMs,
           artifacts,
@@ -584,6 +594,7 @@ export class Orchestrator {
       if (!verifierTurn && session.activeTask) { session.activeTask.latestOutcome = execution.result.slice(0, 2000); session.activeTask.failed = false; session.activeTask.assessment = "unknown"; }
       await save();
       await assess(completedAttempt.id, !verifierTurn);
+      session.turns.at(-1)!.promptTrace = redactTrace(trace, secretValues);
       if (resumingDeferred) session.deferredTurn = undefined;
       await save();
       return {
@@ -623,6 +634,8 @@ export class Orchestrator {
           route,
           routeNote: note,
           ...(systemMessages.length ? { systemMessages } : {}),
+          ...(handoff ? { scoutHandoff: handoff } : {}),
+          promptTrace: redactTrace(trace, secretValues),
           questions: answeredQuestions,
           durationMs: Math.round(performance.now() - startedAt),
           failed: true,

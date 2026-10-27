@@ -1,7 +1,8 @@
+import { isPromptTrace } from "./prompt-trace.js";
 import { createHash } from "node:crypto";
 import { EFFORTS, isRecord } from "../shared/config.js";
 import type { OperationIntent, QueuedOperation, Session } from "../shared/types.js";
-import type { Usage } from "@openai/codex-sdk";
+import type { Usage } from "../shared/types.js";
 import { parseCheckpoint } from "./checkpoint.js";
 import { validOperation } from "./operations.js";
 
@@ -35,8 +36,60 @@ function isObservation(value: unknown): boolean {
       isRecord(item) && typeof item.text === "string" && typeof item.completed === "boolean"))) &&
     (value.paths === undefined || (Array.isArray(value.paths) && value.paths.every(path => typeof path === "string")));
 }
+function isCriterion(value: unknown): boolean {
+  return isRecord(value) && text(value.id) && text(value.text) && typeof value.required === "boolean";
+}
+function isCompletionAssessment(value: unknown, attempt: Record<string, unknown>): boolean {
+  if (!isRecord(value) || !assessment(value.value) || !integer(value.evidence) || !text(value.decisionId)) return false;
+  if (value.version === undefined) return value.criteria === undefined && value.evidenceCatalog === undefined;
+  if (value.version !== 1 || (value.proposedValue !== undefined && !assessment(value.proposedValue)) ||
+      !Array.isArray(value.criteria) || !Array.isArray(value.evidenceCatalog) ||
+      !Array.isArray(value.limitations) || !value.limitations.every(text)) return false;
+  const observations = attempt.observations as Record<string, unknown>[];
+  const ids = new Set<string>();
+  for (const entry of value.evidenceCatalog) {
+    if (!isRecord(entry) || !integer(entry.observationIndex) || entry.attemptId !== attempt.id ||
+        entry.id !== `${attempt.id}:observation:${entry.observationIndex}` || ids.has(entry.id as string) ||
+        entry.verification !== "reported") return false;
+    const observation = observations[entry.observationIndex as number];
+    if (!observation || entry.source !== observation.kind || JSON.stringify(entry.paths) !== JSON.stringify(observation.paths)) return false;
+    ids.add(entry.id as string);
+  }
+  const criterionIds = new Set<string>();
+  for (const row of value.criteria) {
+    if (!isRecord(row) || !text(row.id) || criterionIds.has(row.id) || !text(row.criterion) || typeof row.required !== "boolean" ||
+        !oneOf(row.status, ["satisfied", "partial", "unknown"]) || !Array.isArray(row.evidenceIds) ||
+        !row.evidenceIds.every(id => typeof id === "string" && ids.has(id)) ||
+        !Array.isArray(row.missing) || !row.missing.every(text) || !Array.isArray(row.uncertainty) || !row.uncertainty.every(text) ||
+        (row.status === "satisfied" && (!row.evidenceIds.length || row.missing.length || row.uncertainty.length))) return false;
+    criterionIds.add(row.id);
+  }
+  const rows = value.criteria as Record<string, unknown>[];
+  if (Array.isArray(attempt.taskCriteria) && (attempt.taskCriteria.length !== value.criteria.length || attempt.taskCriteria.some(criterion =>
+    !rows.some((row: Record<string, unknown>) => row.id === criterion.id && row.criterion === criterion.text && row.required === criterion.required)))) return false;
+  return value.value !== "closed" || (value.criteria.some(row => row.required) && value.criteria.every(row => !row.required || row.status === "satisfied"));
+}
+function isSteering(value: unknown): boolean {
+  return isRecord(value) && value.version === 1 && text(value.id) && text(value.sessionId) && optionalText(value.taskId) &&
+    (value.inactive === undefined || typeof value.inactive === "boolean") && text(value.turnKey) && optionalText(value.attemptId) && optionalText(value.threadId) && role(value.role) && text(value.text) &&
+    oneOf(value.state, ["pending", "delivered", "unknown"]) && text(value.createdAt) && optionalText(value.deliveredAt) && optionalText(value.error) &&
+    (value.state !== "delivered" || text(value.deliveredAt));
+}
+function isPromptProfile(value: unknown): boolean {
+  return value === "unknown" || (isRecord(value) && value.schemaVersion === 1 && text(value.profileId) && text(value.profileVersion) &&
+    typeof value.fingerprint === "string" && /^[a-f0-9]{64}$/.test(value.fingerprint));
+}
+function isDecisionAttempt(value: unknown): boolean {
+  return isRecord(value) && integer(value.attempt) && (value.attempt as number) > 0 && typeof value.retry === "boolean" &&
+    value.retry === ((value.attempt as number) > 1) && nonnegative(value.durationMs) && oneOf(value.status, ["success", "error", "cancelled"]) && optionalText(value.error);
+}
+function isProjection(value: unknown): boolean {
+  return isRecord(value) && value.version === 1 && typeof value.truncated === "boolean" &&
+    ["originalBytes", "finalBytes", "maxBytes"].every(key => integer(value[key])) &&
+    typeof value.requiredEvidenceOmitted === "boolean" && Array.isArray(value.omittedClasses) && value.omittedClasses.every(text);
+}
 function isAttempt(value: unknown): boolean {
-  return isRecord(value) && text(value.id) && text(value.taskId) && integer(value.generation) && text(value.stage) && role(value.role) &&
+  return isRecord(value) && (value.taskCriteria === undefined || (Array.isArray(value.taskCriteria) && value.taskCriteria.every(isCriterion))) && text(value.id) && text(value.taskId) && integer(value.generation) && text(value.stage) && role(value.role) &&
     (value.pricing === undefined || (isRecord(value.pricing) && text(value.pricing.checkedAt) && text(value.pricing.source) && value.pricing.processing === "standard" && text(value.pricing.context) && isRecord(value.pricing.rates) && Object.values(value.pricing.rates).every(rates => isRecord(rates) && ["input", "cachedInput", "cacheWriteInput", "output"].every(key => nonnegative(rates[key]))))) &&
     oneOf(value.status, ["pending", "running", "completed", "failed", "cancelled", "awaiting_user"]) &&
     isRoute(value.route) && typeof value.startedAt === "string" &&
@@ -45,12 +98,15 @@ function isAttempt(value: unknown): boolean {
     ["usage", "knownUsage"].every(key => value[key] === undefined || isUsage(value[key])) &&
     (value.usageComplete === undefined || typeof value.usageComplete === "boolean") &&
     Array.isArray(value.observations) && value.observations.every(isObservation) &&
-    (value.assessment === undefined || (isRecord(value.assessment) && assessment(value.assessment.value) &&
-      integer(value.assessment.evidence) && text(value.assessment.decisionId)));
+    (value.assessment === undefined || isCompletionAssessment(value.assessment, value));
 }
 function isControl(value: unknown): boolean {
-  return isRecord(value) && text(value.id) && ["taskId", "attemptId", "stage"].every(key => optionalText(value[key])) &&
-    (value.requests === undefined || (integer(value.requests) && (value.requests as number) > 0)) &&
+  return isRecord(value) && (value.promptProfile === undefined || isPromptProfile(value.promptProfile)) &&
+    (value.requestAttempts === undefined || (Array.isArray(value.requestAttempts) && value.requestAttempts.every(isDecisionAttempt))) &&
+    (value.projection === undefined || isProjection(value.projection)) &&
+    (value.usage === undefined || value.usage === "unknown") && (value.costUsd === undefined || value.costUsd === "unknown") &&
+    text(value.id) && ["taskId", "attemptId", "stage"].every(key => optionalText(value[key])) &&
+    (value.requests === undefined || (integer(value.requests) && (value.requests as number) >= 0)) &&
     (value.failed === undefined || typeof value.failed === "boolean") && optionalText(value.error) &&
     role(value.role) && text(value.objective) && text(value.choice) && nonnegative(value.confidence) &&
     (value.confidence as number) <= 1 && isRecord(value.probabilities) &&
@@ -85,8 +141,11 @@ function validNewFields(value: Record<string, unknown>): boolean {
   return (value.revision === undefined || integer(value.revision)) &&
     (value.accountingIncomplete === undefined || typeof value.accountingIncomplete === "boolean") &&
     (value.deferredTurn === undefined || isDeferred(value.deferredTurn)) && records("attempts", isAttempt) &&
-    records("controlDecisions", isControl) && records("sideAnswers", isSide) &&
+    records("controlDecisions", isControl) && records("sideAnswers", isSide) && records("steeringRecords", isSteering) &&
+    (value.steeringRecords === undefined || (value.steeringRecords as Record<string, unknown>[]).every(record => record.sessionId === value.id)) &&
     (value.activeTask === undefined || (isRecord(value.activeTask) && optionalText(value.activeTask.id) &&
+      (value.activeTask.criteria === undefined || (Array.isArray(value.activeTask.criteria) && value.activeTask.criteria.every(isCriterion) && new Set(value.activeTask.criteria.map(item => item.id)).size === value.activeTask.criteria.length)) &&
+      (value.activeTask.constraints === undefined || (Array.isArray(value.activeTask.constraints) && value.activeTask.constraints.every(text))) &&
       (value.activeTask.workflow === undefined || isWorkflow(value.activeTask.workflow)) &&
       (value.activeTask.assessment === undefined || assessment(value.activeTask.assessment)))) &&
     (value.verifier === undefined || (isRecord(value.verifier) && isRoute(value.verifier.route) && optionalText(value.verifier.threadId) &&
@@ -99,13 +158,14 @@ function validNewFields(value: Record<string, unknown>): boolean {
       value.queuedPrompts.every(item => typeof item === "string" || validOperation(item))));
 }
 /** Legacy text entries acquire deterministic IDs, preserving identity across repeated reads. */
-function queuedOperations(value: unknown, sessionId: string): QueuedOperation[] {
+function queuedOperations(value: unknown, sessionId: string, steering: unknown = []): QueuedOperation[] {
+  const delivered = new Set((steering as Record<string, unknown>[]).filter(record => record.state === "delivered" && record.sessionId === sessionId).map(record => record.id));
   return Array.isArray(value) ? value.map((item, index) => {
     if (typeof item !== "string") return structuredClone(item as QueuedOperation);
     const digest = createHash("sha256").update(JSON.stringify([sessionId, index, item])).digest("hex");
     const id = `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-8${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
-    return { id, text: item, sessionId, role: "main" };
-  }) : [];
+    return { id, text: item, sessionId, role: "main" as const };
+  }).filter(item => !delivered.has(item.id)) : [];
 }
 
 function isStage(value: unknown): boolean {
@@ -114,11 +174,11 @@ function isStage(value: unknown): boolean {
     (value.route.effort === undefined || EFFORTS.includes(value.route.effort as (typeof EFFORTS)[number])) &&
     nonnegative(value.durationMs) && (value.usage === undefined || isUsage(value.usage)) &&
     (value.estimatedCostUsd === undefined || nonnegative(value.estimatedCostUsd)) &&
-    (value.handoff === undefined || (typeof value.handoff === 'string' && value.handoff.length <= 20_000));
+    (value.handoff === undefined || (typeof value.handoff === 'string'));
 }
 function isRouting(value: unknown): boolean {
   return isRecord(value) && typeof value.objective === 'string' && typeof value.choice === 'string' &&
-    (value.choiceLabel === undefined || (typeof value.choiceLabel === 'string' && value.choiceLabel.length <= 500)) &&
+    (value.choiceLabel === undefined || (typeof value.choiceLabel === 'string')) &&
     nonnegative(value.confidence) && (value.confidence as number) <= 1 && isRecord(value.probabilities) &&
     Object.values(value.probabilities).every(probability => nonnegative(probability) && (probability as number) <= 1) &&
     Number.isInteger(value.attempts) && (value.attempts as number) >= 0;
@@ -175,8 +235,10 @@ function isCheckpointGeneration(value: unknown): boolean {
 }
 
 function isTurn(turn: unknown): boolean {
-  return isRecord(turn) &&
+  return isRecord(turn) && (turn.promptTrace === undefined || isPromptTrace(turn.promptTrace)) && optionalText(turn.scoutHandoff) &&
         (turn.fileEdits === undefined || turn.fileEdits === "none" || (typeof turn.fileEdits === "string" && /^[0-9a-f-]{36}$/.test(turn.fileEdits))) &&
+        (turn.steeringRecordIds === undefined || (Array.isArray(turn.steeringRecordIds) && turn.steeringRecordIds.every(text))) &&
+        (turn.steeringPrompts === undefined || (Array.isArray(turn.steeringPrompts) && turn.steeringPrompts.every(text))) &&
         typeof turn.prompt === "string" &&
         (turn.displayPrompt === undefined || typeof turn.displayPrompt === "string") &&
         (turn.intent === undefined || isIntent(turn.intent)) &&
@@ -265,7 +327,7 @@ export function parseSession(value: unknown, project: string): Session | undefin
     || (value.manualWorkflow !== undefined && !isManualWorkflow(value.manualWorkflow))
   )
     return undefined;
-  return { ...value, ...(value.accountingIncomplete === undefined && value.attempts === undefined && value.turns.length ? { accountingIncomplete: true } : {}), ...(value.queuedPrompts === undefined ? {} : { queuedPrompts: queuedOperations(value.queuedPrompts, value.id) }) } as Session;
+  return { ...value, ...(value.accountingIncomplete === undefined && value.attempts === undefined && value.turns.length ? { accountingIncomplete: true } : {}), ...(value.queuedPrompts === undefined ? {} : { queuedPrompts: queuedOperations(value.queuedPrompts, value.id, value.steeringRecords) }) } as Session;
 }
 
 export function parseSessionSummary(value: unknown, project: string): Session | undefined {
@@ -324,8 +386,8 @@ export function parseSessionSummary(value: unknown, project: string): Session | 
     } } : {}),
     ...(typeof value.verifierThreadId === "string" ? { verifierThreadId: value.verifierThreadId } : {}),
     deferredTurn,
-    queuedPrompts: queuedOperations(value.queuedPrompts, value.id),
-    ...Object.fromEntries(["revision", "accountingIncomplete", "attempts", "controlDecisions", "sideAnswers", "activeTask", "verifier", "executionSource"]
+    queuedPrompts: queuedOperations(value.queuedPrompts, value.id, value.steeringRecords),
+    ...Object.fromEntries(["revision", "accountingIncomplete", "attempts", "controlDecisions", "sideAnswers", "activeTask", "verifier", "executionSource", "steeringRecords"]
       .filter(key => value[key] !== undefined).map(key => [key, structuredClone(value[key])])),
     turns: firstTurnPrompt ? [{ prompt: firstTurnPrompt, result: "", at: value.createdAt }] : [],
   };
