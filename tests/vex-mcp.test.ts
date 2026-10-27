@@ -121,3 +121,31 @@ it('resolves the installed @sidearker/vex-mcp server path', () => {
   expect(path).toBeDefined();
   expect(path).toMatch(/@sidearker[\\/]vex-mcp[\\/]dist[\\/]index\.js$/);
 });
+
+it('enforces the shared final-payload budget at the MCP boundary for every request factory and inline source choice', async () => {
+  const { shapeRequest, stageRequest, controlRequest, assessmentRequest } = await import('../src/core/vex/requests.js');
+  const { VEX_PAYLOAD_BUDGET } = await import('../src/core/vex/context.js');
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const server = new Server({ name: 'budget-vex', version: '1' }, { capabilities: { tools: {} } });
+  const received: unknown[] = [];
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [{ name: 'vex_choose', inputSchema: { type: 'object' } }] }));
+  server.setRequestHandler(CallToolRequestSchema, async request => {
+    received.push(request.params);
+    expect(Buffer.byteLength(JSON.stringify(request.params))).toBeLessThanOrEqual(VEX_PAYLOAD_BUDGET);
+    expect(request.params.arguments?.context).toMatchObject({ projection: { truncated: true } });
+    return { content: [], structuredContent: { choice: 'test' } };
+  });
+  await server.connect(serverTransport);
+  const router = new VexRouter('', () => clientTransport);
+  const session = newSession('/project', 'auto');
+  session.activeTask = { id: 'task', originalRequest: 'Work', instructions: [] };
+  session.turns = Array.from({ length: 20 }, (_, i) => ({ prompt: 'Question '.repeat(500), result: 'long history '.repeat(10_000), at: String(i) }));
+  session.attempts = [{ id: 'a', taskId: 'task', stage: 'final', role: 'main', generation: 1, route: {}, status: 'completed', startedAt: 'now', observations: [{ kind: 'answer', text: 'evidence '.repeat(10_000) }] }];
+  const models = [{ model: 'gpt-6.1-sol', efforts: ['medium' as const] }];
+  try {
+    for (const request of [shapeRequest('Work', session.turns, models), stageRequest('Work', session.turns, models, 'Main'), stageRequest('Question', session.turns, models, 'Side'), controlRequest('Continue', session), assessmentRequest(session, 'a'),
+      { question: 'Which source?', constraints: 'One source', decisionType: 'routing' as const, options: [{ id: 's', description: 'Source' }], context: { request: 'Use source', sources: [{ id: 's', result: 'result '.repeat(20_000) }] } },
+    ]) await router.choose(request);
+    expect(received).toHaveLength(6);
+  } finally { await router.close(); await server.close(); }
+});

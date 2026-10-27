@@ -3,7 +3,6 @@ import { DEFAULT_CONFIG, parseConfig } from '../src/shared/config.js';
 import { chosenRoute, routeChoices, validateDecision } from '../src/core/routing/router.js';
 import { costForUsage, PRICE_SNAPSHOT } from '../src/core/routing/pricing.js';
 import { shapeRequest, stageRequest } from '../src/core/vex/client.js';
-import { parseRoutingSuite, summarizeRouting } from '../src/entrypoints/routing-benchmark.js';
 import { handoffPrompt } from '../src/core/orchestrator-helpers.js';
 import { DEFAULT_ROUTING_PROMPTS } from '../src/core/routing/routing-prompts.js';
 
@@ -85,23 +84,25 @@ it('prices ordinary, cached, cache writes, and output once at the stage model ra
   expect(chosenRoute('1:high', DEFAULT_CONFIG.models)).toEqual({ model: 'gpt-6-sol', effort: 'high' });
 });
 
-it('accepts SDK-supported effort levels for user-selected models', () => {
+it('accepts supported reasoning effort levels for user-selected models', () => {
   const config = parseConfig({ ...DEFAULT_CONFIG, models: [{ model: 'gpt-6-luna', efforts: ['ultra'] }], defaultRoute: { model: 'gpt-6-luna', effort: 'ultra' } });
   expect(config.models[0]?.efforts).toEqual(['ultra']);
   expect(() => parseConfig({ ...DEFAULT_CONFIG, models: [{ model: 'gpt-6-luna', efforts: ['max'] }] })).toThrow('max');
 });
 
-it('validates routing benchmark labels and counts failed calls separately', () => {
-  const item = { id: 'one', category: 'plan_only', prompt: 'Plan it.', preferred: 'single', acceptable: ['single', 'scout'], reason: 'Plan only' };
-  expect(parseRoutingSuite({ version: 1, cases: [item] }).cases).toHaveLength(1);
-  expect(() => parseRoutingSuite({ version: 1, cases: [item, item] })).toThrow('Invalid routing case');
-  expect(() => parseRoutingSuite({ version: 1, cases: [{ ...item, preferred: 'plan_execute' }] })).toThrow('Invalid routing case');
-  const summary = summarizeRouting([
-    { id: 'one', category: 'plan_only', repetition: 1, promptSha256: 'a', preferred: 'single', acceptable: ['single', 'scout'],
-      shape: 'scout', acceptableHit: true, preferredHit: false, decisions: [], vexCalls: 3, retries: 1, elapsedMs: 10 },
-    { id: 'one', category: 'plan_only', repetition: 2, promptSha256: 'a', preferred: 'single', acceptable: ['single', 'scout'],
-      decisions: [], vexCalls: 2, retries: 1, elapsedMs: 20, error: 'Vex failed' },
-  ]);
-  expect(summary).toMatchObject({ total: 2, completed: 1, errors: 1, acceptable: 1, preferred: 0,
-    selectedShapes: { scout: 1 }, vexCalls: 5, retries: 2 });
+it('retains reviewed feedback requests and exact workflow options within the payload budget', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { projectVexRequest } = await import('../src/core/vex/context.js');
+  const { shapeRequest } = await import('../src/core/vex/requests.js');
+  const cases = JSON.parse(await readFile(new URL('./fixtures/workflow-feedback.json', import.meta.url), 'utf8')) as { request: string; acceptable: string[] }[];
+  expect(cases).toHaveLength(3);
+  for (const scenario of cases) {
+    const request = shapeRequest(scenario.request, [], [{ model: 'gpt-6.1-sol', efforts: ['medium'] }, { model: 'gpt-6-luna', efforts: ['low'] }]);
+    const projected = projectVexRequest(request);
+    expect(projected.request.context.originalRequest).toBe(scenario.request);
+    expect(projected.request.options).toEqual(request.options);
+    expect(projected.projection.requiredEvidenceOmitted).toBe(false);
+    expect(request.constraints).toContain('actionable');
+    for (const expected of scenario.acceptable) expect(request.options.map(option => option.id)).toContain(expected);
+  }
 });
