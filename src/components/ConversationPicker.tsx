@@ -44,7 +44,7 @@ export function ConversationPicker({
   const anchor = focused ? selectedIndex : Math.max(0, filteredChoices.findIndex(choice => choice.id === activeId));
   const pace = filteredChoices.map((choice, index) => ({ choice, index })).filter(({ choice }) => (choice.section ?? "pace") === "pace");
   const saved = filteredChoices.map((choice, index) => ({ choice, index })).filter(({ choice }) => choice.section === "saved");
-  const paceLimit = saved.length ? Math.min(pace.length, Math.max(1, Math.ceil(maxItems / 2))) : maxItems;
+  const paceLimit = saved.length ? Math.min(pace.length, Math.max(1, maxItems - saved.length, Math.ceil(maxItems / 2))) : maxItems;
   const savedLimit = pace.length ? Math.max(1, maxItems - paceLimit) : maxItems;
   const windowFor = (items: typeof pace, limit: number) => {
     const selected = items.findIndex(item => item.index === anchor);

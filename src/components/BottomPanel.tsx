@@ -17,6 +17,7 @@ export type BottomPanelProps = {
     searchQuery?: string;
   };
   showConversations?: boolean;
+  pendingInteraction?: boolean;
   queuedPrompts?: readonly string[];
   usageLimits?: UsageLimits;
   usageError?: string;
@@ -30,13 +31,16 @@ export function BottomPanel({
   height,
   conversations,
   showConversations,
+  pendingInteraction = false,
   queuedPrompts = [],
   usageLimits,
   usageError,
 }: BottomPanelProps) {
   const hasConversations = showConversations ?? (!!conversations && (conversations.choices.length > 1 || conversations.focused));
   const hasQueued = queuedPrompts.length > 0;
-  const maxItems = height < 24 ? 2 : 4;
+  const queuedItems = height < 24 ? 2 : 4;
+  // Reserve space for composer, status, panel borders and section headers.
+  const conversationItems = pendingInteraction ? 2 : Math.max(2, Math.min(8, Math.floor((height - 12) / 3)));
 
   const panels: ("conversations" | "queued" | "usage")[] = [];
   if (hasConversations && conversations) panels.push("conversations");
@@ -56,7 +60,7 @@ export function BottomPanel({
             missingProjectPaths={conversations.missingProjectPaths}
             searchQuery={conversations.searchQuery}
             width={panelWidth}
-            maxItems={maxItems}
+            maxItems={conversationItems}
           />
         ) : null;
       case "queued":
@@ -65,7 +69,7 @@ export function BottomPanel({
             key="queued"
             prompts={queuedPrompts}
             width={panelWidth}
-            maxItems={maxItems}
+            maxItems={queuedItems}
           />
         );
       case "usage":

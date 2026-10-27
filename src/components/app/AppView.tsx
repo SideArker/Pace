@@ -147,6 +147,7 @@ export function AppView({ model }: { model: AppController }) {
       <BottomPanel
         width={contentWidth}
         height={terminalRows}
+        pendingInteraction={!!question || !!approval}
         conversations={{
           choices: pickerChoices,
           missingProjectPaths,
