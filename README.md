@@ -29,7 +29,7 @@ pace
 
 ## Get started
 
-Requires Node.js 20+, a terminal, and working Codex authentication. Sign in with the [Codex CLI](https://developers.openai.com/codex/cli) (`codex login`) or use a supported Codex SDK/CLI environment credential. Pace never reads or stores a token itself. Codex expects a Git project.
+Requires Node.js 20+, a terminal, and working Codex authentication. Sign in with the [Codex CLI](https://developers.openai.com/codex/cli) (`codex login`) or use a supported Codex CLI environment credential. Pace never reads or stores a token itself. Codex expects a Git project.
 
 Run `pace doctor` to check your setup. Run `pace setup` to configure optional Vex routing. Pace does not ask for an API key during installation or startup.
 
@@ -62,7 +62,7 @@ Pace detects debug mode from its installed package path. Builds run from a check
 
 </details>
 
-Interactive `pace` opens a fresh conversation; choose a saved conversation in the conversation picker to continue saved work. `pace --help` and `pace --version` work without authentication. `pace doctor` checks Node, local storage, Git, SDK, Vex installation, and configuration; only a live coding turn checks authentication and runtime access.
+Interactive `pace` opens a fresh conversation; choose a saved conversation in the conversation picker to continue saved work. `pace --help` and `pace --version` work without authentication. `pace doctor` checks Node, local storage, Git, Codex App Server, Vex installation, and configuration; only a live coding turn checks authentication and runtime access.
 
 ## Explore Pace
 
@@ -112,13 +112,13 @@ If a model call fails because of a connection problem or model capacity, Pace sa
 
 After opening a second conversation, a compact picker stays below the input. Press ↓ from the input to focus it, use ↑/↓ to select a conversation, and press Enter to switch. Esc returns to the input. Switching keeps other conversation turns running.
 
-Pace retains the active task's workflow and lead route across ordinary follow-ups. Vex explicitly chooses continuation, rerouting, replanning, replacement, clarification, or a separate answer. `/btw` uses a separate read-only thread with a Vex-selected route; `/adopt <id>` forwards one selected finding. `/verify` retains separate verifier state. `/execute` reads the current full plan into a fresh normal execution session. Pace periodically saves active execution progress and immediately saves new thread IDs. After a restart, incomplete attempts are marked failed with an interruption note, and the next user turn resumes from the saved thread and observations. See [durable tasks and routing](docs/task-workflows.md) for persistence, recovery, accounting, and unchanged context policy.
+Pace retains the active task's workflow and lead route across ordinary follow-ups. Vex explicitly chooses continuation, rerouting, replanning, replacement, clarification, or a separate answer. `/btw` uses a separate read-only thread with a Vex-selected route; `/adopt <id>` forwards one selected finding. `/verify` retains separate verifier state. `/execute` reads the current full plan into a fresh normal execution session. That conversation shows a collapsible execution-plan entry with a nine-line preview; Ctrl+O expands it, including after reload. Saved scout reports also appear as collapsible entries, without duplicating the report in the main answer. Pace periodically saves active execution progress and immediately saves new thread IDs. After a restart, incomplete attempts are marked failed with an interruption note, and the next user turn resumes from the saved thread and observations. See [durable tasks and routing](docs/task-workflows.md) for persistence, recovery, accounting, and unchanged context policy.
 
 Pace shows routing and stage activity in the live status. Detailed decisions and stage records remain in saved sessions; `/stats` shows attempt accounting and Vex call totals.
 The header's Context gauge and `/context` use the last measured Codex model request and its context-window limit. `Context ?` means Pace has no valid measurement for the selected thread and model. The account usage panel shows account limits separately. `/context` also says whether the next turn resumes a Codex thread; `/new` starts a separate conversation; choose a saved conversation in the picker to return to it. `/compact` works only when that conversation has an idle Codex thread; Esc twice within 750 ms or Ctrl+C cancels it. Pace records compaction usage, estimated API-equivalent cost, duration, and outcome separately from user turns in `/stats`. The gauge becomes unknown after compaction until another model request reports context usage.
 
 After 16 turns in one Codex thread, or when measured context reaches 75%, Pace asks that thread for a bounded, structured checkpoint. The next turn starts a fresh thread with the validated checkpoint and current request. Pace keeps the old thread ID in the checkpoint record and counts turns in the new thread separately. A failed checkpoint leaves the existing thread available.
-The interactive transcript renders Markdown emphasis, inline and fenced code, links, headings, quotes, horizontal rules, nested bullet and numbered lists, task lists, and tables. Level-three headings (`###`) receive a distinct accent. Tables fit the available terminal width by shortening long cells. Markdown links are clickable in terminals that support OSC 8 hyperlinks; their destinations remain visible in other terminals.
+The interactive transcript renders Markdown emphasis, inline and fenced code, links, headings, quotes, horizontal rules, nested bullet and numbered lists, task lists, and tables. Level-three headings (`###`) receive a distinct accent. Tables fit the available terminal width by shortening long cells. Markdown links show their label and carry an OSC 8 target. The terminal owns click modifiers and hyperlink activation; Pace does not handle mouse clicks. If clicking does not work, use `/links` to list destinations and `/links <number>` to open the selected link through the OS, without a shell. Only HTTP(S), mailto, file URLs and resolved local file paths are accepted.
 
 ## Non-interactive runs
 
@@ -159,7 +159,7 @@ The model menu uses the catalog returned by your authenticated Codex App Server.
 }
 ```
 
-Configure only models and effort values you can use. Pace validates SDK effort values. `max` is not a Pace SDK effort. Auto mode needs verified prices for every enabled model and accepts at most 12 model and effort pairs. Invalid config, missing prices, or too many pairs stop routing with an error. Manual mode can use a discovered model without a price estimate; provider errors from a live turn remain visible.
+Configure only models and effort values you can use. Pace validates supported reasoning effort values. `max` is not a supported reasoning effort. Auto mode needs verified prices for every enabled model and accepts at most 12 model and effort pairs. Invalid config, missing prices, or too many pairs stop routing with an error. Manual mode can use a discovered model without a price estimate; provider errors from a live turn remain visible.
 
 Pace bundles [versions.json](versions.json) and refreshes it from this repository's `main` branch at startup and before automatic routing. The file provides dated Standard API prices, optional model menu hints, and the latest Pace release version. A validated copy is cached under `~/.pace/versions-cache.json` for offline use. The menu uses Codex's live catalog when available; GitHub pricing does not grant model access. `/version` shows which catalog source is in use. Update `versions.json` when a new model price is verified and when publishing a Pace release; `package.json` remains the installed version source.
 
@@ -173,7 +173,7 @@ On the first automatic turn, Pace creates `~/.pace/routing-prompts.json` (`%USER
 
 At startup, Pace opens one persistent local MCP connection to Vex and shows its state above the prompt. Pace verifies the connection before each turn. Auto routing uses Vex's forced-choice contract: highest-ranked valid option wins even with a small lead; exact ties use supplied option order. Probabilities remain in the saved routing record. Invalid responses and tool failures are retried once, then shown as errors. There is no silent model fallback. Manual mode keeps its saved route. Vex forwards decision context to OpenRouter; it reads `OPENROUTER_API_KEY` from the environment or `~/.openrouter_key`. Vex receives user prompt and recent conversation text, so review that data before enabling auto mode for confidential projects.
 
-When Vex chooses a split workflow, the scout runs in a fresh read-only thread and returns a concise JSON report with verified file findings, line references, next steps, checks, and risks. Pace validates and saves the report, then passes it to a completion or planning agent. Failed stages stop the turn. The saved turn records reports, per-stage models, usage, estimated cost, duration, and routing decisions. `/stats` reports raw usage and estimated API-equivalent cost separately. Actual billed Codex cost is unavailable through the SDK. The price snapshot uses OpenAI Standard short-context rates and is saved with benchmark results.
+When Vex chooses a split workflow, the scout runs in a fresh read-only thread and returns a concise JSON report with verified file findings, line references, next steps, checks, and risks. Pace validates and saves the report, then passes it to a completion or planning agent. Failed stages stop the turn. The saved turn records reports, per-stage models, usage, estimated cost, duration, and routing decisions. `/stats` reports raw usage and estimated API-equivalent cost separately. Actual billed Codex cost is not exposed by App Server usage reports. The price snapshot uses OpenAI Standard short-context rates and is saved with benchmark results.
 
 To check routing choices across repeated labeled requests and compare actual workflow costs, use the commands in [benchmark/README.md](benchmark/README.md).
 
@@ -247,3 +247,10 @@ node dist/entrypoints/cli.js doctor
 ```
 
 Tests use mocked providers and a temporary storage directory. No API credentials are required. The roadmap in [ROADMAP.md](ROADMAP.md) covers later releases; v0.1 has no server, database, provider framework, or automatic agents.
+
+
+`/debug [turn-number]` opens a local read-only trace for a saved turn (latest by default). Ctrl+O expands the complete trace: original request, Pace-added sections and sources, assembled stage prompts, actual App Server input when recorded, thread IDs and model/effort. Vex requests/validated decisions appear separately and are never presented as Codex input. Credentials and secret question values are redacted. Debug output is not sent to a model. Older turns explicitly report that effective input was not recorded.
+
+Pace planning keeps the Markdown artifact as its durable handoff and restricts writes to the artifact directory. Native Codex plan updates show in the task panel and material unresolved choices use the interactive question panel. Existing custom planning instructions are preserved. The current VS Code plan reader remains supported.
+
+Debug checkouts expose the [fresh-completion benchmark](benchmark/README.md) through `/benchmark` and `npm run benchmark -- ...`. Its fixed-route, matched same/fresh-thread comparison is experimental; production continues using its saved main thread.
