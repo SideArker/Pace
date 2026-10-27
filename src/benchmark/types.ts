@@ -1,8 +1,8 @@
-export type Category = 'routing' | 'workflows' | 'task-control' | 'context-quality' | 'thread-switch' | 'context-models' | 'diagnostics' | 'memory';
+export type Category = 'fresh-completion';
 export type Profile = {
   category: Category; name: string; version: 1; label: string; driver: string;
   suite?: string; args: string[]; variants: string[]; repeats: number;
-  evaluation: string; route: string; paid: boolean; timeoutMinutes: number;
+  evaluation: string; route: string; paid: boolean; timeoutMinutes: number; maxUsd: number;
 };
 export type Selection = { category: string; profile: string; baseline?: string; source?: string; dataset?: string; offline?: boolean; controlled?: boolean; maxUsd?: number; maxTurns?: number };
 export type Trial = { key: string; description: string };

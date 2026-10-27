@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "scout": {
+    "model": "gpt-6-luna",
+    "effort": "low"
+  },
+  "completion": {
+    "model": "gpt-6.1-sol",
+    "effort": "medium"
+  },
+  "cases": [
+    {
+      "id": "csv-copy",
+      "prompt": "Fix parseRows so empty rows are ignored and each returned row is independent. Preserve delimiter support and existing exports. Add regression tests in test.mjs and run them.",
+      "history": "Read csv.mjs and test.mjs. Explain the current behavior and the callers affected by row reuse. Do not edit anything. Keep custom delimiter support and returned arrays independent.",
+      "files": {
+        "package.json": "{\"type\":\"module\"}\n",
+        "csv.mjs": "export function parseRows(text, delimiter = ',') {\n  const row = [];\n  return text.split('\\n').map(line => {\n    row.length = 0;\n    row.push(...line.split(delimiter));\n    return row;\n  });\n}\n",
+        "test.mjs": "import assert from 'node:assert/strict';\nimport { parseRows } from './csv.mjs';\nassert.equal(parseRows('a,b')[0].length, 2);\n"
+      },
+      "verification": "import assert from 'node:assert/strict'; import { parseRows } from './csv.mjs'; const a=parseRows('a;b\\n\\nc;d',';'); assert.deepEqual(a,[['a','b'],['c','d']]); a[0][0]='x'; assert.equal(a[1][0],'c'); assert.deepEqual(parseRows(''),[]); console.log('PASS csv');",
+      "rubric": "Rows must not alias; empty lines and empty input produce no rows; delimiter remains configurable; existing exports stay compatible; meaningful regression tests and no unrelated edits."
+    },
+    {
+      "id": "retry-queue",
+      "prompt": "Fix runQueue to retry rejected tasks up to the retries limit without rerunning successful tasks. Preserve result order and reject after exhausted attempts. Add regression tests and run test.mjs.",
+      "history": "Inspect queue.mjs and its test. Explain retries semantics, ordering and propagation of the final failure. Do not edit files. Retries means additional attempts after the first, not total attempts.",
+      "files": {
+        "package.json": "{\"type\":\"module\"}\n",
+        "queue.mjs": "export async function runQueue(tasks, retries = 0) {\n  const results = [];\n  for (const task of tasks) {\n    for (let attempt = 0; attempt <= retries; attempt++) {\n      try { results.push(await task()); }\n      catch (error) { if (attempt === retries) throw error; }\n    }\n  }\n  return results;\n}\n",
+        "test.mjs": "import assert from 'node:assert/strict';\nimport { runQueue } from './queue.mjs';\nassert.deepEqual(await runQueue([async () => 1]), [1]);\n"
+      },
+      "verification": "import assert from 'node:assert/strict'; import { runQueue } from './queue.mjs'; let a=0,b=0; assert.deepEqual(await runQueue([async()=>{a++;return 'a'},async()=>{if(++b<2)throw Error('retry');return 'b'}],2),['a','b']); assert.equal(a,1); assert.equal(b,2); let n=0; await assert.rejects(runQueue([async()=>{n++;throw Error('stop')}],2),/stop/); assert.equal(n,3); console.log('PASS queue');",
+      "rubric": "Successful tasks run once; failed tasks retry only within the limit; no swallowed final failures; outputs preserve task order; meaningful tests; no API break."
+    },
+    {
+      "id": "report-boundary",
+      "prompt": "Fix summarize so invalid records do not contaminate totals and inherited names work safely. Accept finite nonnegative numeric amounts, skip malformed records, preserve a plain object result. Add regression tests and run test.mjs.",
+      "history": "Read report.mjs and tests. Identify boundary conditions, inherited property behavior and invalid numeric inputs. Do not edit files. Callers require an ordinary plain object result and stable own enumerable category keys.",
+      "files": {
+        "package.json": "{\"type\":\"module\"}\n",
+        "report.mjs": "export function summarize(records) {\n  const totals = {};\n  for (const { category, amount } of records) {\n    totals[category] = (totals[category] || 0) + amount;\n  }\n  return totals;\n}\n",
+        "test.mjs": "import assert from 'node:assert/strict';\nimport { summarize } from './report.mjs';\nassert.deepEqual(summarize([{category:'food',amount:2}]), {food:2});\n"
+      },
+      "verification": "import assert from 'node:assert/strict'; import { summarize } from './report.mjs'; const r=summarize([null,{}, {category:'x',amount:'2'}, {category:'x',amount:NaN}, {category:'x',amount:Infinity}, {category:'x',amount:-1}, {category:'x',amount:0}, {category:'__proto__',amount:2},{category:'toString',amount:3},{category:'__proto__',amount:4}]); assert.equal(Object.getPrototypeOf(r),Object.prototype); assert.equal(r.x,0); assert.equal(r.__proto__,6); assert.equal(r.toString,3); assert.equal(Object.keys(r).length,3); console.log('PASS report');",
+      "rubric": "Skip null/malformed entries, nonstring category and nonfinite/nonnumber/negative amount; support own __proto__/toString totals safely; return a plain object; preserve exports and write meaningful tests."
+    }
+  ]
+}
