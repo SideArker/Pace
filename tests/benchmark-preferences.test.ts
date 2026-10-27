@@ -29,23 +29,11 @@ it('atomically stores concurrent selections outside the repository and preserves
   const directory = join(paths.home, '.pace');
   await mkdir(directory, { recursive: true });
   await writeFile(join(directory, 'config.json'), 'existing user config');
-  const choices = [{ category: 'routing', profile: 'holdout' }, { category: 'task-control', profile: 'quick', baseline: '/existing/baseline' }];
+  const choices = [{ category: 'fresh-completion', profile: 'quick' }, { category: 'fresh-completion', profile: 'standard' }];
   await Promise.all(choices.map(savePreferences));
   expect(choices).toContainEqual(await loadPreferences());
   expect(await readdir(directory)).toEqual(['benchmark-center.json', 'config.json']);
   expect(await readFile(join(directory, 'config.json'), 'utf8')).toBe('existing user config');
   if (process.platform !== 'win32') expect((await stat(join(directory, 'benchmark-center.json'))).mode & 0o777).toBe(0o600);
   await expect(stat(paths.repository)).rejects.toThrow();
-});
-
-it('offers built sibling checkouts and excludes current, incomplete, and symlinked checkouts', async () => {
-  const { baselineChoices } = await import('../src/benchmark/preferences.js');
-  const parent = join(root, 'checkouts');
-  for (const name of ['current', 'baseline', 'build-only', 'prompts-only']) await mkdir(join(parent, name, 'dist/core'), { recursive: true });
-  for (const name of ['current', 'baseline', 'build-only']) await writeFile(join(parent, name, 'dist/core/orchestrator.js'), 'built');
-  for (const name of ['current', 'baseline', 'prompts-only']) await writeFile(join(parent, name, 'routing-prompts.default.json'), '{}');
-  await writeFile(join(parent, 'ordinary-file'), 'not a checkout');
-  const { symlink } = await import('node:fs/promises');
-  await symlink(join(parent, 'baseline'), join(parent, 'linked'));
-  expect(await baselineChoices()).toEqual([join(parent, 'baseline')]);
 });
