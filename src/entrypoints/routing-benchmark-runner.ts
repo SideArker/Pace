@@ -1,13 +1,15 @@
+import { assertDebug } from "../benchmark/storage.js";
+import { beginTrial, finishTrial, effectiveConfiguration } from "../benchmark/control.js";
 import { benchmarkProvenance } from "./benchmark-provenance.js";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile, appendFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { newSession, PaceStore } from "../core/sessions.js";
 import { Orchestrator } from "../core/orchestrator.js";
-import { loadRoutingPrompts } from "../core/routing/routing-prompts.js";
+import { loadRoutingPrompts, routingPromptProfile } from "../core/routing/routing-prompts.js";
 import { pricedModels, PRICE_SNAPSHOT } from "../core/routing/pricing.js";
 import { validateDecision } from "../core/routing/router.js";
-import { VexRouter, type VexRequest } from "../core/vex/client.js";
+import { VexRouter, type VexRequest } from "../benchmark/transports.js";
 import type { CodexRunner } from "../integrations/codex-types.js";
 import { parseRoutingSuite } from "./routing-suite.js";
 import { benchmarkArgs } from "./routing-benchmark-cli.js";
@@ -15,13 +17,13 @@ import { summarizeRouting, turnsFor } from "./routing-summary.js";
 import type { RoutingRun } from "./routing-types.js";
 
 /** Real production control flow with simulated Codex output. This does not grade task quality. */
-export async function main() {
-  const options = benchmarkArgs(process.argv.slice(2));
+export async function runRouting(options: NonNullable<ReturnType<typeof benchmarkArgs>>) {
+  assertDebug();
   const suiteText = await readFile(options.suite, "utf8");
   const cases = parseRoutingSuite(JSON.parse(suiteText)).cases.filter(item => !options.selectedCase || item.id === options.selectedCase);
   if (!cases.length) throw new Error("No matching routing cases");
-  const config = await new PaceStore().loadConfig();
-  const prompts = loadRoutingPrompts();
+  const config = effectiveConfiguration()?.config ?? await new PaceStore().loadConfig();
+  const prompts = effectiveConfiguration()?.prompts ?? loadRoutingPrompts();
   const models = pricedModels(config.models.filter(model => model.enabled !== false));
   if (!models.length || models.reduce((sum, model) => sum + model.efforts.length, 0) > 12) throw new Error("Routing benchmark needs 1 to 12 enabled model and effort pairs");
   if (await stat(options.out).then(() => true).catch(() => false)) throw new Error(`Output directory already exists: ${options.out}`);
@@ -34,9 +36,10 @@ export async function main() {
   try {
     await vex.verify();
     const provenance = await benchmarkProvenance();
-    await writeFile(join(options.out, "manifest.json"), JSON.stringify({ suiteSha256: createHash("sha256").update(suiteText).digest("hex"), ...provenance, routingPromptsSha256: createHash("sha256").update(JSON.stringify(prompts)).digest("hex"), routingPrompts: prompts, suite: options.suite, cases: cases.length, repeats: options.repeat, shapeOnly: options.shapeOnly, models, simulatedCodexResults: true, productionController: "Orchestrator.turn", priceSnapshot: PRICE_SNAPSHOT, startedAt: new Date().toISOString() }, null, 2) + "\n");
+    await writeFile(join(options.out, "manifest.json"), JSON.stringify({ suiteSha256: createHash("sha256").update(suiteText).digest("hex"), ...provenance, promptProfile: routingPromptProfile(prompts), routingPromptsSha256: routingPromptProfile(prompts).fingerprint, routingPrompts: prompts, suite: options.suite, cases: cases.length, repeats: options.repeat, shapeOnly: options.shapeOnly, models, simulatedCodexResults: true, productionController: "Orchestrator.turn", priceSnapshot: PRICE_SNAPSHOT, startedAt: new Date().toISOString() }, null, 2) + "\n");
     for (let repetition = 1; repetition <= options.repeat; repetition++) {
       for (const item of repetition % 2 ? cases : [...cases].reverse()) {
+        if (!beginTrial(`${item.id}/${repetition}`)) continue;
         const started = performance.now();
         const run: RoutingRun = { id: item.id, category: item.category, repetition, promptSha256: createHash("sha256").update(item.prompt).digest("hex"), preferred: item.preferred, acceptable: item.acceptable, decisions: [], vexCalls: 0, retries: 0, elapsedMs: 0 };
         const caseDir = join(options.out, "cases", item.id, String(repetition));
@@ -86,6 +89,7 @@ export async function main() {
         run.elapsedMs = Math.round(performance.now() - started); runs.push(run);
         await appendFile(join(options.out, "runs.jsonl"), JSON.stringify(run) + "\n");
         await writeFile(join(options.out, "summary.json"), JSON.stringify(summarizeRouting(runs), null, 2) + "\n");
+        finishTrial(!!run.error);
         console.log(`${item.id} ${repetition}/${options.repeat}: ${run.error ?? run.shape} (${run.elapsedMs} ms)`);
       }
     }
@@ -98,4 +102,10 @@ export async function main() {
     if (runs.length) await writeFile(join(options.out, "summary.json"), JSON.stringify({ ...summarizeRouting(runs), vex: stats }, null, 2) + "\n");
     if (previousStatsPath === undefined) delete process.env.VEX_STATS_PATH; else process.env.VEX_STATS_PATH = previousStatsPath;
   }
+}
+
+export async function main(argv: string[] = process.argv.slice(2)) {
+  assertDebug();
+  const options = benchmarkArgs(argv);
+  if (options) await runRouting(options);
 }

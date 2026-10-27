@@ -5,7 +5,7 @@ export function benchmarkArgs(argv: string[]) {
     console.log(
       "Usage: npm run benchmark:routing -- --suite benchmark/suites/routing-suite.json [--repeat 3] [--case id] [--shape-only] [--out directory]",
     );
-    process.exit(argv.includes("--help") ? 0 : 2);
+    return undefined;
   }
   const get = (key: string) => {
     const index = argv.indexOf(key);
