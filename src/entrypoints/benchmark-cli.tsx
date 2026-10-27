@@ -12,15 +12,14 @@ export const benchmarkHelp=`Usage:
   pace benchmark                              Open Benchmark Center (TTY)
   pace benchmark list                         List named profiles; no inference
   pace benchmark run CATEGORY --profile NAME [--preview]
-    [--baseline PATH] [--source RUN_ID] [--max-turns N] [--max-usd N]
-    [--dataset MANIFEST.json] [--offline] [--controlled]
+    [--max-turns N] [--max-usd N] [--controlled]
   pace benchmark results [RUN_ID] [--files | --file RELATIVE_PATH]
   pace benchmark resume RUN_ID [--preview]
-  pace benchmark analyze|summarize|reaccount RUN_ID
+  pace benchmark analyze|summarize RUN_ID
 
 Run is an explicit Start. Preview/list/results never invoke models.
 Dollars estimate Standard API equivalents; a threshold stops subsequent calls.
-Memory requires integration in plan 02. Controlled isolation is unavailable on current runners.`;
+Fresh completion is experimental. Controlled isolation is unavailable.`;
 export function parseBenchmarkArgs(args:string[]) {
   const positional:string[]=[],values:Record<string,string>={},flags=new Set<string>();
   const booleans=['--preview','--offline','--controlled','--files','--help'];
@@ -41,7 +40,7 @@ export async function benchmarkCommand(args:string[],service=benchmarkCommandSer
   if(flags.has('--help')){console.log(benchmarkHelp);return;}
   const allowed=(named:string[],boolean:string[])=>{for(const key of Object.keys(values))if(!named.includes(key))throw new Error(`Flag ${key} does not apply to ${action??'panel'}`);for(const key of flags)if(!boolean.includes(key))throw new Error(`Flag ${key} does not apply to ${action??'panel'}`);};
   if(!action){allowed([],[]);if(!process.stdin.isTTY||!process.stdout.isTTY)throw new Error('Benchmark Center needs a TTY. Use benchmark list, results, or run CATEGORY --profile NAME.');await panel();return;}
-  if(action==='list'){allowed([],[]);if(positional.length!==1)throw new Error('Usage: benchmark list');console.log(catalog.map(p=>`${p.category}/${p.name} · ${p.evaluation}`).join('\n'));console.log(categories.find(c=>c.id==='memory')!.unavailable);return;}
+  if(action==='list'){allowed([],[]);if(positional.length!==1)throw new Error('Usage: benchmark list');console.log(catalog.map(p=>`${p.category}/${p.name} · ${p.evaluation}`).join('\n'));return;}
   if(action==='run') {
     allowed(['--profile','--baseline','--source','--max-turns','--max-usd','--dataset'],['--preview','--offline','--controlled']);
     if(positional.length!==2||!values['--profile'])throw new Error('Usage: benchmark run CATEGORY --profile NAME (complete named profile required)');

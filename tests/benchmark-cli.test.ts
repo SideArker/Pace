@@ -4,8 +4,8 @@ import { getProfile } from '../src/benchmark/catalog.js';
 import type { Preview } from '../src/benchmark/types.js';
 
 const preview: Preview = {
-  selection: { category: 'diagnostics', profile: 'quick' },
-  profile: getProfile('diagnostics', 'quick'),
+  selection: { category: 'fresh-completion', profile: 'quick' },
+  profile: getProfile('fresh-completion', 'quick'),
   plan: [{ key: 'persistence', description: 'Synthetic sessions' }],
   maximumModelTurns: 0, estimate: 'No inference', resolvedCommits: {}, dependencies: ['GC'],
 };
@@ -50,7 +50,7 @@ it.each([
 });
 
 it.each([
-  [], ['run', 'routing'], ['run', 'routing', '--profile', 'quick', 'extra'],
+  [], ['run', 'fresh-completion'], ['run', 'fresh-completion', '--profile', 'quick', 'extra'],
   ['list', '--preview'], ['results', '--file', 'answer.md'],
   ['resume', 'run', '--max-turns', '2'], ['analyze', 'run', '--preview'], ['unknown', 'run'],
 ])('rejects incomplete or inapplicable commands before calling services: %j', async args => {
@@ -61,9 +61,9 @@ it.each([
 
 it('previews a headless run without starting and forwards numeric limits on explicit execution', async () => {
   const service = services();
-  const args = ['run', 'diagnostics', '--profile', 'quick', '--max-turns', '7', '--max-usd', '0.25'];
+  const args = ['run', 'fresh-completion', '--profile', 'quick', '--max-turns', '7', '--max-usd', '0.25'];
   await run([...args, '--preview'], service);
-  expect(service.preflight).toHaveBeenCalledWith(expect.objectContaining({ category: 'diagnostics', profile: 'quick', maxTurns: 7, maxUsd: 0.25 }));
+  expect(service.preflight).toHaveBeenCalledWith(expect.objectContaining({ category: 'fresh-completion', profile: 'quick', maxTurns: 7, maxUsd: 0.25 }));
   expect(service.startRun).not.toHaveBeenCalled();
   await run(args, service);
   expect(service.startRun).toHaveBeenCalledWith(expect.objectContaining({ maxTurns: 7, maxUsd: 0.25 }), expect.objectContaining({ preview, signal: expect.any(AbortSignal) }));
@@ -93,7 +93,7 @@ it.each(['analyze', 'summarize', 'reaccount'])('dispatches %s without starting a
 it.each(['failed', 'cancelled', 'interrupted'])('sets a failing exit code for %s execution', async execution => {
   const service = services();
   service.startRun.mockResolvedValue({ id: 'run', state: { execution } });
-  await run(['run', 'diagnostics', '--profile', 'quick'], service);
+  await run(['run', 'fresh-completion', '--profile', 'quick'], service);
   expect(process.exitCode).toBe(1);
 });
 
@@ -108,6 +108,6 @@ it('scopes signal handlers to execution and removes them on success and failure'
   await run(['resume', 'run'], service);
   expect(['SIGINT', 'SIGTERM'].map(signal => process.listeners(signal))).toEqual(before);
   service.startRun.mockRejectedValue(new Error('worker failed'));
-  await expect(run(['run', 'diagnostics', '--profile', 'quick'], service)).rejects.toThrow('worker failed');
+  await expect(run(['run', 'fresh-completion', '--profile', 'quick'], service)).rejects.toThrow('worker failed');
   expect(['SIGINT', 'SIGTERM'].map(signal => process.listeners(signal))).toEqual(before);
 });
