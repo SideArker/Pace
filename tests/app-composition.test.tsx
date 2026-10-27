@@ -181,8 +181,46 @@ it('opens benchmark results during a main job and blocks Start without cancellin
  const turn=vi.spyOn(Orchestrator.prototype,'turn').mockImplementation(async(_prompt,session,_config,_progress,signal)=>{mainSignal=signal;return await new Promise(resolve=>{complete=()=>resolve({session,result:'Finished mock main job',route:session.route,note:'Mock route',durationMs:1,stages:[],routing:[],artifacts:[]});});});
  await ui.submit('Keep this mocked job active');await vi.waitFor(()=>expect(turn).toHaveBeenCalledOnce());
  await ui.submit('/benchmark');await vi.waitFor(()=>expect(ui.stdout.writes.join('')).toContain('Benchmark Center'));
- for(const ready of ['❯ Routing · Vex only','❯ quick','❯ Start']){ui.stdin.write('\r');await vi.waitFor(()=>expect(ui.stdout.writes.join('')).toContain(ready));await ui.instance.waitUntilRenderFlush();}
+ for(const ready of ['❯ Scout → same / fresh completion thread','❯ quick','❯ Start']){ui.stdin.write('\r');await vi.waitFor(()=>expect(ui.stdout.writes.join('')).toContain(ready));await ui.instance.waitUntilRenderFlush();}
  ui.stdin.write('\r');await ui.instance.waitUntilRenderFlush();
  await vi.waitFor(()=>expect(ui.stdout.writes.join('')).toContain('Wait for main/side jobs'));
  expect(turn).toHaveBeenCalledOnce();expect(mainSignal?.aborted).toBe(false);complete(undefined);
+});
+
+it('shows the execution plan preview and toggles the full handoff with Ctrl+O', async () => {
+  const ui = await mount();
+  ui.stdin.write('\x1bp'); await ui.instance.waitUntilRenderFlush();
+  await vi.waitFor(() => expect(ui.save).toHaveBeenCalledWith(expect.objectContaining({kind:'planning'})));
+  const source = ui.save.mock.calls.find(([session]) => session.kind === 'planning')![0];
+  source.plan = Array.from({length:15},(_,i)=>`Execution requirement ${i+1}`).join('\n');
+  source.title = 'Plan'; source.turns.push({prompt:'Plan',result:'Saved',at:'now'});
+  const turn = vi.spyOn(Orchestrator.prototype,'turn').mockImplementation(async(prompt,session)=>({session,result:'Done',route:session.route,note:'Mock',durationMs:1,stages:[],routing:[],artifacts:[]}));
+  await ui.submit('/execute'); ui.stdin.write('\r'); await ui.instance.waitUntilRenderFlush();
+  await vi.waitFor(()=>expect(turn).toHaveBeenCalledOnce());
+  await vi.waitFor(()=>expect(ui.stdout.writes.join('')).toContain('Execution requirement 9'));
+  expect(ui.stdout.writes.join('')).not.toContain('Execution requirement 10');
+  expect(turn.mock.calls[0]?.[0]).toContain(source.plan);
+  ui.stdout.writes.length=0; ui.stdin.write('\x0f'); await ui.instance.waitUntilRenderFlush();
+  await vi.waitFor(()=>expect(ui.stdout.writes.join('')).toContain('Execution requirement 15'));
+  ui.stdout.writes.length=0; ui.stdin.write('\x0f'); await ui.instance.waitUntilRenderFlush();
+  expect(ui.stdout.writes.join('')).not.toContain('Execution requirement 15');
+});
+
+it('planning displays native tasks and interactive questions, and keeps output inspection available', async () => {
+  const ui = await mount();
+  ui.stdin.write('\x1bp'); await ui.instance.waitUntilRenderFlush();
+  await vi.waitFor(()=>expect(ui.save).toHaveBeenCalledWith(expect.objectContaining({kind:'planning'})));
+  const turn = vi.spyOn(Orchestrator.prototype,'turn').mockImplementation(async(_prompt,session,_config,progress)=>{
+    session.tasks=[{id:'native-plan',text:'Inspect dependencies',completed:false,source:'agent'}];
+    progress({kind:'tasks',items:[{text:'Inspect dependencies',completed:false}]});
+    await new Promise<void>(resolve=>progress({kind:'question',id:'question',questions:[{id:'target',header:'Target',question:'Which platform?',options:[{label:'Android',description:'Android target'}],isSecret:false,isOther:true}],respond:()=>resolve()}));
+    return {session,result:'Plan choice recorded',route:session.route,note:'Mock',durationMs:1,stages:[],routing:[],artifacts:[]};
+  });
+  await ui.submit('Plan platform work');
+  await vi.waitFor(()=>expect(ui.stdout.writes.join('')).toContain('Which platform?'));
+  expect(ui.stdout.writes.join('')).toContain('Codex plan');
+  ui.stdin.write('\x0f'); await ui.instance.waitUntilRenderFlush(); expect(ui.onClear).toHaveBeenCalled();
+  ui.stdin.write('\r'); await ui.instance.waitUntilRenderFlush();
+  await vi.waitFor(()=>expect(ui.stdout.writes.join('')).toContain('Plan choice recorded'));
+  expect(turn).toHaveBeenCalledOnce();
 });

@@ -142,6 +142,11 @@ export function useAppInput(options: {
       interrupt();
       return;
     }
+    if (key.ctrl && (input.toLowerCase() === "o" || input === "\x0f")) {
+      redrawTranscript();
+      setOutputsExpanded(value => !value);
+      return;
+    }
     if (pickerFocused) {
       const query = (pickerSearch ?? "").trim().toLowerCase();
       const effectiveSessions = query
@@ -204,11 +209,6 @@ export function useAppInput(options: {
     }
     if (key.escape && !modelMenu && !approvalMenu && !resumeMenu && !convoMenu && !queueMenu && !manualMenu && !pickerFocused) {
       if (handleCancelEscape()) return;
-    }
-    if (key.ctrl && (input.toLowerCase() === "o" || input === "\x0f")) {
-      redrawTranscript();
-      setOutputsExpanded(value => !value);
-      return;
     }
     if (modelMenu) {
       const size = modelMenu === "models" ? menuModels.length : menuEfforts.length;

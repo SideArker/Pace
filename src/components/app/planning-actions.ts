@@ -122,7 +122,7 @@ export function createPlanningActions({
       stopSideQuestion();
       onClear();
       showFreshSession(fresh, "Starting…");
-      void runTurnRef.current?.(execution.prompt, fresh, config, "execute_plan", "Executing saved plan in a fresh agent session. The plan details are hidden from this chat.");
+      void runTurnRef.current?.(execution.prompt, fresh, config, "execute_plan", "Executing saved plan in a fresh agent session.");
     } catch (error) {
       activeSessionId.current = previousId;
       if (previousId) setLines(sessionLines.current.get(previousId) ?? []);

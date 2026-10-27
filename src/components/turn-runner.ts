@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import type { Config, Route, Session, TurnActivity, OperationIntent, QueuedOperation } from "../shared/types.js";
 import type { CodexRunner, Progress } from "../integrations/codex.js";
@@ -18,6 +19,10 @@ import type { RunningProcess } from "./RunningProcesses.js";
 type TurnJob = {
   session: Session; controller: AbortController; prompt: string; automaticRetry?: boolean;
   operationId?: string;
+  turnKey?: string;
+  steerAttemptId?: string;
+  steerRole?: import("../shared/types.js").AgentRole;
+  persistSteering?: () => Promise<void>;
   steer?: (prompt: string) => Promise<void>;
   pendingSteer?: Promise<void>;
   steeredPrompts?: string[];
@@ -70,6 +75,11 @@ export function createTurnRunner({
   readLimits?: () => Promise<UsageLimits | undefined>;
 }) {
   const runTurn = async (text: string, turnSession: Session, turnConfig: Config, intent?: OperationIntent, displayPrompt?: string, automaticRetry = false, queuedOperation?: QueuedOperation): Promise<boolean> => {
+    const steering = turnSession.steeringRecords?.find(record => record.id === queuedOperation?.id);
+    if (steering) {
+      addFor(turnSession.id, "error", `Queued operation is recorded as ${steering.state} steering. Review its delivery before explicitly submitting a new message.`);
+      return false;
+    }
     if (intent === "execute_plan" && !turnSession.executionSource && (turnSession.kind === "planning" || turnSession.plan || turnSession.planArtifact)) {
       const owner = new AbortController();
       jobs.current.set(turnSession.id, { session: turnSession, controller: owner, prompt: text });
@@ -101,8 +111,11 @@ export function createTurnRunner({
     resetThoughtUsage(sessionId);
     onTurnStart(sessionId);
     rememberSession(turnSession);
-    jobs.current.set(sessionId, { session: turnSession, controller, prompt: text, automaticRetry, operationId: queuedOperation?.id });
+    jobs.current.set(sessionId, { session: turnSession, controller, prompt: text, automaticRetry, operationId: queuedOperation?.id, turnKey: randomUUID(),
+      persistSteering: () => store.saveChanges(turnSession, () => activeSessionId.current === sessionId) });
     setRunningIds([...jobs.current.keys()]);
+    if (!turnSession.turns.length && turnSession.executionSource) addFor(sessionId, "plan", turnSession.executionSource.plan);
+    if (intent === "execute_plan" && turnSession.executionSource) displayPrompt ??= "Executing saved plan in a fresh agent session.";
     addFor(sessionId, displayPrompt ? "system" : "you", displayPrompt ?? text);
     setStatusFor(sessionId, "Starting…");
     const startTitle = () => {
@@ -139,7 +152,11 @@ export function createTurnRunner({
         (progress: Progress) => {
           if (progress.kind === "steering" && progress.role !== "status") {
             const job = jobs.current.get(sessionId);
-            if (job?.controller === controller) job.steer = progress.steer;
+            if (job?.controller === controller) {
+              job.steer = progress.steer;
+              job.steerAttemptId = progress.attemptId;
+              job.steerRole = progress.role;
+            }
           }
           if (progress.kind === "status") {
             setStatusFor(sessionId, progress.text);
@@ -156,6 +173,7 @@ export function createTurnRunner({
             setLiveUsage(old => ({ ...old, [sessionId]: formatLiveUsage(progress.usage, activeRoute) }));
             recordThoughtUsage(sessionId, turnId, progress.usage.reasoning_output_tokens);
           }
+          if (progress.kind === "handoff") addFor(sessionId, "handoff", progress.text);
           if (progress.kind === "system") addFor(sessionId, "system", progress.text);
           if (progress.kind === "activity") {
             activityFor(sessionId, { ...progress, id: `turn-${turnId}-${progress.attemptId ?? "main"}-${progress.id}` });
@@ -317,6 +335,7 @@ export function createTurnRunner({
       await job?.pendingSteer?.catch(() => {});
       const lastTurn = turnSession.turns.at(-1);
       if (!recoveredSession && lastTurn && lastTurn !== previousTurn && job?.steeredPrompts?.length) {
+        lastTurn.steeringRecordIds = turnSession.steeringRecords?.filter(record => record.turnKey === job.turnKey && record.state === "delivered").map(record => record.id);
         lastTurn.steeringPrompts = [...(lastTurn.steeringPrompts ?? []), ...job.steeredPrompts];
         await store.saveChanges(turnSession, () => activeSessionId.current === sessionId).catch(error => {
           addFor(sessionId, "error", `Could not save steering history: ${String(error)}`);
