@@ -44,6 +44,7 @@ export type Config = {
   autoLaunchSkills?: string[];
 };
 export type TurnSummary = {
+  memoryAttemptId?: string;
   scoutHandoff?: string;
   promptTrace?: import("../core/prompt-trace.js").PromptTrace;
   operation?: QueuedOperation;
@@ -199,6 +200,8 @@ export type ActiveTask = {
   id?: string; workflow?: WorkflowState; assessment?: TaskAssessment;
 };
 export type Session = {
+  memoryRevision?: string;
+  memoryRetractedAttempts?: string[];
   steeringRecords?: SteeringRecord[];
   accountingIncomplete?: boolean;
   revision?: number;

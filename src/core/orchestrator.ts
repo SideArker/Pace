@@ -27,6 +27,7 @@ import { artifactSnapshot, changedArtifacts } from "./system/artifacts.js";
 import { validRoute } from "../shared/config.js";
 import { existingFolder } from "./system/folders.js";
 import { prepareTurnPrompt, prepareRunnerPrompt } from "./orchestrator-prompts.js";
+import { loadMemory } from './memory/config.js';
 import { prepareTurnArtifacts, finishPlanArtifact } from "./orchestrator-artifacts.js";
 import { requestWorkflowClarification } from "./orchestrator-clarification.js";
 import { prepareTurnSkills } from "./orchestrator-skills.js";
@@ -284,7 +285,10 @@ export class Orchestrator {
             workflowRequest.options = workflowRequest.options.filter(option => option.id !== "clarify");
           shape = (await choose(workflowRequest, "workflow")).choice;
         }
-        if (!preserveWorkflow && shape !== "clarify" && intent !== "verify_plan" && intent !== "revise_plan") {
+        if (shape === "clarify") {
+          shape = "single";
+          systemMessage("Vex defaulted into single workflow because it was unsure about the deliverable.");
+        } else if (!preserveWorkflow && intent !== "verify_plan" && intent !== "revise_plan") {
           systemMessage(`Vex chose ${shape} workflow.`);
         }
         if (shape === "clarify") {
@@ -473,6 +477,13 @@ export class Orchestrator {
       const executionPrompt = intent === "verify_plan" || intent === "continue_verify"
         ? `${promptWithHandoff}\n\nIndependently verify the plan. Propose precise changes for every finding. Work read-only; do not edit or save the plan.`
         : planningTurn ? planningPrompt(promptWithHandoff, session.projectPath, planPath!, planBefore ?? session.plan, await loadPlanningInstructions(), intent === "revise_plan" ? session.turns.at(-1)?.result : undefined) : promptWithHandoff;
+      const memoryConfig = (await loadMemory(session.projectPath, this.store.baseDir)).config;
+      const memoryRevision = memoryConfig?.revision ?? 'unconfigured';
+      if (!verifierTurn && session.memoryRevision !== memoryRevision && (memoryConfig || session.memoryRevision)) {
+        session.threadId = undefined;
+        session.memoryRevision = memoryRevision;
+        systemMessage('Memory settings changed. Starting a fresh agent thread with retained conversation history.');
+      }
       const { runnerPrompt, runThreadId, checkpoint, sections: runnerSections } = prepareRunnerPrompt({
         executionPrompt, session, intent, verifierTurn, planningTurn, skills,
       });
@@ -515,6 +526,7 @@ export class Orchestrator {
         trustedFolders,
         config.approvalMode,
         conversationArtifacts,
+        { recallQuery: taskRelation === 'replace' || !runThreadId ? prompt : undefined },
       );
       await finishFileEdits();
       signal?.throwIfAborted();
@@ -574,6 +586,7 @@ export class Orchestrator {
           ...(fileEdits ? { fileEdits } : {}),
           ...(displayPrompt ? { displayPrompt } : {}),
           result: execution.result,
+          memoryAttemptId: completedAttemptId,
           at: new Date().toISOString(),
           route,
           routeNote: note,

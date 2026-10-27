@@ -9,6 +9,7 @@ import { FileDiffPanel } from "../FileDiffPanel.js";
 import { HeaderLogo, HeaderStatus } from "../Header.js";
 import { BenchmarkManager } from "../BenchmarkManager.js";
 import { McpManager } from "../McpManager.js";
+import { MemoryManager } from '../MemoryManager.js';
 import { ApprovalModeMenu, CommandMenu, ConvoMenu, ManualWorkflowMenu, ModelMenu, QueueMenu } from "../Menus.js";
 import { readClipboardText, saveClipboardImage } from "../pasted-images.js";
 import { QuestionPanel } from "../QuestionPanel.js";
@@ -69,6 +70,9 @@ export function AppView({ model }: { model: AppController }) {
 
   if (mcpOpen && session) return <McpManager key={session.projectPath} project={session.projectPath} width={terminalColumns} height={Math.max(1, terminalRows - 1)}
     onClose={() => { setMcpOpen(false); onClear(); setTranscriptRevision(value => value + 1); }} />;
+
+  if (model.memoryOpen && session) return <MemoryManager key={session.projectPath} project={session.projectPath} baseDir={store.baseDir} width={terminalColumns} height={Math.max(1, terminalRows - 1)}
+    onClose={() => { model.setMemoryOpen(false); onClear(); setTranscriptRevision(value => value + 1); }} />;
 
   return (
     // Ink clears the terminal on every update when the live frame exceeds the viewport.

@@ -1,0 +1,856 @@
+{
+  "schemaVersion": 1,
+  "researchDate": "2026-10-26",
+  "manifestCreatedAt": "2026-10-26T18:20:49.076130+00:00",
+  "scope": "Architecture and source research; no backend execution or model benchmark",
+  "pace": {
+    "head": "8f4bfbc7989df2dac2e4e85dbc6a45346ebbea17",
+    "workingTreeHadPreexistingChanges": true,
+    "reviewedSources": [
+      {
+        "path": "package.json",
+        "sha256": "a7223f6213ab05a632d1c024d58f707c644e308e9add91efa7b31f2a54522d28"
+      },
+      {
+        "path": "src/core/sessions.ts",
+        "sha256": "04a90454e7224551387677095049c0e5fddc76a91d713af02ce1e9fadbf21d92"
+      },
+      {
+        "path": "src/core/session-model.ts",
+        "sha256": "51539489bdc2bfdeba6a08a7d50f00713d526e33e089b6aabdf6dc6569e3e340"
+      },
+      {
+        "path": "src/core/task-execution.ts",
+        "sha256": "c5316692741be81c8946f71a30526f17b2d3f13a71123f4fa371136c91ad5472"
+      },
+      {
+        "path": "src/core/task-assessment.ts",
+        "sha256": "17197a1e0278a16fd380fb2c82f434feefa7c84f787693c4271fe49e428c2aba"
+      },
+      {
+        "path": "src/core/checkpoint.ts",
+        "sha256": "0a010a8dc0a9baa4a60deb709d2049a92e420ef76c8511209fa43d1ced564a78"
+      },
+      {
+        "path": "src/core/orchestrator-prompts.ts",
+        "sha256": "c75f5f1391c483a69608875caeac2b93ef70c70b78720db71f55441d631a41cd"
+      },
+      {
+        "path": "src/core/orchestrator-helpers.ts",
+        "sha256": "99d8d16fe9bdd1c1846cb9c3af2ebc7a01f94a7f151110752f32fad3aa11e775"
+      },
+      {
+        "path": "src/core/side-answers.ts",
+        "sha256": "b428beb0d886da4ab63b47aea73c22fcb33a69b64b69ad302b9c520b0812b315"
+      },
+      {
+        "path": "src/core/vex/context.ts",
+        "sha256": "2a57808796d5256366018ee4638e8a4ce5807c7063f423dc74c4d53ce5638f61"
+      },
+      {
+        "path": "src/integrations/codex-cli.ts",
+        "sha256": "ad19dd1d5bf5a1b788b8498d6eacceaeecd7ba5bb0672017597878e0b4236344"
+      },
+      {
+        "path": "src/integrations/app-server-process.ts",
+        "sha256": "05582b8f67c3a900d10d21caa5eec849f789f684752f8aad1c4fee1c55c565e0"
+      },
+      {
+        "path": "src/integrations/app-server-protocol.ts",
+        "sha256": "f35a906cb84493cec1c560911ee809142f7dd4d64cbe14d0b1b9f627d26c5aeb"
+      },
+      {
+        "path": "src/integrations/app-server-runner.ts",
+        "sha256": "daf1ed684346d59f38b83be5a419173fd0e790024379d232c222048e8eeb9b7a"
+      },
+      {
+        "path": "docs/task-workflows.md",
+        "sha256": "50317ba0e0c0ce0b2d520ddbf70cfe17c5bcc25769a7541bac7c4087685103de"
+      },
+      {
+        "path": "benchmark/reports/context-models-2026-10-21.md",
+        "sha256": "0265f2ee2c55a761d29b3831ce974bcf26d8273b520a38e841eb1404ce877c00"
+      },
+      {
+        "path": "benchmark/results/context-models-2026-10-20/graded-summary.json",
+        "sha256": "974b78e9e975a86d22f49a5d82629154626388cc44ec7464b5dea47e3d577268"
+      }
+    ]
+  },
+  "snapshots": [
+    {
+      "repo": "basicmachines-co/basic-memory",
+      "sha": "9643ec25918e8958629a668e3ce928981ab3ea36",
+      "commitDate": "2026-10-26T16:30:04Z",
+      "license": "AGPL-3.0",
+      "paths": 2226,
+      "truncated": false
+    },
+    {
+      "repo": "tobi/qmd",
+      "sha": "86d2365d17fc682e491c2c53d1e4a884aee8682a",
+      "commitDate": "2026-10-15T03:04:06Z",
+      "license": "MIT",
+      "paths": 281,
+      "truncated": false
+    },
+    {
+      "repo": "vectorize-io/hindsight",
+      "sha": "5a672f0cdb89f4a3b841770cce2036a5b28b799d",
+      "commitDate": "2026-10-26T17:55:08Z",
+      "license": "MIT",
+      "paths": 5672,
+      "truncated": false
+    },
+    {
+      "repo": "mem0ai/mem0",
+      "sha": "26cdefb46600c0fa5953c4b5ee5003c125539fc4",
+      "commitDate": "2026-10-26T14:51:39Z",
+      "license": "Apache-2.0",
+      "paths": 2218,
+      "truncated": false
+    },
+    {
+      "repo": "getzep/graphiti",
+      "sha": "5c27edfa8d3e0f49b2571bcebb4261bcc89ee037",
+      "commitDate": "2026-10-25T08:32:08Z",
+      "license": "Apache-2.0",
+      "paths": 504,
+      "truncated": false
+    },
+    {
+      "repo": "topoteretes/cognee",
+      "sha": "37f788bd287750e10d7610173e5332b3843f6ebd",
+      "commitDate": "2026-10-16T20:07:34Z",
+      "license": "Apache-2.0",
+      "paths": 5051,
+      "truncated": false
+    },
+    {
+      "repo": "volcengine/OpenViking",
+      "sha": "5c066d97094d713238c483c10691d7b4e1cfbf6e",
+      "commitDate": "2026-10-26T15:02:36Z",
+      "license": "AGPL-3.0",
+      "paths": 6239,
+      "truncated": false
+    },
+    {
+      "repo": "letta-ai/letta-code",
+      "sha": "1fb6ea4d30942ef9220b096ba7f4185f18184fc1",
+      "commitDate": "2026-10-25T18:01:18Z",
+      "license": "Apache-2.0",
+      "paths": 2843,
+      "truncated": false
+    }
+  ],
+  "releasesReportedByGitHub": [
+    {
+      "repo": "basicmachines-co/basic-memory",
+      "release": "v0.24.1",
+      "published": "2026-10-23T02:22:58Z",
+      "prerelease": false,
+      "url": "https://github.com/basicmachines-co/basic-memory/releases/tag/v0.24.1"
+    },
+    {
+      "repo": "tobi/qmd",
+      "release": "v2.8.3",
+      "published": "2026-08-16T22:30:34Z",
+      "prerelease": false,
+      "url": "https://github.com/tobi/qmd/releases/tag/v2.8.3"
+    },
+    {
+      "repo": "vectorize-io/hindsight",
+      "release": "v1.1.0",
+      "published": "2026-10-21T16:41:42Z",
+      "prerelease": false,
+      "url": "https://github.com/vectorize-io/hindsight/releases/tag/v1.1.0"
+    },
+    {
+      "repo": "mem0ai/mem0",
+      "release": "ts-v3.3.1",
+      "published": "2026-09-25T17:36:35Z",
+      "prerelease": false,
+      "url": "https://github.com/mem0ai/mem0/releases/tag/ts-v3.3.1"
+    },
+    {
+      "repo": "getzep/graphiti",
+      "release": "v0.31.2",
+      "published": "2026-10-20T17:25:21Z",
+      "prerelease": false,
+      "url": "https://github.com/getzep/graphiti/releases/tag/v0.31.2"
+    },
+    {
+      "repo": "topoteretes/cognee",
+      "release": "v1.6.6rc1",
+      "published": "2026-10-23T01:46:26Z",
+      "prerelease": false,
+      "url": "https://github.com/topoteretes/cognee/releases/tag/v1.6.6rc1"
+    },
+    {
+      "repo": "volcengine/OpenViking",
+      "release": "v0.5.2",
+      "published": "2026-10-23T12:43:54Z",
+      "prerelease": false,
+      "url": "https://github.com/volcengine/OpenViking/releases/tag/v0.5.2"
+    },
+    {
+      "repo": "letta-ai/letta-code",
+      "release": "v0.34.24",
+      "published": "2026-10-25T05:39:26Z",
+      "prerelease": false,
+      "url": "https://github.com/letta-ai/letta-code/releases/tag/v0.34.24"
+    }
+  ],
+  "retrievedSourceFiles": [
+    {
+      "repo": "basicmachines-co/basic-memory",
+      "path": "pyproject.toml",
+      "bytes": 11084,
+      "url": "https://raw.githubusercontent.com/basicmachines-co/basic-memory/9643ec25918e8958629a668e3ce928981ab3ea36/pyproject.toml",
+      "kind": "snapshot",
+      "sha256": "47d050faa01559d58e214e35be331645e9e9dba741f5454ba9b5b63b3f26706b"
+    },
+    {
+      "repo": "basicmachines-co/basic-memory",
+      "path": "src/basic_memory/config.py",
+      "bytes": 17506,
+      "url": "https://raw.githubusercontent.com/basicmachines-co/basic-memory/9643ec25918e8958629a668e3ce928981ab3ea36/src/basic_memory/config.py",
+      "kind": "snapshot",
+      "sha256": "d8c883c41d40b07475251c8cc8a2f437b5a91b3df0d16305c5adf7a24ce7469e"
+    },
+    {
+      "repo": "basicmachines-co/basic-memory",
+      "path": "src/basic_memory/mcp/tools/build_context.py",
+      "bytes": 18611,
+      "url": "https://raw.githubusercontent.com/basicmachines-co/basic-memory/9643ec25918e8958629a668e3ce928981ab3ea36/src/basic_memory/mcp/tools/build_context.py",
+      "kind": "snapshot",
+      "sha256": "5c8c9275bbf7eb72d56a7dd1a1c08716b8f05d7a15cd49229a9e8ba78bf8ae3e"
+    },
+    {
+      "repo": "basicmachines-co/basic-memory",
+      "path": "src/basic_memory/mcp/tools/search.py",
+      "bytes": 82843,
+      "url": "https://raw.githubusercontent.com/basicmachines-co/basic-memory/9643ec25918e8958629a668e3ce928981ab3ea36/src/basic_memory/mcp/tools/search.py",
+      "kind": "snapshot",
+      "sha256": "708412c342d6986a965fcc3c42c0d659f20e40dedc62c71e7f3474c01dc5a6f6"
+    },
+    {
+      "repo": "basicmachines-co/basic-memory",
+      "path": "src/basic_memory/mcp/tools/write_note.py",
+      "bytes": 31000,
+      "url": "https://raw.githubusercontent.com/basicmachines-co/basic-memory/9643ec25918e8958629a668e3ce928981ab3ea36/src/basic_memory/mcp/tools/write_note.py",
+      "kind": "snapshot",
+      "sha256": "f81b8d28b723b8e7eeb453d9f1bfa32e99be4ecdd35d5df3a49dabea2c495b03"
+    },
+    {
+      "repo": "basicmachines-co/basic-memory",
+      "path": "src/basic_memory/services/context_service.py",
+      "bytes": 31572,
+      "url": "https://raw.githubusercontent.com/basicmachines-co/basic-memory/9643ec25918e8958629a668e3ce928981ab3ea36/src/basic_memory/services/context_service.py",
+      "kind": "snapshot",
+      "sha256": "ccd0fc3d9c675455bb12588889bbb5b6bc94735c9a30b5b6335e1bab9c0c2281"
+    },
+    {
+      "repo": "basicmachines-co/basic-memory",
+      "path": "src/basic_memory/services/entity_service.py",
+      "bytes": 47303,
+      "url": "https://raw.githubusercontent.com/basicmachines-co/basic-memory/9643ec25918e8958629a668e3ce928981ab3ea36/src/basic_memory/services/entity_service.py",
+      "kind": "snapshot",
+      "sha256": "8032f1592ca6d815f03111d2668e39b00c7ce01ece44c01d3c521de46515d77a"
+    },
+    {
+      "repo": "basicmachines-co/basic-memory",
+      "path": "src/basic_memory/services/search_service.py",
+      "bytes": 49958,
+      "url": "https://raw.githubusercontent.com/basicmachines-co/basic-memory/9643ec25918e8958629a668e3ce928981ab3ea36/src/basic_memory/services/search_service.py",
+      "kind": "snapshot",
+      "sha256": "6e22413b975d5f9a1c404cd90d728eecf28e94dec3f0f6bf4a72d662e5f8d4ae"
+    },
+    {
+      "repo": "basicmachines-co/basic-memory",
+      "path": "docs/semantic-search.md",
+      "bytes": 40232,
+      "url": "https://raw.githubusercontent.com/basicmachines-co/basic-memory/9643ec25918e8958629a668e3ce928981ab3ea36/docs/semantic-search.md",
+      "kind": "snapshot",
+      "sha256": "8877719b8d3fedcee81a2b3acfeb54a884c8d89206094a0af5b6284a24c1d93d"
+    },
+    {
+      "repo": "tobi/qmd",
+      "path": "package.json",
+      "bytes": 3521,
+      "url": "https://raw.githubusercontent.com/tobi/qmd/86d2365d17fc682e491c2c53d1e4a884aee8682a/package.json",
+      "kind": "snapshot",
+      "sha256": "79483e296345186c6f9276061a4e26cfebedbf6d3e4a7ae242dd6c823d14be8d"
+    },
+    {
+      "repo": "tobi/qmd",
+      "path": "src/index.ts",
+      "bytes": 23669,
+      "url": "https://raw.githubusercontent.com/tobi/qmd/86d2365d17fc682e491c2c53d1e4a884aee8682a/src/index.ts",
+      "kind": "snapshot",
+      "sha256": "52cb0c901f0a5f6b85ad96d30ba6775fb9c47d5b58959fa565f263736bac05e2"
+    },
+    {
+      "repo": "tobi/qmd",
+      "path": "src/mcp/server.ts",
+      "bytes": 62929,
+      "url": "https://raw.githubusercontent.com/tobi/qmd/86d2365d17fc682e491c2c53d1e4a884aee8682a/src/mcp/server.ts",
+      "kind": "snapshot",
+      "sha256": "e8af0586a16b1ecc832d028b6f44bb49759d78f6eb9e1bc97fdf4f2759398504"
+    },
+    {
+      "repo": "tobi/qmd",
+      "path": "src/store.ts",
+      "bytes": 263828,
+      "url": "https://raw.githubusercontent.com/tobi/qmd/86d2365d17fc682e491c2c53d1e4a884aee8682a/src/store.ts",
+      "kind": "snapshot",
+      "sha256": "8260c1b639b874dc3aba247e862c954e76d31c7f0363f8b84f285e40ec14cf41"
+    },
+    {
+      "repo": "tobi/qmd",
+      "path": "src/llm.ts",
+      "bytes": 80403,
+      "url": "https://raw.githubusercontent.com/tobi/qmd/86d2365d17fc682e491c2c53d1e4a884aee8682a/src/llm.ts",
+      "kind": "snapshot",
+      "sha256": "3a06fe70cc6c6a56c12aa711af4b17fef207fad1b268b9761376b2d55db4bada"
+    },
+    {
+      "repo": "vectorize-io/hindsight",
+      "path": "hindsight-api-slim/hindsight_api/engine/retain/fact_extraction.py",
+      "bytes": 186070,
+      "url": "https://raw.githubusercontent.com/vectorize-io/hindsight/5a672f0cdb89f4a3b841770cce2036a5b28b799d/hindsight-api-slim/hindsight_api/engine/retain/fact_extraction.py",
+      "kind": "snapshot",
+      "sha256": "a11d4819fa5eb57ad12a8bdb952e22cdf32f9ee05b48f2cca1d2c2bfa0dd360b"
+    },
+    {
+      "repo": "vectorize-io/hindsight",
+      "path": "hindsight-api-slim/hindsight_api/engine/retain/orchestrator.py",
+      "bytes": 235485,
+      "url": "https://raw.githubusercontent.com/vectorize-io/hindsight/5a672f0cdb89f4a3b841770cce2036a5b28b799d/hindsight-api-slim/hindsight_api/engine/retain/orchestrator.py",
+      "kind": "snapshot",
+      "sha256": "b34576b6357675f5db7dbb2026e60e8602c5b17999e40fe727412dd1baf2dbe1"
+    },
+    {
+      "repo": "vectorize-io/hindsight",
+      "path": "hindsight-api-slim/hindsight_api/engine/memories/pg/recall.py",
+      "bytes": 32664,
+      "url": "https://raw.githubusercontent.com/vectorize-io/hindsight/5a672f0cdb89f4a3b841770cce2036a5b28b799d/hindsight-api-slim/hindsight_api/engine/memories/pg/recall.py",
+      "kind": "snapshot",
+      "sha256": "5569dff0d5a751dc4377aa609b1d525a6de58c4baa489523578de645b6951079"
+    },
+    {
+      "repo": "vectorize-io/hindsight",
+      "path": "hindsight-api-slim/hindsight_api/api/mcp.py",
+      "bytes": 29055,
+      "url": "https://raw.githubusercontent.com/vectorize-io/hindsight/5a672f0cdb89f4a3b841770cce2036a5b28b799d/hindsight-api-slim/hindsight_api/api/mcp.py",
+      "kind": "snapshot",
+      "sha256": "6b9f0a1ba05f13ae34fa2266de9144301cc29838bf57023915109dea78efd8f1"
+    },
+    {
+      "repo": "vectorize-io/hindsight",
+      "path": "hindsight-api-slim/pyproject.toml",
+      "bytes": 17699,
+      "url": "https://raw.githubusercontent.com/vectorize-io/hindsight/5a672f0cdb89f4a3b841770cce2036a5b28b799d/hindsight-api-slim/pyproject.toml",
+      "kind": "snapshot",
+      "sha256": "20a718e76cd7ee58a4036f43c6d297754d61e2f880e3a89c20fd45156a7f8dca"
+    },
+    {
+      "repo": "mem0ai/mem0",
+      "path": "mem0/memory/main.py",
+      "bytes": 169881,
+      "url": "https://raw.githubusercontent.com/mem0ai/mem0/26cdefb46600c0fa5953c4b5ee5003c125539fc4/mem0/memory/main.py",
+      "kind": "snapshot",
+      "sha256": "f329ca4a17af1fbefb32ac10d4cc7ae7ddbdb7435a87eb74c30915cff98b8b7c"
+    },
+    {
+      "repo": "mem0ai/mem0",
+      "path": "mem0-ts/src/oss/src/config/defaults.ts",
+      "bytes": 731,
+      "url": "https://raw.githubusercontent.com/mem0ai/mem0/26cdefb46600c0fa5953c4b5ee5003c125539fc4/mem0-ts/src/oss/src/config/defaults.ts",
+      "kind": "snapshot",
+      "sha256": "8a156c6f355f990ec2d547c65ad1cc641e83b7c1a878f6918916011b8193be3c"
+    },
+    {
+      "repo": "mem0ai/mem0",
+      "path": "mem0-ts/src/oss/README.md",
+      "bytes": 5100,
+      "url": "https://raw.githubusercontent.com/mem0ai/mem0/26cdefb46600c0fa5953c4b5ee5003c125539fc4/mem0-ts/src/oss/README.md",
+      "kind": "snapshot",
+      "sha256": "a775647ab2d5cf0b7ef15d9ea2845a91d71938c8fa36ab24c6e4e19e9c2ad9f1"
+    },
+    {
+      "repo": "mem0ai/mem0",
+      "path": "docs/core-concepts/memory-operations/add.mdx",
+      "bytes": 8600,
+      "url": "https://raw.githubusercontent.com/mem0ai/mem0/26cdefb46600c0fa5953c4b5ee5003c125539fc4/docs/core-concepts/memory-operations/add.mdx",
+      "kind": "snapshot",
+      "sha256": "57a912b4e7b3ab540c6a30b7502f4dbc3c716ac5b8181837aa6b8f2d61e247c2"
+    },
+    {
+      "repo": "mem0ai/mem0",
+      "path": "docs/core-concepts/memory-operations/search.mdx",
+      "bytes": 9190,
+      "url": "https://raw.githubusercontent.com/mem0ai/mem0/26cdefb46600c0fa5953c4b5ee5003c125539fc4/docs/core-concepts/memory-operations/search.mdx",
+      "kind": "snapshot",
+      "sha256": "186573c5fdb1c06a07ecdc36fce727fe0c4fef1e4bd5ceb125c953a162d9b42c"
+    },
+    {
+      "repo": "getzep/graphiti",
+      "path": "graphiti_core/graphiti.py",
+      "bytes": 93250,
+      "url": "https://raw.githubusercontent.com/getzep/graphiti/5c27edfa8d3e0f49b2571bcebb4261bcc89ee037/graphiti_core/graphiti.py",
+      "kind": "snapshot",
+      "sha256": "4e456b2255196d13466e31d13d0f5790e85d611731cbdfa733abfb3091f24040"
+    },
+    {
+      "repo": "getzep/graphiti",
+      "path": "graphiti_core/search/search.py",
+      "bytes": 33733,
+      "url": "https://raw.githubusercontent.com/getzep/graphiti/5c27edfa8d3e0f49b2571bcebb4261bcc89ee037/graphiti_core/search/search.py",
+      "kind": "snapshot",
+      "sha256": "bd224cb6a272d0be096779f3105a78639538f84d043a0c5ff5efddc9e46edf2a"
+    },
+    {
+      "repo": "getzep/graphiti",
+      "path": "graphiti_core/utils/maintenance/edge_operations.py",
+      "bytes": 46743,
+      "url": "https://raw.githubusercontent.com/getzep/graphiti/5c27edfa8d3e0f49b2571bcebb4261bcc89ee037/graphiti_core/utils/maintenance/edge_operations.py",
+      "kind": "snapshot",
+      "sha256": "3f894ecf6e2cfb7a60d40d750fb4d0cf42d10d694312d72b4bb10ba5f86d36f9"
+    },
+    {
+      "repo": "getzep/graphiti",
+      "path": "pyproject.toml",
+      "bytes": 2811,
+      "url": "https://raw.githubusercontent.com/getzep/graphiti/5c27edfa8d3e0f49b2571bcebb4261bcc89ee037/pyproject.toml",
+      "kind": "snapshot",
+      "sha256": "fa842260cb2724ef5142ebee50395149dee51d224372bccfeb084a63655563ba"
+    },
+    {
+      "repo": "topoteretes/cognee",
+      "path": "cognee/api/v1/cognify/cognify.py",
+      "bytes": 32799,
+      "url": "https://raw.githubusercontent.com/topoteretes/cognee/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/api/v1/cognify/cognify.py",
+      "kind": "snapshot",
+      "sha256": "34369d26032dd8fb1b78e8774d9b0cba4ffcb91915af01c5c88e936b7709f7d1"
+    },
+    {
+      "repo": "topoteretes/cognee",
+      "path": "cognee/tasks/graph/extract_graph_and_summarize.py",
+      "bytes": 2335,
+      "url": "https://raw.githubusercontent.com/topoteretes/cognee/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/tasks/graph/extract_graph_and_summarize.py",
+      "kind": "snapshot",
+      "sha256": "28ddb0d0d2742d6cdd361e3533e3890aaaff7bd033c58e260dacc92de56143fb"
+    },
+    {
+      "repo": "topoteretes/cognee",
+      "path": "cognee/infrastructure/llm/extraction/knowledge_graph/extract_content_graph.py",
+      "bytes": 2174,
+      "url": "https://raw.githubusercontent.com/topoteretes/cognee/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/infrastructure/llm/extraction/knowledge_graph/extract_content_graph.py",
+      "kind": "snapshot",
+      "sha256": "3b943b428f6e98f80d419029535e371cd2deded5a09f35b686a24db8c4221a19"
+    },
+    {
+      "repo": "topoteretes/cognee",
+      "path": "pyproject.toml",
+      "bytes": 18275,
+      "url": "https://raw.githubusercontent.com/topoteretes/cognee/37f788bd287750e10d7610173e5332b3843f6ebd/pyproject.toml",
+      "kind": "snapshot",
+      "sha256": "a5ca3c4a4e0ad74e812cb06c7c707b62b42e241d5c5ab8013e01ac46ebc7892c"
+    },
+    {
+      "repo": "volcengine/OpenViking",
+      "path": "docs/en/concepts/03-context-layers.md",
+      "bytes": 9578,
+      "url": "https://raw.githubusercontent.com/volcengine/OpenViking/5c066d97094d713238c483c10691d7b4e1cfbf6e/docs/en/concepts/03-context-layers.md",
+      "kind": "snapshot",
+      "sha256": "49fe1404a676cc588a210b0814a14b144c6ad235c03161dda52ebefd9292c98f"
+    },
+    {
+      "repo": "volcengine/OpenViking",
+      "path": "pyproject.toml",
+      "bytes": 8532,
+      "url": "https://raw.githubusercontent.com/volcengine/OpenViking/5c066d97094d713238c483c10691d7b4e1cfbf6e/pyproject.toml",
+      "kind": "snapshot",
+      "sha256": "baa32ec326e3646ec00cf180c5ffb89b9f8a181fb21680c3cc14ff138d0ea9dc"
+    },
+    {
+      "repo": "letta-ai/letta-code",
+      "path": "package.json",
+      "bytes": 9765,
+      "url": "https://raw.githubusercontent.com/letta-ai/letta-code/1fb6ea4d30942ef9220b096ba7f4185f18184fc1/package.json",
+      "kind": "snapshot",
+      "sha256": "80c3a73a93204ad382742250674cbc8bcdb698195072b025ace61b518739fb41"
+    },
+    {
+      "repo": "letta-ai/letta-code",
+      "path": "src/agent/memory-filesystem.ts",
+      "bytes": 22353,
+      "url": "https://raw.githubusercontent.com/letta-ai/letta-code/1fb6ea4d30942ef9220b096ba7f4185f18184fc1/src/agent/memory-filesystem.ts",
+      "kind": "snapshot",
+      "sha256": "a2884fd2e467af615a7a56584ccf9df520e470c6eef39930a98ec7dc10bfe628"
+    },
+    {
+      "repo": "letta-ai/letta-code",
+      "path": "src/agent/memory-constraints.ts",
+      "bytes": 8419,
+      "url": "https://raw.githubusercontent.com/letta-ai/letta-code/1fb6ea4d30942ef9220b096ba7f4185f18184fc1/src/agent/memory-constraints.ts",
+      "kind": "snapshot",
+      "sha256": "22096ac634517519892328aa2e9f6ce95f53b2c6a3a259e83a3dc7a5889f5690"
+    },
+    {
+      "repo": "letta-ai/letta-code",
+      "path": "src/agent/prompts/letta.md",
+      "bytes": 22522,
+      "url": "https://raw.githubusercontent.com/letta-ai/letta-code/1fb6ea4d30942ef9220b096ba7f4185f18184fc1/src/agent/prompts/letta.md",
+      "kind": "snapshot",
+      "sha256": "06747f93828b1d3c04ecf7138cab899b92f11792e63e59662e3f68d77f88a82a"
+    },
+    {
+      "repo": "basicmachines-co/basic-memory",
+      "path": "src/basic_memory/config_models.py",
+      "url": "https://raw.githubusercontent.com/basicmachines-co/basic-memory/9643ec25918e8958629a668e3ce928981ab3ea36/src/basic_memory/config_models.py",
+      "bytes": 44878,
+      "kind": "snapshot",
+      "sha256": "af6c8938a91c4580842be1449f3c3ff86e3c621901a9d3b210690ac80d6868d9"
+    },
+    {
+      "repo": "basicmachines-co/basic-memory",
+      "path": "src/basic_memory/markdown/entity_parser.py",
+      "url": "https://raw.githubusercontent.com/basicmachines-co/basic-memory/9643ec25918e8958629a668e3ce928981ab3ea36/src/basic_memory/markdown/entity_parser.py",
+      "bytes": 17482,
+      "kind": "snapshot",
+      "sha256": "3e28a2d710b8a2ee0ba202ff5a2508e2a976d9188e6d20176b949b03909ef934"
+    },
+    {
+      "repo": "basicmachines-co/basic-memory",
+      "path": "src/basic_memory/repository/semantic_runtime.py",
+      "url": "https://raw.githubusercontent.com/basicmachines-co/basic-memory/9643ec25918e8958629a668e3ce928981ab3ea36/src/basic_memory/repository/semantic_runtime.py",
+      "bytes": 1346,
+      "kind": "snapshot",
+      "sha256": "715340bca9400ff583f2f4d5aa50da1508bdc868257fa997f91612fb768abd8b"
+    },
+    {
+      "repo": "volcengine/OpenViking",
+      "path": "openviking/session/memory/extract_loop.py",
+      "url": "https://raw.githubusercontent.com/volcengine/OpenViking/5c066d97094d713238c483c10691d7b4e1cfbf6e/openviking/session/memory/extract_loop.py",
+      "bytes": 66533,
+      "kind": "snapshot",
+      "sha256": "7c094768a79913ceb60f618fb4fef3b03c230ac6718719d5e9f1b6bada78a7af"
+    },
+    {
+      "repo": "volcengine/OpenViking",
+      "path": "openviking/storage/queuefs/semantic_processor.py",
+      "url": "https://raw.githubusercontent.com/volcengine/OpenViking/5c066d97094d713238c483c10691d7b4e1cfbf6e/openviking/storage/queuefs/semantic_processor.py",
+      "bytes": 86800,
+      "kind": "snapshot",
+      "sha256": "afbac80c269299929be4da7321303a28f277ec5aa5aabab16851d8bb99d6829a"
+    },
+    {
+      "repo": "vectorize-io/hindsight",
+      "path": "hindsight-api-slim/hindsight_api/config.py",
+      "url": "https://raw.githubusercontent.com/vectorize-io/hindsight/5a672f0cdb89f4a3b841770cce2036a5b28b799d/hindsight-api-slim/hindsight_api/config.py",
+      "bytes": 330821,
+      "kind": "snapshot",
+      "sha256": "0a58594b7acb0a3f8781c5ad52c24cdcc442475ee7189de00d2fa079e1853e94"
+    },
+    {
+      "repo": "vectorize-io/hindsight",
+      "path": "hindsight-api-slim/hindsight_api/engine/search/retrieval.py",
+      "url": "https://raw.githubusercontent.com/vectorize-io/hindsight/5a672f0cdb89f4a3b841770cce2036a5b28b799d/hindsight-api-slim/hindsight_api/engine/search/retrieval.py",
+      "bytes": 11694,
+      "kind": "snapshot",
+      "sha256": "720d7ee7573ee75a48efd634f846fb8876cdb180ef6a2819ff9c354a274b222c"
+    },
+    {
+      "repo": "vectorize-io/hindsight",
+      "path": "hindsight-api-slim/hindsight_api/engine/search/reranking.py",
+      "url": "https://raw.githubusercontent.com/vectorize-io/hindsight/5a672f0cdb89f4a3b841770cce2036a5b28b799d/hindsight-api-slim/hindsight_api/engine/search/reranking.py",
+      "bytes": 25311,
+      "kind": "snapshot",
+      "sha256": "31bd7a2c1b1c2e435803a45d4c30aa4bc6eccad2e35dc591a1b45f876803dd95"
+    },
+    {
+      "repo": "basicmachines-co/basic-memory",
+      "tag": "v0.24.1",
+      "path": "src/basic_memory/mcp/tools/build_context.py",
+      "url": "https://raw.githubusercontent.com/basicmachines-co/basic-memory/v0.24.1/src/basic_memory/mcp/tools/build_context.py",
+      "bytes": 18309,
+      "kind": "release",
+      "sha256": "63a4d01dec06285a29989581ab5236d0db0760c5df0ee3a108c7f47cf48ac7ed"
+    },
+    {
+      "repo": "basicmachines-co/basic-memory",
+      "tag": "v0.24.1",
+      "path": "src/basic_memory/mcp/tools/search.py",
+      "url": "https://raw.githubusercontent.com/basicmachines-co/basic-memory/v0.24.1/src/basic_memory/mcp/tools/search.py",
+      "bytes": 81310,
+      "kind": "release",
+      "sha256": "e3aa9765dfb018e32cd26282c43767c6928242552bef4fef6217b1e773137612"
+    },
+    {
+      "repo": "basicmachines-co/basic-memory",
+      "tag": "v0.24.1",
+      "path": "src/basic_memory/config_models.py",
+      "url": "https://raw.githubusercontent.com/basicmachines-co/basic-memory/v0.24.1/src/basic_memory/config_models.py",
+      "bytes": 44567,
+      "kind": "release",
+      "sha256": "5416b670cb55dadd52f650e8d31a3b020028b2cf5859e3916d18ad6be5dee12f"
+    },
+    {
+      "repo": "basicmachines-co/basic-memory",
+      "tag": "v0.24.1",
+      "path": "src/basic_memory/markdown/entity_parser.py",
+      "url": "https://raw.githubusercontent.com/basicmachines-co/basic-memory/v0.24.1/src/basic_memory/markdown/entity_parser.py",
+      "bytes": 17482,
+      "kind": "release",
+      "sha256": "3e28a2d710b8a2ee0ba202ff5a2508e2a976d9188e6d20176b949b03909ef934"
+    },
+    {
+      "repo": "basicmachines-co/basic-memory",
+      "tag": "v0.24.1",
+      "path": "pyproject.toml",
+      "url": "https://raw.githubusercontent.com/basicmachines-co/basic-memory/v0.24.1/pyproject.toml",
+      "bytes": 11018,
+      "kind": "release",
+      "sha256": "0cc626c53f0427c5e2433f10ee9b549af566cda1911f9eb4d20eb983dc7eb9d3"
+    },
+    {
+      "repo": "vectorize-io/hindsight",
+      "tag": "v1.1.0",
+      "path": "hindsight-api-slim/hindsight_api/config.py",
+      "url": "https://raw.githubusercontent.com/vectorize-io/hindsight/v1.1.0/hindsight-api-slim/hindsight_api/config.py",
+      "bytes": 329589,
+      "kind": "release",
+      "sha256": "4a3b8ce16b5aeefe9f51bb792d18b5e4c782ab572177a4badbf54d051db0077a"
+    },
+    {
+      "repo": "vectorize-io/hindsight",
+      "tag": "v1.1.0",
+      "path": "hindsight-api-slim/hindsight_api/engine/retain/fact_extraction.py",
+      "url": "https://raw.githubusercontent.com/vectorize-io/hindsight/v1.1.0/hindsight-api-slim/hindsight_api/engine/retain/fact_extraction.py",
+      "bytes": 186070,
+      "kind": "release",
+      "sha256": "a11d4819fa5eb57ad12a8bdb952e22cdf32f9ee05b48f2cca1d2c2bfa0dd360b"
+    },
+    {
+      "repo": "tobi/qmd",
+      "tag": "v2.8.3",
+      "path": "src/index.ts",
+      "url": "https://raw.githubusercontent.com/tobi/qmd/v2.8.3/src/index.ts",
+      "bytes": 19015,
+      "kind": "release",
+      "sha256": "4f37f80530df3f02e3c2dc915ecf581c167b948084460c465c0fa93810f168fe"
+    },
+    {
+      "repo": "tobi/qmd",
+      "tag": "v2.8.3",
+      "path": "src/mcp/server.ts",
+      "url": "https://raw.githubusercontent.com/tobi/qmd/v2.8.3/src/mcp/server.ts",
+      "bytes": 45428,
+      "kind": "release",
+      "sha256": "002c70fa9d160ce8d04c514d93bc7765c2686b757759aafb220d36f953c05ab7"
+    },
+    {
+      "repo": "tobi/qmd",
+      "tag": "v2.8.3",
+      "path": "package.json",
+      "url": "https://raw.githubusercontent.com/tobi/qmd/v2.8.3/package.json",
+      "bytes": 3415,
+      "kind": "release",
+      "sha256": "14462e2764e9d140afbeb3c924e6dd81c0448177e97785822e763d901d70f20b"
+    },
+    {
+      "repo": "basicmachines-co/basic-memory",
+      "path": "README.md",
+      "kind": "snapshot",
+      "url": "https://raw.githubusercontent.com/basicmachines-co/basic-memory/9643ec25918e8958629a668e3ce928981ab3ea36/README.md",
+      "sha256": "6f58ce3b76b5e6715baed6e86131e50a3d461d68a184ad5968c7c0cc52e4d067",
+      "bytes": 24832
+    },
+    {
+      "repo": "basicmachines-co/basic-memory",
+      "path": "LICENSE",
+      "kind": "snapshot",
+      "url": "https://raw.githubusercontent.com/basicmachines-co/basic-memory/9643ec25918e8958629a668e3ce928981ab3ea36/LICENSE",
+      "sha256": "8486a10c4393cee1c25392769ddd3b2d6c242d6ec7928e1414efff7dfb2f07ef",
+      "bytes": 34523
+    },
+    {
+      "repo": "tobi/qmd",
+      "path": "README.md",
+      "kind": "snapshot",
+      "url": "https://raw.githubusercontent.com/tobi/qmd/86d2365d17fc682e491c2c53d1e4a884aee8682a/README.md",
+      "sha256": "af5f41ebeea04e0928fccd38ba5f47d90749b8f0417b84a99f89a677fefae76a",
+      "bytes": 66389
+    },
+    {
+      "repo": "tobi/qmd",
+      "path": "LICENSE",
+      "kind": "snapshot",
+      "url": "https://raw.githubusercontent.com/tobi/qmd/86d2365d17fc682e491c2c53d1e4a884aee8682a/LICENSE",
+      "sha256": "24c446836e7e2cdea13a914de10c88c553e6297366061ba24013b8ce73c8f7fa",
+      "bytes": 1072
+    },
+    {
+      "repo": "vectorize-io/hindsight",
+      "path": "README.md",
+      "kind": "snapshot",
+      "url": "https://raw.githubusercontent.com/vectorize-io/hindsight/5a672f0cdb89f4a3b841770cce2036a5b28b799d/README.md",
+      "sha256": "a3e2745dedec4f9e0d4452857ef054699e60414740f5d8f12d41bd42711d476a",
+      "bytes": 24997
+    },
+    {
+      "repo": "vectorize-io/hindsight",
+      "path": "LICENSE",
+      "kind": "snapshot",
+      "url": "https://raw.githubusercontent.com/vectorize-io/hindsight/5a672f0cdb89f4a3b841770cce2036a5b28b799d/LICENSE",
+      "sha256": "01fde0bedf83bdc185065d7af524a61690efe576a67f922eaff3a1280c17b63a",
+      "bytes": 1075
+    },
+    {
+      "repo": "mem0ai/mem0",
+      "path": "README.md",
+      "kind": "snapshot",
+      "url": "https://raw.githubusercontent.com/mem0ai/mem0/26cdefb46600c0fa5953c4b5ee5003c125539fc4/README.md",
+      "sha256": "f72db3426438dbdf6879a2b50583fbee8e7e2dde5d01308c6295bcd09fd3db86",
+      "bytes": 12306
+    },
+    {
+      "repo": "mem0ai/mem0",
+      "path": "LICENSE",
+      "kind": "snapshot",
+      "url": "https://raw.githubusercontent.com/mem0ai/mem0/26cdefb46600c0fa5953c4b5ee5003c125539fc4/LICENSE",
+      "sha256": "0bbcbe931c353293a2fafce08326181dfeea0e568c566afd4ce8337a70f5e219",
+      "bytes": 11349
+    },
+    {
+      "repo": "getzep/graphiti",
+      "path": "README.md",
+      "kind": "snapshot",
+      "url": "https://raw.githubusercontent.com/getzep/graphiti/5c27edfa8d3e0f49b2571bcebb4261bcc89ee037/README.md",
+      "sha256": "ccdd0f4daf286e49345deae615cb8ba46b8d1a79dff78516d589e018e3a6f17c",
+      "bytes": 35219
+    },
+    {
+      "repo": "getzep/graphiti",
+      "path": "LICENSE",
+      "kind": "snapshot",
+      "url": "https://raw.githubusercontent.com/getzep/graphiti/5c27edfa8d3e0f49b2571bcebb4261bcc89ee037/LICENSE",
+      "sha256": "2825300b20d7b951209835a4a331f29e24725a39d65168e4b831df53aa372650",
+      "bytes": 11325
+    },
+    {
+      "repo": "topoteretes/cognee",
+      "path": "README.md",
+      "kind": "snapshot",
+      "url": "https://raw.githubusercontent.com/topoteretes/cognee/37f788bd287750e10d7610173e5332b3843f6ebd/README.md",
+      "sha256": "a19c715a2c161960f222eb1d52b1f28048bf6d998c8e7b7013bc3cf024c15a89",
+      "bytes": 18243
+    },
+    {
+      "repo": "topoteretes/cognee",
+      "path": "LICENSE",
+      "kind": "snapshot",
+      "url": "https://raw.githubusercontent.com/topoteretes/cognee/37f788bd287750e10d7610173e5332b3843f6ebd/LICENSE",
+      "sha256": "a471e34908f50c3f120e9a56f3c30cb34e133e4ede01a9cbd5ce718fc358ecd4",
+      "bytes": 11344
+    },
+    {
+      "repo": "volcengine/OpenViking",
+      "path": "README.md",
+      "kind": "snapshot",
+      "url": "https://raw.githubusercontent.com/volcengine/OpenViking/5c066d97094d713238c483c10691d7b4e1cfbf6e/README.md",
+      "sha256": "0887d2b5318c729363da726563ad69c68f1f852117d17aae5c85457799a814c9",
+      "bytes": 26983
+    },
+    {
+      "repo": "volcengine/OpenViking",
+      "path": "LICENSE",
+      "kind": "snapshot",
+      "url": "https://raw.githubusercontent.com/volcengine/OpenViking/5c066d97094d713238c483c10691d7b4e1cfbf6e/LICENSE",
+      "sha256": "1bd87fa6d9a5c79daf0c2af042b6725c9773bf095cc3d1bdf3656e66d1c3e5b1",
+      "bytes": 34568
+    },
+    {
+      "repo": "letta-ai/letta-code",
+      "path": "README.md",
+      "kind": "snapshot",
+      "url": "https://raw.githubusercontent.com/letta-ai/letta-code/1fb6ea4d30942ef9220b096ba7f4185f18184fc1/README.md",
+      "sha256": "7543b5df7349bb8fbdbf7f377a161c3163b6ff062a9c6f7b7430a5ca9a3d0abe",
+      "bytes": 9952
+    },
+    {
+      "repo": "letta-ai/letta-code",
+      "path": "LICENSE",
+      "kind": "snapshot",
+      "url": "https://raw.githubusercontent.com/letta-ai/letta-code/1fb6ea4d30942ef9220b096ba7f4185f18184fc1/LICENSE",
+      "sha256": "036e78b9d7dd33ae5b378fdda973b4aad7901c8d8371a0ae40fae1f6659a89d0",
+      "bytes": 11092
+    }
+  ],
+  "publicDocuments": [
+    {
+      "url": "https://supermemory.ai/mcp/",
+      "coverage": "Public integration contract, tool types and project spaces; no internal code review"
+    },
+    {
+      "url": "https://supermemory.ai/pricing/",
+      "coverage": "Current public rate card, not account invoice"
+    },
+    {
+      "url": "https://docs.basicmemory.com/reference/mcp-tools-reference",
+      "coverage": "Public tool parameters, compact graph and project resolution"
+    },
+    {
+      "url": "https://hindsight.vectorize.io/1.0/developer/retrieval",
+      "coverage": "Recall budget vs output token limit"
+    },
+    {
+      "url": "https://hindsight.vectorize.io/1.0/developer/retain",
+      "coverage": "Extraction modes and background consolidation"
+    },
+    {
+      "url": "https://hindsight.vectorize.io/developer/configuration",
+      "coverage": "Current configuration and model options"
+    },
+    {
+      "url": "https://learn.chatgpt.com/docs/customization/memories",
+      "coverage": "Native memory generation and controls"
+    },
+    {
+      "url": "https://learn.chatgpt.com/docs/config-file/config-reference",
+      "coverage": "MCP tool allowlisting and output limits; actual pinned runtime unverified"
+    },
+    {
+      "url": "https://developers.openai.com/api/docs/guides/prompt-caching",
+      "coverage": "Stable prefix and cache-related cost interpretation"
+    },
+    {
+      "url": "https://arxiv.org/html/2602.08316v3",
+      "coverage": "SWE-ContextBench table 4 and limitations"
+    },
+    {
+      "url": "https://arxiv.org/html/2610.27524v1",
+      "coverage": "Memory benefits and induced regressions; one agent-model configuration"
+    },
+    {
+      "url": "https://arxiv.org/html/2610.29823v1",
+      "coverage": "Ingestion amortization and limits of single-conversation experiment"
+    }
+  ],
+  "limitations": [
+    "Source retrieval is not full behavioral coverage; the report maps reviewed paths and omissions.",
+    "Latest release metadata is not proof that all snapshot features are in that release.",
+    "Model usage neutrality and coding quality were not measured for any new backend.",
+    "No raw private Pace sessions were inspected or uploaded."
+  ],
+  "artifactChecks": {
+    "sourceHashesMatchedRetrievedFiles": true,
+    "paceSourceHashesStillMatched": true,
+    "localReportLinksResolved": true,
+    "jsonParsed": true,
+    "newBackendBenchmarksRun": false,
+    "applicationCodeChangedByResearch": false
+  }
+}

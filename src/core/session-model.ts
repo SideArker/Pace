@@ -33,6 +33,8 @@ export function newSession(
 export function setSteeringHistoryActive(session: Session, turns: TurnSummary[], active: boolean): void {
   const ids = new Set(turns.flatMap(turn => turn.steeringRecordIds ?? []));
   for (const record of session.steeringRecords ?? []) if (ids.has(record.id)) record.inactive = !active;
+  // Retractions are monotonic. Redo restores the turn, but cannot resurrect stale knowledge.
+  if (!active) session.memoryRetractedAttempts = [...new Set([...(session.memoryRetractedAttempts ?? []), ...turns.flatMap(turn => turn.memoryAttemptId ? [turn.memoryAttemptId] : [])])];
 }
 export function rewindConversation(session: Session, index: number): TurnSummary | undefined {
   const turn = session.turns[index];

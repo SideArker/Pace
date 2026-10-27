@@ -9,6 +9,7 @@ import { preparePlanExecution } from "../core/operations.js";
 import { durableRunner, TransitionSaveError } from "../core/task-execution.js";
 import { PromptQueue } from "../core/prompt-queue.js";
 import { checkpointDue, createCheckpointIfDue } from "../core/checkpoint.js";
+import { captureCheckpoint } from '../core/memory/checkpoint.js';
 import { formatLiveUsage, formatTurnFooter, modelName } from "./turn-format.js";
 import type { Line } from "./Transcript.js";
 import { formatCommandActivity, formatCommandStatus } from "./shell-runner.js";
@@ -252,6 +253,7 @@ export function createTurnRunner({
             if (progress.kind === "error") addFor(sessionId, "error", progress.text);
           }, controller.signal, turnConfig.approvalMode);
           await store.saveChanges(turnSession, () => activeSessionId.current === sessionId);
+          if (checkpoint) await captureCheckpoint(store, turnSession, controller.signal).catch(error => addFor(sessionId, 'error', `Memory capture degraded: ${String(error)}`));
           if (activeSessionId.current === sessionId) setSession({ ...turnSession });
           if (checkpoint) addFor(sessionId, "meta", "Context checkpoint saved. The next turn starts a fresh thread.");
           else addFor(sessionId, "meta", "Context checkpoint could not be validated; the existing thread remains available.");

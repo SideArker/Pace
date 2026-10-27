@@ -27,6 +27,7 @@ export async function showCommandInfo(command: string, parts: string[], {
   session, store, installedVersion, setMcpOpen, setKnownModels, add,
 }: InfoOptions) {
   if (command === "/help") {
+    add('info', '/memory opens optional project memory setup, settings, or connection repair. Changes apply to the next agent launch.');
     add(
       "info",
       "/plan [prompt] · /execute · /verify [file] [prompt] · /models · /mcp [list] · /auto · /manual [model] [effort] · /workflow [name|auto] · /approval [full-access|request-approval|limited] · /remote · /tasks · /new · /convo · /diff · /undo · /redo · /compact · /context · /retry · /cancelretry · /btw <q> · /adopt <side-answer-id> · /artifacts · /trust · /skills [folder|default|off|enable <name>|disable <name>] · /<skill> [request] · /stats · /clear · /exit · Esc cancels automatic retry; Esc twice/Ctrl+C cancels other turns · Ctrl+Z undo · Ctrl+Y redo · Alt+P/Ctrl+P plan · Alt+E/Ctrl+E execute · ! Bash · /links [number] lists/opens Markdown links · /debug [turn] inspects local prompts · Ctrl+O toggle plan, scout, command, diff, and reasoning details · Shift/Ctrl/Alt+Enter or Ctrl+J newline · ↑/↓ history",

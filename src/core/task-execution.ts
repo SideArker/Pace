@@ -6,6 +6,10 @@ import { CodexRunError } from "../integrations/codex-types.js";
 import { registerActiveAttempt, type PaceStore } from "./sessions.js";
 import { costForUsage, PRICE_SNAPSHOT } from "./routing/pricing.js";
 import { updateAgentTasks } from "./tasks.js";
+import { loadMemory } from './memory/config.js';
+import { finishMemoryAttempt, type MemoryScope } from './memory/access.js';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
 export class TransitionSaveError extends Error {
   constructor(cause: unknown) { super(`Required workflow save failed; execution stopped: ${String(cause)}`, { cause }); }
@@ -32,6 +36,7 @@ export function durableRunner(
     const [, , route, threadId, output, signal] = args;
     const started = performance.now();
     const id = randomUUID();
+    let memoryScope: MemoryScope | undefined;
     const taskId = session.activeTask?.id ?? session.id;
     const record: StageAttempt = {
       taskCriteria: structuredClone(taskCriteria(session.activeTask)),
@@ -110,6 +115,15 @@ export function durableRunner(
     };
     let execution: Execution;
     try {
+      if (role !== 'status' && !args[10]?.disabled) {
+        const state = await loadMemory(session.projectPath, store.baseDir);
+        if (state.config?.enabled) {
+          const git = async (...command: string[]) => (await promisify(execFile)('git', command, { cwd: session.projectPath, timeout: 3000 })).stdout.trim();
+          memoryScope = { config: state.config, baseDir: store.baseDir, sessionId: session.id, taskId, attemptId: id, role, startedAt: record.startedAt,
+            branch: await git('branch', '--show-current').catch(() => undefined), commit: await git('rev-parse', 'HEAD').catch(() => undefined) };
+          args[10] = { ...args[10], scope: memoryScope };
+        } else if (state.state === 'unavailable') await output({ kind: 'system', text: `Project memory degraded: ${state.error}. Continuing without memory.` });
+      }
       try {
         execution = await runner.run(...[...args.slice(0, 4), progress, ...args.slice(5)] as Parameters<CodexRunner["run"]>);
         if (!execution.completed) throw new CodexRunError("Codex invocation did not complete", execution.usage, execution.context,
@@ -126,6 +140,7 @@ export function durableRunner(
         finish(attempt, started);
         setStageStatus(attempt.status);
         await persistResult();
+        if (memoryScope) await finishMemoryAttempt(memoryScope, false).catch(error => output({ kind: 'system', text: `Memory capture degraded: ${String(error)}` }));
         throw error;
       }
       const attempt = current();
@@ -138,6 +153,7 @@ export function durableRunner(
       finish(attempt, started);
       setStageStatus(attempt.status);
       await persistResult();
+      if (memoryScope) await finishMemoryAttempt(memoryScope, true).catch(error => output({ kind: 'system', text: `Memory capture degraded: ${String(error)}` }));
       await after?.(id);
       return execution;
     } finally {

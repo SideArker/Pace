@@ -135,6 +135,7 @@ function isDeferred(value: unknown): boolean {
     (value.operation === undefined || validOperation(value.operation));
 }
 function validNewFields(value: Record<string, unknown>): boolean {
+  if (value.memoryRetractedAttempts !== undefined && (!Array.isArray(value.memoryRetractedAttempts) || !value.memoryRetractedAttempts.every(text))) return false;
   const records = (field: string, validate: (item: unknown) => boolean) => value[field] === undefined ||
     (Array.isArray(value[field]) && value[field].every(validate) &&
       new Set((value[field] as Record<string, unknown>[]).map(item => item.id)).size === value[field].length);

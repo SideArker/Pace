@@ -31,6 +31,7 @@ export function useAppState() {
   const [diffOpen, setDiffOpen] = useState(false);
   const [benchmarkOpen, setBenchmarkOpen] = useState(false);
   const [mcpOpen, setMcpOpen] = useState(false);
+  const [memoryOpen, setMemoryOpen] = useState(false);
   const [historyChanging, setHistoryChanging] = useState(false);
   const historyBusy = useRef(false);
   const [transcriptRevision, setTranscriptRevision] = useState(0);
@@ -88,6 +89,7 @@ export function useAppState() {
     setSideBusy, draft, setDraft, history, setHistory,
     outputsExpanded, setOutputsExpanded, diffOpen, setDiffOpen, mcpOpen,
     setMcpOpen, benchmarkOpen, setBenchmarkOpen, historyChanging, setHistoryChanging, historyBusy, transcriptRevision,
+    memoryOpen, setMemoryOpen,
     setTranscriptRevision, showHeader, setShowHeader, selection, setSelection,
     tick, setTick, shellMode, setShellMode, shellJobs,
     setShellJobs, processes, setProcesses, liveUsage, setLiveUsage,

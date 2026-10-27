@@ -8,10 +8,28 @@ export function registerAppServerRequests(
   onProgress: (progress: Progress) => void | Promise<void>,
   approvals: Map<string, (decision: ApprovalDecision) => void>,
   questions: Map<string, (answers: UserAnswers) => void>,
+  memory?: import('../core/memory/access.js').MemoryAccess,
 ): void {
   server.setRequestHandler(message => {
     if (message.id === undefined) return;
     const params = isRecord(message.params) ? message.params : {};
+    if (message.method === 'item/tool/call') {
+      const id = message.id;
+      if (params.tool !== 'pace_memory' || !memory) {
+        server.respond(id, { success: false, contentItems: [{ type: 'inputText', text: 'Project memory is unavailable for this agent run' }] });
+        return;
+      }
+      const activityId = `memory-${String(params.callId ?? id)}`;
+      void onProgress({ kind: 'activity', category: 'tool', id: activityId, title: 'Project memory', completed: false });
+      void memory.tool(params.arguments).then(text => {
+        server.respond(id, { success: true, contentItems: [{ type: 'inputText', text }] });
+        void onProgress({ kind: 'activity', category: 'tool', id: activityId, title: 'Project memory', completed: true, outcome: 'success' });
+      }).catch(error => {
+        server.respond(id, { success: false, contentItems: [{ type: 'inputText', text: String(error) }] });
+        void onProgress({ kind: 'activity', category: 'tool', id: activityId, title: `Project memory degraded: ${String(error)}`, completed: true, outcome: 'failure' });
+      });
+      return;
+    }
     if (message.method === "item/tool/requestUserInput") {
       const parsed: UserQuestion[] = Array.isArray(params.questions) ? params.questions.flatMap(value => {
         if (!isRecord(value) || typeof value.id !== "string" || typeof value.question !== "string") return [];

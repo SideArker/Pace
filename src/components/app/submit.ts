@@ -62,6 +62,7 @@ export function createSubmit({ state, transcript, queue, routing, completion, se
       return;
     }
     setHistory(old => [...old.slice(-99), raw]);
+    if (/^\/memory(?:\s|$)/.test(text)) { setDraft(''); if (text !== '/memory') add('error', 'Type /memory without arguments.'); else state.setMemoryOpen(true); return; }
     if (/^\/benchmark(?:\s|$)/.test(text)) { setDraft(""); if (text !== "/benchmark") add("error", "Type /benchmark without arguments."); else setBenchmarkOpen(true); return; }
     if (text === "!") {
       add("info", shellMode ? "$ !" : "> !");

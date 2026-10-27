@@ -9,6 +9,8 @@ import { AppServerProgress } from "./app-server-progress.js";
 import { TurnUsage } from "./app-server-usage.js";
 import { registerAppServerRequests } from "./app-server-requests.js";
 import { turnImageInput } from "./image-input.js";
+import { MemoryAccess, memoryTool } from '../core/memory/access.js';
+import { readMcpServers } from './codex-cli.js';
 
 type RpcMessage = { id?: number | string; method?: string; params?: unknown; result?: unknown; error?: { message?: string } };
 export type CompactionResult = {
@@ -168,8 +170,23 @@ export class AppServerRunner implements CodexRunner {
     trustedFolders: string[] = [],
     approvalMode: ApprovalMode = "request-approval",
     artifactDirectory?: string,
+    memoryOptions?: Parameters<CodexRunner['run']>[10],
   ): Promise<Execution> {
     if (signal?.aborted) throw new Error("Turn cancelled");
+    const memory = memoryOptions?.scope && !memoryOptions.disabled ? new MemoryAccess(memoryOptions.scope, undefined, signal) : undefined;
+    const memoryOverrides: Record<string, unknown> = {};
+    if (memory) {
+      // Global raw Basic Memory servers bypass role enforcement. Disable them for this thread only.
+      const servers = await readMcpServers(project, signal);
+      for (const server of servers) if (/basic[-_ ]?memory|\bbm\b/i.test([server.name, server.transport.command, ...(server.transport.args ?? [])].join(' ')))
+        memoryOverrides[`mcp_servers.${server.name}.enabled`] = false;
+      if (memoryOptions?.recallQuery) {
+        try {
+          const recall = await memory.recall(memoryOptions.recallQuery);
+          if (recall) prompt += `\n\n${recall}`;
+        } catch (error) { await onProgress({ kind: 'system', text: `Project memory degraded: ${String(error)}. Continuing without recall.` }); }
+      }
+    }
     const { realpath } = await import("node:fs/promises");
     if (mode === "planning" && !artifactDirectory) throw new Error("Planning requires an artifact directory");
     const cwd = await realpath(mode === "planning" ? artifactDirectory! : project);
@@ -277,7 +294,7 @@ export class AppServerRunner implements CodexRunner {
       });
     };
     const approvals = new Map<string, (decision: ApprovalDecision) => void>();
-    registerAppServerRequests(server, mode, onProgress, approvals, questions);
+    registerAppServerRequests(server, mode, onProgress, approvals, questions, memory);
     try {
       const init = await awaitAbort(server.request("initialize", {
         clientInfo: { name: "pace", title: "Pace", version: "0.1.0" },
@@ -287,7 +304,8 @@ export class AppServerRunner implements CodexRunner {
       server.notify("initialized", {});
       const threadResult = await awaitAbort(server.request(
         threadId ? "thread/resume" : "thread/start",
-        appServerThreadParams(cwd, route, threadId, mode, approvalMode),
+        { ...appServerThreadParams(cwd, route, threadId, mode, approvalMode),
+          ...(memory ? { config: memoryOverrides, ...(!threadId ? { dynamicTools: [memoryTool] } : {}) } : {}) },
       ));
       thread = isRecord(threadResult) && isRecord(threadResult.thread) ? threadResult.thread : undefined;
       const id = typeof thread?.id === "string" ? thread.id : threadId;
@@ -343,7 +361,7 @@ export class AppServerRunner implements CodexRunner {
     } finally {
       acceptingSteers = false;
       try { await onProgress({ kind: "steering" }); }
-      finally { server.kill(); }
+      finally { server.kill(); await memory?.close().catch(() => {}); }
     }
   }
 }

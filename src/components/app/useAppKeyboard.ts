@@ -75,7 +75,7 @@ export function useAppKeyboard({ state, transcript, queue, conversations, routin
     onApplyVerification: applyVerification,
     onUndo: () => { void changeHistory("undo"); },
     onRedo: () => { void changeHistory("redo"); },
-    diffOpen, modalOpen: mcpOpen || state.benchmarkOpen,
+    diffOpen, modalOpen: mcpOpen || state.benchmarkOpen || state.memoryOpen,
   });
   const focusQueuedOrPicker = () => {
     if (queued.length && !modelMenu && !convoMenu && !queueMenu && !approvalMenu && !manualMenu) {
