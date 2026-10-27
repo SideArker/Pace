@@ -14,10 +14,10 @@ function tomlString(value: string): string {
   return JSON.stringify(value);
 }
 
-import { VEX_ENV_VARS } from "./codex-options.js";
+import { VEX_ENV_VARS } from "./app-server-config.js";
 
-export function serverArgs(): string[] {
-  const serverPath = vexServerPath();
+export function serverArgs(includeVex = true): string[] {
+  const serverPath = includeVex ? vexServerPath() : undefined;
   const args = [
     "--config", 'approvals_reviewer="user"',
     "--enable", "default_mode_request_user_input",
@@ -27,6 +27,7 @@ export function serverArgs(): string[] {
     "--config", `mcp_servers.vex.args=[${[serverPath, "mcp", "serve"].map(tomlString).join(", ")}]`,
     "--config", `mcp_servers.vex.env_vars=[${VEX_ENV_VARS.map(tomlString).join(", ")}]`,
   );
+  else if (!includeVex) args.unshift("--config", "mcp_servers={}");
   return args;
 }
 
@@ -37,8 +38,8 @@ export class AppServer {
   private requestHandler?: (message: RpcMessage) => void;
   private stderr = "";
 
-  constructor(onMessage: (message: RpcMessage) => void, onExit: (error: Error) => void) {
-    this.child = spawn(process.execPath, [codexCommand(), "app-server", "--stdio", ...serverArgs()], {
+  constructor(onMessage: (message: RpcMessage) => void, onExit: (error: Error) => void, includeVex = true) {
+    this.child = spawn(process.execPath, [codexCommand(), "app-server", "--stdio", ...serverArgs(includeVex)], {
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
     });
