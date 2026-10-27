@@ -63,7 +63,7 @@ it("identifies the specified baseline checkout and the loaded build independentl
 
 it("covers the real controller, context, persistence, transport, drivers and prompt assets", async () => {
   const { sourceHashes } = await fingerprintSources();
-  for (const path of ["src/benchmark/service.ts", "src/benchmark/drivers/task-control.ts", "src/benchmark/drivers/runner/execute.ts", "src/components/BenchmarkManager.tsx", "src/core/orchestrator-routing.ts", "src/core/orchestrator-helpers.ts", "src/core/vex/context.ts", "src/core/task-execution.ts", "src/core/sessions-revisions.ts", "src/integrations/app-server-process.ts", "src/integrations/sdk-runner.ts", "src/entrypoints/routing-benchmark-runner.ts", "benchmark/runner/execute.ts", "benchmark/task-control.ts", "benchmark/context-quality.ts", "benchmark/thread-switch.ts", "benchmark/context-models.ts", "routing-prompts.default.json", "skills/pace-planning/SKILL.md", "versions.json", "package-lock.json"]) {
+  for (const path of ["src/benchmark/service.ts", "src/benchmark/drivers/fresh-completion.ts", "src/benchmark/frozen.ts", "src/components/BenchmarkManager.tsx", "src/core/orchestrator-routing.ts", "src/core/orchestrator-helpers.ts", "src/core/vex/context.ts", "src/core/task-execution.ts", "src/core/sessions-revisions.ts", "src/integrations/app-server-process.ts", "src/integrations/app-server-config.ts", "src/entrypoints/benchmark-provenance.ts", "benchmark/suites/fresh-completion.json", "routing-prompts.default.json", "skills/pace-planning/SKILL.md", "versions.json", "package-lock.json"]) {
     expect(sourceHashes[path], path).toMatch(/^[a-f0-9]{64}$/);
   }
 });
