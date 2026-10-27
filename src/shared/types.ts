@@ -1,6 +1,12 @@
-import type { ModelReasoningEffort, Usage } from "@openai/codex-sdk";
 import type { StageRecord, RoutingRecord } from '../core/orchestrator.js';
-export type Effort = ModelReasoningEffort;
+export type Effort = "minimal" | "low" | "medium" | "high" | "xhigh" | "ultra" | "persistent";
+export type Usage = {
+  input_tokens: number;
+  cached_input_tokens: number;
+  cache_write_input_tokens: number;
+  output_tokens: number;
+  reasoning_output_tokens: number;
+};
 export type ModelOption = {
   model: string;
   efforts: Effort[];
@@ -38,8 +44,11 @@ export type Config = {
   autoLaunchSkills?: string[];
 };
 export type TurnSummary = {
+  scoutHandoff?: string;
+  promptTrace?: import("../core/prompt-trace.js").PromptTrace;
   operation?: QueuedOperation;
   steeringPrompts?: string[];
+  steeringRecordIds?: string[];
   /** A saved file edit record, or "none" when a snapshot found no changes. */
   fileEdits?: string;
   prompt: string;
@@ -126,10 +135,41 @@ export type AttemptObservation = {
   kind: "activity" | "tasks" | "answer" | "artifacts";
   text?: string; items?: Pick<Task, "text" | "completed">[]; paths?: string[];
 };
+export type SteeringRecord = {
+  version: 1; id: string; sessionId: string; taskId?: string;
+  turnKey: string; attemptId?: string; threadId?: string; role: AgentRole;
+  text: string; state: "pending" | "delivered" | "unknown";
+  createdAt: string; deliveredAt?: string; error?: string;
+  inactive?: boolean;
+};
+export type AssessmentEvidence = {
+  id: string; attemptId: string; observationIndex: number;
+  source: AttemptObservation["kind"]; paths?: string[];
+  verification: "reported";
+};
+export type CriterionAssessment = {
+  id: string; criterion: string; required: boolean;
+  status: "satisfied" | "partial" | "unknown";
+  evidenceIds: string[]; missing: string[]; uncertainty: string[];
+};
+export type CompletionAssessment = {
+  value: TaskAssessment; evidence: number; decisionId: string;
+  version?: 1; proposedValue?: TaskAssessment; criteria?: CriterionAssessment[];
+  evidenceCatalog?: AssessmentEvidence[]; limitations?: string[];
+};
 export type PromptProfile = {
   schemaVersion: 1; profileId: string; profileVersion: string; fingerprint: string;
 };
+export type DecisionAttempt = {
+  attempt: number; retry: boolean; durationMs: number;
+  status: "success" | "error" | "cancelled"; error?: string;
+};
+export type VexProjection = {
+  version: 1; truncated: boolean; originalBytes: number; finalBytes: number;
+  maxBytes: number; omittedClasses: string[]; requiredEvidenceOmitted: boolean;
+};
 export type StageAttempt = {
+  taskCriteria?: { id: string; text: string; required: boolean }[];
   pricing?: import("../core/routing/pricing.js").PriceSnapshot;
   id: string; taskId: string; generation: number; stage: string; role: AgentRole;
   status: "pending" | "running" | "completed" | "failed" | "cancelled" | "awaiting_user";
@@ -137,10 +177,12 @@ export type StageAttempt = {
   durationMs?: number; result?: string; error?: string; handoff?: string;
   usage?: Usage; knownUsage?: Usage; usageComplete?: boolean; estimatedCostUsd?: number; knownCostUsd?: number;
   observations: AttemptObservation[];
-  assessment?: { value: TaskAssessment; evidence: number; decisionId: string };
+  assessment?: CompletionAssessment;
 };
 export type ControlRecord = {
   requests?: number; failed?: boolean; error?: string;
+  promptProfile?: PromptProfile | "unknown"; requestAttempts?: DecisionAttempt[];
+  projection?: VexProjection; usage?: "unknown"; costUsd?: "unknown";
   id: string; taskId?: string; attemptId?: string; stage?: string; role: AgentRole;
   objective: string; choice: string; confidence: number; probabilities: Record<string, number>;
   durationMs: number; at: string; source: "vex" | "user"; contextAction: "continue";
@@ -151,10 +193,13 @@ export type SideAnswer = {
 };
 export type RoleState = { route: Route; threadId?: string; threadTurnCount?: number; context?: ContextMeasurement; tasks?: Task[] };
 export type ActiveTask = {
+  criteria?: { id: string; text: string; required: boolean }[];
+  constraints?: string[];
   originalRequest: string; instructions: string[]; latestOutcome?: string; failed?: boolean;
   id?: string; workflow?: WorkflowState; assessment?: TaskAssessment;
 };
 export type Session = {
+  steeringRecords?: SteeringRecord[];
   accountingIncomplete?: boolean;
   revision?: number;
   attempts?: StageAttempt[];

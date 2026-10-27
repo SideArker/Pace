@@ -76,7 +76,7 @@ export function parseConfig(value: unknown): Config {
       )
     ) {
       throw new Error(
-        "Each model needs a valid ID and a nonempty list of SDK-supported efforts",
+        "Each model needs a valid ID and a nonempty list of supported reasoning efforts",
       );
     }
     if (
@@ -84,8 +84,8 @@ export function parseConfig(value: unknown): Config {
       !item.efforts.includes(item.defaultEffort)
     )
       throw new Error(`Invalid default effort for ${item.model}`);
-    // Model IDs and supported reasoning efforts can vary by account and SDK
-    // release. Keep the SDK's effort enum as the boundary; the provider can
+    // Model IDs and supported reasoning efforts can vary by account and
+    // provider release. The provider can
     // report model-specific incompatibilities when a route is used.
     if (item.enabled !== undefined && typeof item.enabled !== "boolean")
       throw new Error(`Invalid enabled flag for ${item.model}`);
