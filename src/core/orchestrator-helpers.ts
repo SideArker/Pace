@@ -2,8 +2,7 @@ import { existsSync, statSync, readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve, isAbsolute, join, dirname } from "node:path";
-import type { Usage } from "@openai/codex-sdk";
-import type { Session, TurnSummary } from "../shared/types.js";
+import type { Session, TurnSummary, Usage } from "../shared/types.js";
 import type { RoutingPrompts } from "./routing/routing-prompts.js";
 import type { StageRecord } from "./orchestrator.js";
 export async function awaitRouting<T>(
@@ -62,13 +61,24 @@ export function handoffPrompt(
     .map((turn) => ({ user: turn.prompt.slice(0, 1000), assistant: turn.result.slice(0, 1000) }));
   return `${objective} ${prompts.handoff.instructions}\n\n${prompts.handoff.recentConversationLabel}\n${JSON.stringify(conversation)}\n\n${prompts.handoff.originalRequestLabel}\n${request}${priorHandoff ? `\n\nVerified scout report to use when planning:\n${priorHandoff}` : ""}`;
 }
-export function retainedConversationPrompt(prompt: string, session: Session): string {
+export function retainedConversationPrompt(prompt: string, session: Session, role: "main" | "verifier" = "main"): string {
   if (session.threadId) return prompt;
-  const turns = session.turns
-    .filter((turn) => !turn.failed)
-    .map((turn) => ({ user: turn.prompt, ...(turn.steeringPrompts?.length ? { steering: turn.steeringPrompts } : {}), assistant: turn.result }));
-  if (!turns.length) return prompt;
-  return `Continue this conversation using only the retained exchanges below. The current user request follows the history.\n\nRetained conversation:\n${JSON.stringify(turns)}\n\nCurrent user request:\n${prompt}`;
+  const retained = session.turns.filter(turn => !turn.failed);
+  const represented = new Set(retained.flatMap(turn => turn.steeringRecordIds ?? []));
+  const legacyTexts = new Set(retained.filter(turn => !turn.steeringRecordIds).flatMap(turn => turn.steeringPrompts ?? []));
+  const steering = (session.steeringRecords ?? []).filter(record =>
+    record.state === "delivered" && !record.inactive && record.role === role &&
+    record.taskId === session.activeTask?.id && !represented.has(record.id) && !legacyTexts.has(record.text) && !prompt.includes(record.text),
+  ).map(record => ({ id: record.id, text: record.text }));
+  const turns = retained.map(turn => {
+    const linked = turn.steeringRecordIds?.map(id => session.steeringRecords?.find(record => record.id === id)).filter(record =>
+      record?.state === "delivered" && !record.inactive && record.role === role && record.taskId === session.activeTask?.id,
+    ).map(record => record!.text);
+    const prompts = linked ?? turn.steeringPrompts;
+    return { user: turn.prompt, ...(prompts?.length ? { steering: prompts } : {}), assistant: turn.result };
+  });
+  if (!turns.length && !steering.length) return prompt;
+  return `Continue this conversation using only the retained exchanges below. The current user request follows the history.\n\nRetained conversation:\n${JSON.stringify(turns)}${steering.length ? `\n\nDelivered steering for the active task:\n${JSON.stringify(steering)}` : ""}\n\nCurrent user request:\n${prompt}`;
 }
 export function structuredHandoff(result: string): string {
   const cleaned = result
@@ -90,7 +100,6 @@ export function structuredHandoff(result: string): string {
     typeof record.summary !== "string" ||
     !record.summary.trim() ||
     !Array.isArray(record.findings) ||
-    record.findings.length > 12 ||
     !record.findings.every((item) => {
       if (!item || typeof item !== "object" || Array.isArray(item))
         return false;
@@ -108,6 +117,8 @@ export function structuredHandoff(result: string): string {
         !!finding.relevance.trim()
       );
     }) ||
+    (record.coverage !== undefined && (!Array.isArray(record.coverage) || !record.coverage.every(item => typeof item === "string"))) ||
+    (record.gaps !== undefined && (!Array.isArray(record.gaps) || !record.gaps.every(item => typeof item === "string"))) ||
     !["nextSteps", "checks", "risks"].every(
       (key) =>
         Array.isArray(record[key]) &&
@@ -126,12 +137,12 @@ export function structuredHandoff(result: string): string {
         relevance: finding.relevance,
       };
     }),
+    ...(record.coverage === undefined ? {} : { coverage: record.coverage }),
+    ...(record.gaps === undefined ? {} : { gaps: record.gaps }),
     nextSteps: record.nextSteps,
     checks: record.checks,
     risks: record.risks,
   });
-  if (handoff.length > 20_000)
-    throw new Error("Stage handoff exceeds 20,000 characters");
   return handoff;
 }
 
@@ -151,7 +162,7 @@ export async function loadPlanningInstructions(file = join(homedir(), ".pace", "
 }
 
 export function planningPrompt(request: string, projectPath: string, planPath: string, currentPlan: string | undefined, instructions: string, acceptedReview?: string): string {
-  return `${request}\n\n[PLANNING MODE INSTRUCTION]\nThe project is at ${projectPath}. Read its files for source context. Only ${dirname(planPath)} is writable. Do not edit project files, request approval, or use the network.\nThe saved plan path is ${planPath}. ${currentPlan === undefined ? "Create the first plan there if the user requested a plan." : "For a requested revision, edit this same file unless the user explicitly requested a separate plan."}\nWhen the user requests a plan or a revision, use a filesystem tool to create or edit that exact Markdown file before replying. Do not paste a full plan into chat expecting Pace to save it. If writing fails, explain the failure in your reply. Answer questions directly in chat without changing the plan file. Pace shows your reply unchanged, so say what you actually did.\n${currentPlan === undefined ? "There is no saved plan yet." : `Complete saved plan text (the file is the source of truth):\n${currentPlan}`}${acceptedReview ? `\n\nUser accepted these verification findings for plan revision. Apply them while preserving other correct content:\n${acceptedReview}` : ""}\n\nPlanning instructions:\n${instructions}`;
+  return `${request}\n\n[PLANNING MODE INSTRUCTION]\nThe project is at ${projectPath}. Read its files for source context. Only ${dirname(planPath)} is writable. Do not edit project files, request command approval, or use the network. For nontrivial planning, publish progress using Codex native plan updates. When an unresolved user decision materially changes the plan, use the interactive item/tool/requestUserInput tool; never simulate an interactive question in text. Make safe assumptions without forcing questions and state them. Native plan updates do not replace the complete saved Markdown artifact.\nThe saved plan path is ${planPath}. ${currentPlan === undefined ? "Create the first plan there if the user requested a plan." : "For a requested revision, edit this same file unless the user explicitly requested a separate plan."}\nWhen the user requests a plan or a revision, use a filesystem tool to create or edit that exact Markdown file before replying. Do not paste a full plan into chat expecting Pace to save it. If writing fails, explain the failure in your reply. Answer questions directly in chat without changing the plan file. Pace shows your reply unchanged, so say what you actually did.\n${currentPlan === undefined ? "There is no saved plan yet." : `Complete saved plan text (the file is the source of truth):\n${currentPlan}`}${acceptedReview ? `\n\nUser accepted these verification findings for plan revision. Apply them while preserving other correct content:\n${acceptedReview}` : ""}\n\nPlanning instructions:\n${instructions}`;
 }
 
 export function executePlanPrompt(plan: string): string {

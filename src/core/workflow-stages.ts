@@ -7,10 +7,11 @@ import type { StageRecord } from "./orchestrator.js";
 import { chosenRoute } from "./routing/router.js";
 import { costForUsage } from "./routing/pricing.js";
 import { handoffPrompt, structuredHandoff } from "./orchestrator-helpers.js";
+import { skillPrompt, type Skill } from "./system/skills.js";
 export async function runPlanningStage({
   request, routingTurns, enabled, prompts, routingState, choose, runner, session,
   signal, onProgress, stages, priorHandoff,
-  routeOverride,
+  routeOverride, skills = [],
 }: {
   request: string;
   routingTurns: TurnSummary[];
@@ -25,6 +26,7 @@ export async function runPlanningStage({
   stages: StageRecord[];
   priorHandoff?: string;
   routeOverride?: Route | "vex";
+  skills?: Skill[];
 }): Promise<string> {
   let handoff = "";
   const objective = prompts.objectives.scout;
@@ -63,7 +65,7 @@ export async function runPlanningStage({
     kind: "status",
     text: `${objective}: ${sideRoute.model} · ${sideRoute.effort}`,
   });
-  const basePrompt = handoffPrompt(request, routingTurns, prompts, priorHandoff);
+  const basePrompt = skillPrompt(handoffPrompt(request, routingTurns, prompts, priorHandoff), skills);
   let previousResult: string | undefined;
   let handoffError: unknown;
   for (let attempt = 0; attempt < 2; attempt++) {

@@ -15,7 +15,7 @@ const choiceIds = ["single", "scout", "plan", "scout_plan", "clarify"] as const;
 export type RoutingPrompts = {
   version: 1;
   profile?: { id: string; version: string };
-  control: { question: string; constraints: string; choices: Record<"continue" | "aside" | "reroute" | "replan" | "replace" | "clarify" | "adopt_side", string> };
+  control: { question: string; constraints: string; choices: Record<"continue" | "reroute" | "replan" | "replace" | "clarify" | "adopt_side", string> };
   assessment: { question: string; constraints: string; choices: Record<"closed" | "partial" | "unknown", string> };
   side: { objective: string; instruction: string };
   workflow: {
@@ -87,7 +87,7 @@ export function parseRoutingPrompts(value: unknown): RoutingPrompts {
     profile: value.profile === undefined ? { id: "pace-task-workflows", version: "2026-10-22" } : {
       id: nonempty(value.profile.id, "profile.id"), version: nonempty(value.profile.version, "profile.version"),
     },
-    control: parseSection(value.control, ["continue", "aside", "reroute", "replan", "replace", "clarify", "adopt_side"], "control"),
+    control: parseSection(value.control, ["continue", "reroute", "replan", "replace", "clarify", "adopt_side"], "control"),
     assessment: parseSection(value.assessment, ["closed", "partial", "unknown"], "assessment"),
     side: {
       objective: nonempty(side.objective, "side.objective"),
@@ -153,6 +153,8 @@ function withPromptDefaults(value: unknown): unknown {
       section.choices = { ...sectionDefaults.choices, ...configured.choices };
     completed[key] = section;
   }
+  if (isRecord(completed.control) && isRecord(completed.control.choices))
+    delete completed.control.choices.aside;
   if (isRecord(completed.workflow) && isRecord(completed.workflow.choices)) {
     // Retired options carry no active meaning; never expose or map them to actions.
     for (const id of ["plan_execute", "scout_plan_execute", "plan_verify"]) delete completed.workflow.choices[id];
