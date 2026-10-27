@@ -30,9 +30,14 @@ export function newSession(
     turns: [],
   };
 }
+export function setSteeringHistoryActive(session: Session, turns: TurnSummary[], active: boolean): void {
+  const ids = new Set(turns.flatMap(turn => turn.steeringRecordIds ?? []));
+  for (const record of session.steeringRecords ?? []) if (ids.has(record.id)) record.inactive = !active;
+}
 export function rewindConversation(session: Session, index: number): TurnSummary | undefined {
   const turn = session.turns[index];
   if (!turn) return undefined;
+  setSteeringHistoryActive(session, session.turns.slice(index), false);
   session.turns = session.turns.slice(0, index);
   session.undoneTurns = undefined;
   session.threadId = undefined;
@@ -44,6 +49,7 @@ export function rewindConversation(session: Session, index: number): TurnSummary
 }
 export function deleteConversationTurn(session: Session, index: number): void {
   if (index < 0 || index >= session.turns.length) return;
+  setSteeringHistoryActive(session, session.turns.slice(index, index + 1), false);
   session.turns.splice(index, 1);
   session.undoneTurns = undefined;
   session.threadId = undefined;
@@ -54,7 +60,7 @@ export function deleteConversationTurn(session: Session, index: number): void {
 }
 export function undoConversationTurn(session: Session): TurnSummary | undefined {
   const turn = session.turns.pop();
-  if (turn) { session.threadId = undefined; session.threadTurnCount = undefined; session.checkpoint = undefined; if (session.activeTask) { session.activeTask.assessment = "unknown"; if (session.activeTask.workflow) session.activeTask.workflow.needsAssessment = true; } session.deferredTurn = undefined; }
+  if (turn) { setSteeringHistoryActive(session, [turn], false); session.threadId = undefined; session.threadTurnCount = undefined; session.checkpoint = undefined; if (session.activeTask) { session.activeTask.assessment = "unknown"; if (session.activeTask.workflow) session.activeTask.workflow.needsAssessment = true; } session.deferredTurn = undefined; }
   return turn;
 }
 

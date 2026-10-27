@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { isRecord } from "../shared/config.js";
 
-export const keyedRecords = new Set(["attempts", "sideAnswers", "controlDecisions"]);
+export const keyedRecords = new Set(["attempts", "sideAnswers", "controlDecisions", "steeringRecords"]);
 
 export class SessionConflictError extends Error {
   constructor(readonly field: string) {

@@ -1,3 +1,4 @@
+import { setSteeringHistoryActive } from "./session-model.js";
 import type { Session, TurnSummary } from "../shared/types.js";
 import { FileEdits, fileTurnActive } from "./file-edits.js";
 import { type PaceStore, undoConversationTurn } from "./sessions.js";
@@ -29,7 +30,7 @@ export async function changeConversationHistory(store: PaceStore, session: Sessi
   const turn = direction === "undo" ? undoConversationTurn(next) : next.undoneTurns?.pop();
   if (!turn) return undefined;
   if (direction === "undo") next.undoneTurns = [...(next.undoneTurns ?? []), turn];
-  else next.turns.push(turn);
+  else { next.turns.push(turn); setSteeringHistoryActive(next, [turn], true); }
   invalidateThread(next);
   const files = await restoreAndSave(store, session, next, turn.fileEdits, direction);
   return { turn, files };
