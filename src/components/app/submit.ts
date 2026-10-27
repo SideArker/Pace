@@ -4,6 +4,7 @@ import { isDebugBuild } from "../../core/build-mode.js";
 import { adoptedSidePrompt, operation } from "../../core/operations.js";
 import { enabledSkills, skillCommand, skillOption, skillRequest } from "../../core/system/skills.js";
 import { oneOffShellCommand } from "../shell-runner.js";
+import { steerQueuedPrompt } from "../queue-steering.js";
 import { commands, isRegisteredCommand, normalizeNewCommand } from "./commands.js";
 import { infoCommands, showCommandInfo } from "./info-commands.js";
 import { configureRouting } from "./routing-commands.js";
@@ -33,8 +34,9 @@ export function createSubmit({ state, transcript, queue, routing, completion, se
 }) {
   const { historyBusy, switchingSession, session, config, setDraft, shellMode, setHistory,
     setShellMode, jobs, setQueueVersion, skills, setSelection, runTurnRef, setMcpOpen, setBenchmarkOpen,
-    approvalMenu, setApprovalMenu, setConfig, latestConfig, setDiffOpen, setConvoMenu, vexState } = state;
-  const { add } = transcript;
+    approvalMenu, setApprovalMenu, setConfig, latestConfig, setDiffOpen, setConvoMenu, vexState,
+    setQueueMenu, activeSessionId } = state;
+  const { add, addFor } = transcript;
   const { promptQueue } = queue;
   const { setKnownModels, enabledModels, availableWorkflows, saveRouting, saveWorkflow,
     setWorkflowOnly, setManualWizard, setManualMenu, setMenuIndex, setModelMenu, refreshModelCatalog } = routing;
@@ -44,7 +46,7 @@ export function createSubmit({ state, transcript, queue, routing, completion, se
   const { askBtw, handleRemote } = auxiliary;
   const { runTurn, shell, compact } = execution;
   const { setSkills } = state;
-  const submit = async (raw: string) => {
+  const submit = async (raw: string, options?: { steer?: boolean }) => {
     if (historyBusy.current) { add("info", "Wait for file history to finish saving."); return; }
     if (switchingSession.current) return;
     if (!session || !config) return;
@@ -120,6 +122,16 @@ export function createSubmit({ state, transcript, queue, routing, completion, se
       const position = promptQueue.current.add(session.id, commandOperation);
       setQueueVersion(value => value + 1);
       setDraft("");
+      if (options?.steer) {
+        void steerQueuedPrompt(session.id, position - 1, jobs.current, promptQueue.current).then(prompt => {
+          addFor(session.id, "you", `Steering: ${prompt}`);
+          setQueueVersion(value => value + 1);
+          if (activeSessionId.current === session.id) setQueueMenu(false);
+        }).catch(error => {
+          addFor(session.id, "error", `Could not steer: ${error instanceof Error ? error.message : String(error)}`);
+        });
+        return;
+      }
       add("info", `Queued prompt ${position}: ${text.replace(/\s+/g, " ").slice(0, 100)}`);
       return;
     }

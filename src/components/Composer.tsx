@@ -3,7 +3,7 @@ import { Box, Text, useInput, usePaste, useStdout } from "ink";
 import {
   deleteDraftRange, deleteWordBackward, deleteWordForward, displayPastedBlocks,
   insertDraftText, insertPastedBlock, isAltBackspaceKey, isAltDeleteKey,
-  isNewlineKey, skipPastedBlock, verticalCursor,
+  isNewlineKey, isSteerShortcut, skipPastedBlock, verticalCursor,
   type PastedBlock,
 } from "./composer-editing.js";
 import {
@@ -13,7 +13,7 @@ import {
 export {
   deleteDraftRange, deleteWordBackward, deleteWordForward, displayPastedBlocks,
   insertDraftText, insertPastedBlock, isAltBackspaceKey, isAltDeleteKey,
-  isNewlineKey, skipPastedBlock, verticalCursor,
+  isNewlineKey, isSteerShortcut, skipPastedBlock, verticalCursor,
   type PastedBlock,
 } from "./composer-editing.js";
 export {
@@ -23,7 +23,7 @@ export {
 type Props = {
   value: string;
   onChange: (value: string) => void;
-  onSubmit: (value: string) => void;
+  onSubmit: (value: string, options?: { steer?: boolean }) => void;
   onImagePaste?: () => Promise<string | undefined>;
   history: string[];
   disabled: boolean;
@@ -111,6 +111,15 @@ export function Composer({ value, onChange, onSubmit, onImagePaste, history, dis
       return;
     }
     if (key.meta && input.toLowerCase() === "a") { onAutoLaunchToggle?.(); return; }
+    if (isSteerShortcut(input, key)) {
+      if (value.trim()) {
+        onSubmit(value, { steer: true });
+        setCursor(0);
+        setPastedBlocks([]);
+        setHistoryIndex(undefined);
+      }
+      return;
+    }
     if (isNewlineKey(input, key)) { insert("\n"); return; }
     if (key.upArrow || key.downArrow) {
       const nextCursor = verticalCursor(value, cursor, key.upArrow ? "up" : "down");

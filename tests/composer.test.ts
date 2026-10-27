@@ -2,7 +2,7 @@ import React from "react";
 import { PassThrough, Writable } from "node:stream";
 import { render, renderToString, Text } from "ink";
 import { expect, it, vi } from "vitest";
-import { Composer, commandRanges, commandToken, deleteDraftRange, deleteWordBackward, deleteWordForward, displayPastedBlocks, inputColumns, insertDraftText, insertPastedBlock, isAltBackspaceKey, isAltDeleteKey, isNewlineKey, markdownDraftRanges, paceGradient, skipPastedBlock, verticalCursor, visibleInputRows } from "../src/components/Composer.js";
+import { Composer, commandRanges, commandToken, deleteDraftRange, deleteWordBackward, deleteWordForward, displayPastedBlocks, inputColumns, insertDraftText, insertPastedBlock, isAltBackspaceKey, isAltDeleteKey, isNewlineKey, isSteerShortcut, markdownDraftRanges, paceGradient, skipPastedBlock, verticalCursor, visibleInputRows } from "../src/components/Composer.js";
 import { ComposerFrame } from "../src/components/ComposerFrame.js";
 import { newSession } from "../src/core/sessions.js";
 import { commands, isRegisteredCommand, normalizeNewCommand } from "../src/components/App.js";
@@ -63,6 +63,50 @@ it("recognizes Alt+Delete and Alt+Backspace combinations across formats", () => 
   expect(isAltBackspaceKey("\x1b\x7f", { backspace: false, meta: false, ctrl: false })).toBe(true);
   expect(isAltBackspaceKey("w", { backspace: false, meta: false, ctrl: true })).toBe(true);
   expect(isAltBackspaceKey("", { backspace: true, meta: false, ctrl: false })).toBe(false);
+});
+
+it("recognizes Alt+M and Ctrl+M steer shortcuts across formats", () => {
+  expect(isSteerShortcut("m", { meta: true, ctrl: false })).toBe(true);
+  expect(isSteerShortcut("M", { meta: true, ctrl: false })).toBe(true);
+  expect(isSteerShortcut("m", { meta: false, ctrl: true })).toBe(true);
+  expect(isSteerShortcut("M", { meta: false, ctrl: true })).toBe(true);
+  expect(isSteerShortcut("\x1bm", { meta: false, ctrl: false })).toBe(true);
+  expect(isSteerShortcut("\x1bM", { meta: false, ctrl: false })).toBe(true);
+  expect(isSteerShortcut("\x1b[109;3u", { meta: false, ctrl: false })).toBe(true);
+  expect(isSteerShortcut("\x1b[109;5u", { meta: false, ctrl: false })).toBe(true);
+  expect(isSteerShortcut("µ", { meta: false, ctrl: false })).toBe(true);
+  expect(isSteerShortcut("m", { meta: false, ctrl: false })).toBe(false);
+  expect(isSteerShortcut("a", { meta: true, ctrl: false })).toBe(false);
+});
+
+it("submits the draft as steering with Alt+M while plain m remains editable", async () => {
+  class Output extends Writable {
+    isTTY = true;
+    columns = 80;
+    rows = 24;
+    override _write(_chunk: Buffer, _encoding: BufferEncoding, done: (error?: Error | null) => void) { done(); }
+  }
+  const stdin = new PassThrough() as PassThrough & { isTTY: boolean; setRawMode: (enabled: boolean) => void; ref: () => void; unref: () => void };
+  stdin.isTTY = true;
+  stdin.setRawMode = () => {};
+  stdin.ref = () => {};
+  stdin.unref = () => {};
+  const onSubmit = vi.fn();
+  const onChange = vi.fn();
+  function Harness() {
+    const [value, setValue] = React.useState("steer prompt");
+    return React.createElement(Composer, {
+      value, onChange: next => { onChange(next); setValue(next); }, onSubmit, history: [], disabled: false, shellMode: false,
+      placeholder: "Ask Pace", onComplete: () => {}, width: 80,
+    });
+  }
+  const instance = render(React.createElement(Harness), { stdin, stdout: new Output(), stderr: new PassThrough(), interactive: true, patchConsole: false, alternateScreen: false });
+  try {
+    await instance.waitUntilRenderFlush();
+    stdin.write("\x1bm");
+    await instance.waitUntilRenderFlush();
+    expect(onSubmit).toHaveBeenCalledWith("steer prompt", { steer: true });
+  } finally { instance.unmount(); }
 });
 
 it("toggles ON-LAUNCH with Alt+A while plain a remains editable", async () => {

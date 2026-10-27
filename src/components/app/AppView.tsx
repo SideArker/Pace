@@ -105,7 +105,7 @@ export function AppView({ model }: { model: AppController }) {
       {session?.deferredTurn && !busy ? <Text color="#FBBF24">Automatic retry ({session.deferredTurn.reason ?? "usage"}): {session.deferredTurn.reason === "network" ? "checking connection" : `after ${new Date(session.deferredTurn.retryAt).toLocaleString()}`} · Esc cancels</Text> : null}
       </Box>
       <ComposerFrame width={contentWidth} session={session} shellMode={shellMode} approvalMode={config?.approvalMode}>
-        <Composer key={session?.id} value={draft} width={contentWidth} maxRows={maxComposerRows} onChange={value => { setDraft(value); setSelection(0); }} onSubmit={value => { void submit(value); }} history={history}
+        <Composer key={session?.id} value={draft} width={contentWidth} maxRows={maxComposerRows} onChange={value => { setDraft(value); setSelection(0); }} onSubmit={(value, opts) => { void submit(value, opts); }} history={history}
           onImagePaste={async () => {
             try {
               const targetDir = session ? store.conversationDir(session.projectPath, session.id) : join(store.sessionDir(project), "pasted-images");

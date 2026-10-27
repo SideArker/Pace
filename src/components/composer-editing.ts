@@ -118,3 +118,16 @@ export function isAltBackspaceKey(input: string, key: { backspace?: boolean; met
   return !!((key.backspace && (key.meta || key.ctrl))
     || input === "\x1b\x7f" || input === "\x1b\b" || (key.ctrl && input === "w"));
 }
+
+export function isSteerShortcut(input: string, key: { meta?: boolean; ctrl?: boolean }): boolean {
+  return !!(
+    (key.meta && input.toLowerCase() === "m") ||
+    (key.ctrl && input.toLowerCase() === "m") ||
+    input === "\x1bm" ||
+    input === "\x1bM" ||
+    input === "\x1b[109;3u" ||
+    input === "\x1b[109;5u" ||
+    input === "µ"
+  );
+}
+

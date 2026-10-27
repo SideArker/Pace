@@ -5,7 +5,7 @@ import { EFFORTS } from "../shared/config.js";
 import type { ApprovalMode, Route, Session } from "../shared/types.js";
 import { PaceStore, rewindConversation, deleteConversationTurn } from "../core/sessions.js";
 import type { PromptQueue } from "../core/prompt-queue.js";
-import { isAltDeleteKey } from "./Composer.js";
+import { isAltDeleteKey, isSteerShortcut } from "./Composer.js";
 import type { Line } from "./Transcript.js";
 import type { PendingApproval, TurnJob } from "./turn-runner.js";
 
@@ -332,7 +332,7 @@ export function useAppInput(options: {
         );
         return;
       }
-      if (!key.ctrl && !key.meta && input.toLowerCase() === "s") {
+      if ((!key.ctrl && !key.meta && input.toLowerCase() === "s") || isSteerShortcut(input, key)) {
         options.onQueueSteer?.(sessionId, menuIndex);
         return;
       }
@@ -358,6 +358,19 @@ export function useAppInput(options: {
         if (removed) {
           add("info", `Deleted queued message ${menuIndex + 1}.`);
         }
+        return;
+      }
+      return;
+    }
+    if (isSteerShortcut(input, key)) {
+      if (!draft?.trim()) {
+        const sessionId = session?.id ?? activeSessionId.current ?? "";
+        const queuedPrompts = promptQueue?.current.list(sessionId) ?? [];
+        if (queuedPrompts.length > 0) {
+          options.onQueueSteer?.(sessionId, 0);
+          return;
+        }
+        add("info", "No queued message to steer.");
         return;
       }
       return;

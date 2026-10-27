@@ -313,6 +313,37 @@ describe("application keyboard input", () => {
     expect(events.setQueueMenu).not.toHaveBeenCalled();
   });
 
+  it("queue menu sends Alt+M to steering without removing or editing the selected prompt", async () => {
+    const onQueueSteer = vi.fn();
+    const { options, events, queue, session } = fixture({ queueMenu: true, menuIndex: 1, onQueueSteer });
+    queue.add(session.id, "first"); queue.add(session.id, "steer me");
+    const ui = await mount(options);
+    await ui.key("m", { meta: true });
+    expect(onQueueSteer).toHaveBeenCalledExactlyOnceWith(session.id, 1);
+    expect(queue.list(session.id)).toEqual(["first", "steer me"]);
+    expect(events.setDraft).not.toHaveBeenCalled();
+    expect(events.setQueueMenu).not.toHaveBeenCalled();
+  });
+
+  it("auto-sends the first queued prompt as steering with Alt+M when draft is empty", async () => {
+    const onQueueSteer = vi.fn();
+    const { options, queue, session } = fixture({ onQueueSteer });
+    queue.add(session.id, "first queued");
+    queue.add(session.id, "second queued");
+    const ui = await mount(options);
+    await ui.key("m", { meta: true });
+    expect(onQueueSteer).toHaveBeenCalledExactlyOnceWith(session.id, 0);
+  });
+
+  it("reports when there is no queued message to steer on Alt+M", async () => {
+    const onQueueSteer = vi.fn();
+    const { options, events } = fixture({ onQueueSteer });
+    const ui = await mount(options);
+    await ui.key("m", { meta: true });
+    expect(onQueueSteer).not.toHaveBeenCalled();
+    expect(events.add).toHaveBeenCalledWith("info", "No queued message to steer.");
+  });
+
   it("queue menu closes when its last prompt is deleted", async () => {
     const { options, events, queue, session } = fixture({ queueMenu: true });
     queue.add(session.id, "last");
