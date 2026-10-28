@@ -9,7 +9,8 @@ import { PromptQueue } from "../src/core/prompt-queue.js";
 import { operation } from "../src/core/operations.js";
 import { steerQueuedPrompt } from "../src/components/queue-steering.js";
 import { retainedConversationPrompt } from "../src/core/orchestrator-helpers.js";
-import type { CodexRunner } from "../src/integrations/codex-types.js";
+import { CodexRunError, type CodexRunner } from "../src/integrations/codex-types.js";
+import { linesFromSession } from "../src/components/session-transcript.js";
 import type { Config, Session } from "../src/shared/types.js";
 import { decision } from "./routing-fixture.js";
 vi.mock("../src/core/routing/pricing.js", async original => {
@@ -232,4 +233,27 @@ for (const state of ["pending", "unknown"] as const) it(`restart keeps ${state} 
   await expect(env.orchestrator.turn(queued.text, loaded, env.config, () => {}, undefined, false, undefined, undefined, queued)).rejects.toThrow("already recorded as steering");
   expect(env.calls).toHaveLength(0);
   expect(loaded.activeTask!.id).toBe("task");
+});
+
+it("records turn usage, cost, thread turn count, and measured context when a turn fails or is cancelled", async () => {
+  const env = await fixture();
+  const usage = { input_tokens: 200_000, cached_input_tokens: 180_000, cache_write_input_tokens: 0, output_tokens: 1_000, reasoning_output_tokens: 400 };
+  const context = { tokens: 231_320, windowTokens: 475_000, model: "gpt-6.1-sol" };
+  env.source.threadTurnCount = 3;
+  env.runner.run = async (...args) => {
+    await args[4]({ kind: "thread", text: "main-thread" });
+    throw new CodexRunError("You’ve hit your usage limit.", usage, context, {
+      threadId: "main-thread", turnId: "turn-4", route: env.config.defaultRoute, knownUsage: usage, usageComplete: true,
+    });
+  };
+  expect(await env.runTurn("Continue", env.source, env.config)).toBe(false);
+  const lastTurn = env.source.turns.at(-1)!;
+  expect(lastTurn.failed).toBe(true);
+  expect(lastTurn.usage).toEqual(usage);
+  expect(lastTurn.estimatedCostUsd).toBeGreaterThan(0);
+  expect(env.source.threadTurnCount).toBe(4);
+  expect(env.source.contextByThread?.["main-thread"]).toEqual(context);
+  expect(env.lines.some(line => line.role === "meta" && line.text.includes("~$"))).toBe(true);
+  const restored = linesFromSession(env.source, 1, x => x).lines;
+  expect(restored.some(line => line.role === "meta" && line.text.includes("~$"))).toBe(true);
 });

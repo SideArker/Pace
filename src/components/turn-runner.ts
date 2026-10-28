@@ -331,6 +331,8 @@ export function createTurnRunner({
         if (error instanceof VexUnavailableError && error.source === "connection") setVexState("failed");
         setStatusFor(sessionId, "Failed");
       }
+      const failedTurn = !recoveredSession && turnSession.turns.at(-1) !== previousTurn ? turnSession.turns.at(-1) : undefined;
+      if (failedTurn?.usage) addFor(sessionId, "meta", formatTurnFooter(failedTurn.route ?? activeRoute, failedTurn.routeNote ?? "", failedTurn.usage, failedTurn.durationMs ?? 0, failedTurn.estimatedCostUsd));
     } finally {
       for (const [sourceId, text] of streamingMessages) addFor(sessionId, "codex", text, { sourceId, streaming: false });
       const job = jobs.current.get(sessionId);

@@ -1,5 +1,6 @@
 import type { ModelOption, Route, Session, TurnSummary } from "../shared/types.js";
 import type { CodexRunner, Progress } from "../integrations/codex.js";
+import { CodexRunError } from "../integrations/codex-types.js";
 import type { RoutingDecision } from "./routing/router.js";
 import { stageRequest, type RoutingState, type VexRequest } from "./vex/client.js";
 import type { RoutingPrompts } from "./routing/routing-prompts.js";
@@ -73,18 +74,30 @@ export async function runPlanningStage({
       ? `\n\nYour previous report was rejected (${String(handoffError)}). Rewrite it as exactly one JSON object following the required handoff schema. Previous report:\n${previousResult.slice(0, 10_000)}`
       : "";
     const stageStart = performance.now();
-    const side = await runner.run(
-      `${basePrompt}${correction}`,
-      session.projectPath,
-      sideRoute,
-      undefined,
-      (progress) => {
-        if (progress.kind === "activity" || progress.kind === "usage") onProgress(progress);
-      },
-      signal,
-      "side",
-    );
-    signal?.throwIfAborted();
+    let side;
+    try {
+      side = await runner.run(
+        `${basePrompt}${correction}`,
+        session.projectPath,
+        sideRoute,
+        undefined,
+        (progress) => {
+          if (progress.kind === "activity" || progress.kind === "usage") onProgress(progress);
+        },
+        signal,
+        "side",
+      );
+    } catch (error) {
+      const stageUsage = error instanceof CodexRunError ? error.usage ?? error.accounting?.knownUsage : undefined;
+      if (stageUsage) stages.push({
+        objective,
+        route: sideRoute,
+        durationMs: Math.round(performance.now() - stageStart),
+        usage: stageUsage,
+        estimatedCostUsd: costForUsage(sideRoute, stageUsage),
+      });
+      throw error;
+    }
     const sideStage: StageRecord = {
       objective,
       route: sideRoute,
@@ -93,6 +106,7 @@ export async function runPlanningStage({
       estimatedCostUsd: costForUsage(sideRoute, side.usage),
     };
     stages.push(sideStage);
+    signal?.throwIfAborted();
     try {
       handoff = structuredHandoff(side.result);
       sideStage.handoff = handoff;

@@ -35,7 +35,7 @@ export function linesFromSession(targetSession: Session, firstId: number, artifa
       action: "revise-plan",
       spaceBefore: false,
     });
-    if (!turn.failed && (turn.stages?.length ?? 1) > 0) lines.push({
+    if ((!turn.failed || turn.usage) && (turn.stages?.length ?? 1) > 0) lines.push({
       id: id++, role: "meta",
       text: formatTurnFooter(turn.route, turn.routeNote, turn.usage, turn.durationMs, turn.estimatedCostUsd),
       spaceBefore: false,

@@ -2,7 +2,7 @@ import { tracedRunner, redactTrace, promptChange, type PromptTrace } from "./pro
 import { randomUUID } from "node:crypto";
 import type { Config, Route, Session, AgentRole, OperationIntent, QueuedOperation, WorkflowShape, Usage } from "../shared/types.js";
 import type { CodexRunner, Progress } from "../integrations/codex.js";
-import type { UserAnswers } from "../integrations/codex-types.js";
+import { CodexRunError, type UserAnswers } from "../integrations/codex-types.js";
 import {
   VexRouter,
   shapeRequest,
@@ -498,40 +498,70 @@ export class Orchestrator {
       }
       const role = verifierTurn ? "verifier" : "main";
       let completedAttemptId: string | undefined;
-      const execution = await durableRunner(runner, this.store, session, role, verifierTurn ? "verify" : planningTurn ? "plan" : "final", activateOnSave, async id => { completedAttemptId = id; }).run(
-        runnerPrompt,
-        session.projectPath,
-        route,
-        runThreadId,
-        async (progress) => {
-          if (progress.kind === "thread") {
-            if (verifierTurn) { session.verifierThreadId = progress.text; session.verifier!.threadId = progress.text; }
-            else session.threadId = progress.text;
-            if (progress.text !== runThreadId) { if (verifierTurn) session.verifier!.threadTurnCount = 0; else session.threadTurnCount = 0; }
-            if (intent !== "verify_plan" && intent !== "continue_verify" && !planningTurn && session.autoLaunchSkills?.length) session.autoLaunchThreadId = progress.text;
-          } else if (progress.kind === "question") {
-            onProgress({ ...progress, respond: (answers: UserAnswers) => {
-              for (const item of progress.questions) {
-                const answer = answers[item.id]?.answers[0];
-                if (item.isSecret) secretValues.push(item.question, item.header, ...item.options.flatMap(option => [option.label, option.description]), ...(answers[item.id]?.answers ?? []));
-                Object.assign(trace, redactTrace(trace, secretValues));
-                if (answer) answeredQuestions.push({ question: item.isSecret ? "[hidden]" : item.question, answer: item.isSecret ? "[hidden]" : answer });
-              }
-              progress.respond(answers);
-            } });
-          } else onProgress(progress);
-        },
-        signal,
-        intent === "verify_plan" || intent === "continue_verify" ? "side" : planningTurn ? "planning" : "main",
-        trustedFolders,
-        config.approvalMode,
-        conversationArtifacts,
-        { recallQuery: taskRelation === 'replace' || !runThreadId ? prompt : undefined },
-      );
+      let activeThreadId: string | undefined;
+      const stageObjective = intent === "verify_plan" ? "Verify plan" : intent === "continue_verify" ? "Continue plan verification" : intent === "revise_plan" ? "Revise plan" : session.kind === "planning" ? "Draft plan" : "Complete request";
+      let execution;
+      try {
+        execution = await durableRunner(runner, this.store, session, role, verifierTurn ? "verify" : planningTurn ? "plan" : "final", activateOnSave, async id => { completedAttemptId = id; }).run(
+          runnerPrompt,
+          session.projectPath,
+          route,
+          runThreadId,
+          async (progress) => {
+            if (progress.kind === "thread") {
+              activeThreadId = progress.text;
+              if (verifierTurn) { session.verifierThreadId = progress.text; session.verifier!.threadId = progress.text; }
+              else session.threadId = progress.text;
+              if (progress.text !== runThreadId) { if (verifierTurn) session.verifier!.threadTurnCount = 0; else session.threadTurnCount = 0; }
+              if (intent !== "verify_plan" && intent !== "continue_verify" && !planningTurn && session.autoLaunchSkills?.length) session.autoLaunchThreadId = progress.text;
+            } else if (progress.kind === "question") {
+              onProgress({ ...progress, respond: (answers: UserAnswers) => {
+                for (const item of progress.questions) {
+                  const answer = answers[item.id]?.answers[0];
+                  if (item.isSecret) secretValues.push(item.question, item.header, ...item.options.flatMap(option => [option.label, option.description]), ...(answers[item.id]?.answers ?? []));
+                  Object.assign(trace, redactTrace(trace, secretValues));
+                  if (answer) answeredQuestions.push({ question: item.isSecret ? "[hidden]" : item.question, answer: item.isSecret ? "[hidden]" : answer });
+                }
+                progress.respond(answers);
+              } });
+            } else onProgress(progress);
+          },
+          signal,
+          intent === "verify_plan" || intent === "continue_verify" ? "side" : planningTurn ? "planning" : "main",
+          trustedFolders,
+          config.approvalMode,
+          conversationArtifacts,
+          { recallQuery: taskRelation === 'replace' || !runThreadId ? prompt : undefined },
+        );
+      } catch (error) {
+        if (error instanceof CodexRunError) {
+          const stageUsage = error.usage ?? error.accounting?.knownUsage;
+          if (stageUsage) stages.push({
+            objective: stageObjective,
+            route,
+            durationMs: Math.round(performance.now() - stageStart),
+            usage: stageUsage,
+            estimatedCostUsd: costForUsage(route, stageUsage),
+          });
+          const threadId = error.accounting?.threadId ?? activeThreadId ?? runThreadId;
+          const hadTurn = !!(error.accounting?.turnId || stageUsage || error.context);
+          if (verifierTurn) {
+            if (threadId && hadTurn) session.verifier!.threadTurnCount = runThreadId && threadId === runThreadId ? (session.verifier!.threadTurnCount ?? 0) + 1 : 1;
+            if (error.context) session.verifier!.context = error.context;
+          } else {
+            if (threadId && hadTurn) session.threadTurnCount = runThreadId && threadId === runThreadId ? (session.threadTurnCount ?? session.turns.length) + 1 : 1;
+            if (threadId && error.context) {
+              session.contextByThread ??= {};
+              session.contextByThread[threadId] = error.context;
+            }
+            if (session.activeTask?.workflow && session.threadId) session.activeTask.workflow.mainThreadId = session.threadId;
+          }
+        }
+        throw error;
+      }
       await finishFileEdits();
-      signal?.throwIfAborted();
       stages.push({
-        objective: intent === "verify_plan" ? "Verify plan" : intent === "continue_verify" ? "Continue plan verification" : intent === "revise_plan" ? "Revise plan" : session.kind === "planning" ? "Draft plan" : "Complete request",
+        objective: stageObjective,
         route,
         durationMs: Math.round(performance.now() - stageStart),
         usage: execution.usage,
@@ -561,6 +591,7 @@ export class Orchestrator {
         }
         if (session.activeTask?.workflow) session.activeTask.workflow.mainThreadId = session.threadId;
       }
+      signal?.throwIfAborted();
       const artifacts = changedArtifacts(
         artifactsBefore,
         await artifactSnapshot(conversationArtifacts).catch(
@@ -634,6 +665,12 @@ export class Orchestrator {
       const retainedTurns = repeatedFailure &&
         (!previousFailure.fileEdits || previousFailure.fileEdits === "none" || fileEdits === previousFailure.fileEdits)
         ? session.turns.slice(0, -1) : session.turns;
+      const usage = addUsage(stages);
+      const estimatedCostUsd = stages.length > 0 && stages.every(
+        (stage) => stage.estimatedCostUsd !== undefined,
+      )
+        ? stages.reduce((sum, stage) => sum + stage.estimatedCostUsd!, 0)
+        : undefined;
       session.turns = [
         ...retainedTurns,
         {
@@ -653,6 +690,8 @@ export class Orchestrator {
           durationMs: Math.round(performance.now() - startedAt),
           failed: true,
           cancelled,
+          ...(usage ? { usage } : {}),
+          ...(estimatedCostUsd !== undefined ? { estimatedCostUsd } : {}),
           stages,
           routing,
         },
