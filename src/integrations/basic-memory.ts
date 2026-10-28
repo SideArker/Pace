@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -9,7 +9,16 @@ import { atomicJson } from '../core/sessions.js';
 import { BASIC_MEMORY_VERSION, MEMORY_POLICY, memoryRoot, type MemoryConfig } from '../core/memory/config.js';
 
 const exec = promisify(execFile);
-export type MemoryBackend = { call(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>; close(): Promise<void> };
+export type MemoryBackend = { call(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>; close(): Promise<void>; diagnostics?: { provider: string; model: string; reranker: boolean } };
+export async function verifyBasicMemoryScope(config: MemoryConfig): Promise<void> {
+  const backend = JSON.parse(await readFile(join(config.configDirectory, 'config.json'), 'utf8'));
+  const projects = backend.projects;
+  if (!projects || Object.keys(projects).length !== 1 || projects[config.backendProject]?.mode !== 'local' ||
+      await realpath(projects[config.backendProject]?.path ?? '') !== await realpath(config.dataDirectory) ||
+      backend.default_project !== config.backendProject || backend.auto_update !== false || backend.database_backend !== 'sqlite' ||
+      backend.semantic_embedding_provider !== 'fastembed' || backend.semantic_embedding_model !== 'bge-small-en-v1.5' || backend.reranker_enabled !== false)
+    throw new Error('Basic Memory scope/provider configuration changed; repair the Pace-owned connection before using it');
+}
 // Do not pass API credentials or another Basic Memory project's environment to this process.
 export function basicMemoryEnvironment(config: MemoryConfig): Record<string, string> {
   const env: Record<string, string> = {};
@@ -44,7 +53,15 @@ export async function detectBasicMemory(base?: string, signal?: AbortSignal): Pr
 }
 export async function installBasicMemory(uv: string, base?: string, signal?: AbortSignal, onOutput?: (text: string) => void): Promise<string> {
   const directory = join(memoryRoot(base), 'runtime', BASIC_MEMORY_VERSION);
-  await runOwned(uv, ['venv', '--python', '3.12', directory], { signal, onOutput });
+  const python = join(directory, process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
+  try { await exec(python, ['--version'], { signal, timeout: 5000 }); }
+  catch {
+    signal?.throwIfAborted();
+    let runtime = '3.12';
+    try { runtime = (await exec(uv, ['python', 'find', '>=3.12', '--no-python-downloads'], { signal, timeout: 5000 })).stdout.trim(); }
+    catch { signal?.throwIfAborted(); }
+    await runOwned(uv, ['venv', '--python', runtime, directory], { signal, onOutput });
+  }
   await runOwned(uv, ['pip', 'install', '--python', join(directory, process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python'), `basic-memory==${BASIC_MEMORY_VERSION}`], { signal, onOutput, timeout: 600_000 });
   const executable = join(directory, process.platform === 'win32' ? 'Scripts/basic-memory.exe' : 'bin/basic-memory');
   await validateBasicMemory(executable, signal);
@@ -54,7 +71,8 @@ export async function runOwned(command: string, args: string[], options: { signa
   options.signal?.throwIfAborted();
   const child = spawn(command, args, { env: options.env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
   let output = '', timedOut = false;
-  const terminate = () => { child.kill(); };
+  let escalation: ReturnType<typeof setTimeout> | undefined;
+  const terminate = () => { child.kill(); escalation ??= setTimeout(() => child.kill('SIGKILL'), 2000); };
   const timer = setTimeout(() => { timedOut = true; terminate(); }, options.timeout ?? 120_000);
   options.signal?.addEventListener('abort', terminate, { once: true });
   for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => { output = (output + chunk).slice(-8000); options.onOutput?.(String(chunk)); });
@@ -64,7 +82,7 @@ export async function runOwned(command: string, args: string[], options: { signa
       else if (timedOut) reject(new Error('Memory operation timed out'));
       else if (code !== 0) reject(new Error(output || `Memory command exited ${code}`)); else resolve();
     }); });
-  } finally { clearTimeout(timer); options.signal?.removeEventListener('abort', terminate); }
+  } finally { clearTimeout(timer); if (escalation) clearTimeout(escalation); options.signal?.removeEventListener('abort', terminate); }
 }
 export async function configureBasicMemory(config: MemoryConfig, signal?: AbortSignal, onOutput?: (text: string) => void): Promise<void> {
   await validateBasicMemory(config.executable, signal);
@@ -73,31 +91,40 @@ export async function configureBasicMemory(config: MemoryConfig, signal?: AbortS
   try { await readFile(join(config.configDirectory, 'config.json')); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    await atomicJson(join(config.configDirectory, 'config.json'), { projects: { [config.backendProject]: { path: config.dataDirectory, mode: 'local' } }, default_project: null, auto_update: false,
+    await atomicJson(join(config.configDirectory, 'config.json'), { projects: { [config.backendProject]: { path: config.dataDirectory, mode: 'local' } }, default_project: config.backendProject, auto_update: false,
       database_backend: 'sqlite', semantic_embedding_provider: 'fastembed', semantic_embedding_model: 'bge-small-en-v1.5', reranker_enabled: false,
       logfire_enabled: false, logfire_send_to_logfire: false });
   }
+  await verifyBasicMemoryScope(config);
   await runOwned(config.executable, ['project', 'index', config.backendProject], { env: basicMemoryEnvironment(config), signal, onOutput, timeout: 180_000 });
 }
-export async function connectBasicMemory(config: MemoryConfig, signal?: AbortSignal): Promise<MemoryBackend> {
+export async function connectBasicMemory(config: MemoryConfig, signal?: AbortSignal, timeoutMs: number = MEMORY_POLICY.timeoutMs): Promise<MemoryBackend> {
   signal?.throwIfAborted();
+  await verifyBasicMemoryScope(config);
   const client = new Client({ name: 'pace-memory', version: '1' });
   const transport = new StdioClientTransport({ command: config.executable, args: ['mcp', '--project', config.backendProject], env: basicMemoryEnvironment(config), stderr: 'pipe' });
   let stderr = '';
-  transport.stderr?.on('data', chunk => { stderr = (stderr + String(chunk)).slice(-1000); });
   const close = async () => { await client.close(); };
   const abort = () => { void close().catch(() => {}); };
   signal?.addEventListener('abort', abort, { once: true });
-  const timeout = setTimeout(abort, MEMORY_POLICY.timeoutMs);
-  try { await client.connect(transport); signal?.throwIfAborted(); }
-  catch (error) { await close().catch(() => {}); throw new Error(`Basic Memory connection failed: ${String(error)} ${stderr}`); }
+  const timeout = setTimeout(abort, timeoutMs);
+  try {
+    const connecting = client.connect(transport);
+    transport.stderr?.on('data', chunk => { stderr = (stderr + String(chunk)).slice(-2000); });
+    await connecting; signal?.throwIfAborted();
+  }
+  catch (error) { signal?.removeEventListener('abort', abort); await close().catch(() => {}); throw new Error(`Basic Memory connection failed: ${String(error)} ${stderr}`); }
   finally { clearTimeout(timeout); }
   return {
+    diagnostics: { provider: 'fastembed/local', model: 'bge-small-en-v1.5', reranker: false },
     async call(name, args, callSignal = signal) {
       callSignal?.throwIfAborted();
-      const result = await client.callTool({ name, arguments: { ...args, project: config.backendProject, output_format: 'json' } }, undefined, { timeout: MEMORY_POLICY.timeoutMs, signal: callSignal });
+      const result = await client.callTool({ name, arguments: { ...args, ...(name === 'list_memory_projects' ? {} : { project: config.backendProject }), output_format: 'json' } }, undefined, { timeout: timeoutMs, signal: callSignal });
       if (result.isError) throw new Error(`Basic Memory refused ${name}: ${JSON.stringify(result.content).slice(0, 1000)}`);
-      if (result.structuredContent) return result.structuredContent;
+      if (result.structuredContent && typeof result.structuredContent === 'object') {
+        const structured = result.structuredContent;
+        return 'result' in structured && Object.keys(structured).length === 1 ? structured.result : structured;
+      }
       const content = result.content as { type: string; text?: string }[];
       const text = content.filter(item => item.type === 'text').map(item => item.text ?? '').join('\n');
       try { return JSON.parse(text); } catch { return text; }

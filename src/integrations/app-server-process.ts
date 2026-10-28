@@ -4,6 +4,7 @@ import { vexServerPath } from "../core/vex/client.js";
 import { codexCommand } from "./codex-cli.js";
 
 type RpcMessage = { id?: number | string; method?: string; params?: unknown; result?: unknown; error?: { message?: string } };
+export type AppServerLaunch = { command: string; prefix: string[]; env: NodeJS.ProcessEnv; direct?: boolean; cwd?: string };
 export type JsonRecord = Record<string, unknown>;
 
 export function isRecord(value: unknown): value is JsonRecord {
@@ -21,6 +22,7 @@ export function serverArgs(includeVex = true): string[] {
   const args = [
     "--config", 'approvals_reviewer="user"',
     "--enable", "default_mode_request_user_input",
+    "--disable", "multi_agent",
   ];
   if (serverPath) args.unshift(
     "--config", `mcp_servers.vex.command=${tomlString(process.execPath)}`,
@@ -38,8 +40,9 @@ export class AppServer {
   private requestHandler?: (message: RpcMessage) => void;
   private stderr = "";
 
-  constructor(onMessage: (message: RpcMessage) => void, onExit: (error: Error) => void, includeVex = true) {
-    this.child = spawn(process.execPath, [codexCommand(), "app-server", "--stdio", ...serverArgs(includeVex)], {
+  constructor(onMessage: (message: RpcMessage) => void, onExit: (error: Error) => void, includeVex = true, launch?: AppServerLaunch) {
+    this.child = spawn(launch?.command ?? process.execPath, [...(launch ? [...launch.prefix, ...(launch.direct ? [] : [process.execPath])] : []), codexCommand(), "app-server", "--stdio", ...serverArgs(includeVex)], {
+      ...(launch ? { env: launch.env, cwd: launch.cwd } : {}),
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
     });

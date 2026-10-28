@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, realpath, stat } from 'node:fs/promises';
+import { mkdir, readFile, realpath, stat, open, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { z } from 'zod';
@@ -22,7 +22,9 @@ export async function memoryConfigPath(project: string, base?: string): Promise<
   return join(memoryRoot(base), 'projects', createHash('sha256').update(canonical).digest('hex'), 'config.json');
 }
 export async function loadMemory(project: string, base?: string): Promise<MemoryState> {
-  const file = await memoryConfigPath(project, base);
+  let file: string;
+  try { file = await memoryConfigPath(project, base); }
+  catch (error) { return { state: 'unavailable', error: `Project path is unavailable: ${String(error)}` }; }
   let config: MemoryConfig;
   try {
     config = readySchema.parse(JSON.parse(await readFile(file, 'utf8')));
@@ -42,20 +44,31 @@ export async function loadMemory(project: string, base?: string): Promise<Memory
   } catch { /* No previous failure recorded. Live health is checked by the panel/adapter. */ }
   return { state: 'ready', config };
 }
-export async function saveMemory(config: MemoryConfig, base?: string): Promise<void> {
+export async function saveMemory(config: MemoryConfig, base?: string, expectedRevision?: string | null): Promise<void> {
   config = readySchema.parse(config);
   if (await realpath(config.canonicalPath) !== config.canonicalPath) throw new Error('Project canonical path changed');
-  await atomicJson(await memoryConfigPath(config.canonicalPath, base), config);
+  const file = await memoryConfigPath(config.canonicalPath, base);
+  await mkdir(join(file, '..'), { recursive: true, mode: 0o700 });
+  const lock = await open(file + '.lock', 'wx', 0o600).catch(() => { throw new Error('Memory configuration is being changed by another setup; retry after it finishes'); });
+  try {
+    if (expectedRevision !== undefined) {
+      let revision: string | null = null;
+      try { revision = JSON.parse(await readFile(file, 'utf8')).revision ?? null; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+      if (revision !== expectedRevision) throw new Error('Memory configuration changed during this operation; reopen the panel before retrying');
+    }
+    await atomicJson(file, config);
+  } finally { await lock.close(); await unlink(file + '.lock'); }
 }
 export async function setMemoryEnabled(config: MemoryConfig, enabled: boolean, base?: string): Promise<MemoryConfig> {
   const next = { ...config, enabled, revision: randomUUID() };
-  await saveMemory(next, base);
+  await saveMemory(next, base, config.revision);
   return next;
 }
 export async function candidateMemory(project: string, dataDirectory: string, executable: string, base?: string): Promise<MemoryConfig> {
   const canonicalPath = await realpath(project), id = randomUUID();
   if (!isAbsolute(dataDirectory) || !isAbsolute(executable)) throw new Error('Use absolute data and executable paths');
-  await mkdir(dataDirectory, { recursive: true });
+  await mkdir(dataDirectory, { recursive: true, mode: 0o700 });
   if (!(await stat(dataDirectory)).isDirectory()) throw new Error('Memory data must be a directory');
   return readySchema.parse({ version: 1, id, canonicalPath, backend: 'basic-memory', backendVersion: BASIC_MEMORY_VERSION,
     backendProject: `pace-${id}`, executable, configDirectory: join(memoryRoot(base), 'backends', id),

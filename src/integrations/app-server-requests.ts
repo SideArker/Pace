@@ -15,7 +15,7 @@ export function registerAppServerRequests(
     const params = isRecord(message.params) ? message.params : {};
     if (message.method === 'item/tool/call') {
       const id = message.id;
-      if (params.tool !== 'pace_memory' || !memory) {
+      if (params.tool !== 'pace_memory' || !memory || mode === 'side' && isRecord(params.arguments) && params.arguments.operation === 'remember') {
         server.respond(id, { success: false, contentItems: [{ type: 'inputText', text: 'Project memory is unavailable for this agent run' }] });
         return;
       }

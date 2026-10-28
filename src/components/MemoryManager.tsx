@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { TextInput } from '@inkjs/ui';
 import { join, resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { stat } from 'node:fs/promises';
 import { BASIC_MEMORY_VERSION, memoryRoot, type MemoryState } from '../core/memory/config.js';
 import { memorySetupService, type MemorySetupService } from '../core/memory/setup.js';
 
@@ -45,7 +47,7 @@ export function MemoryManager({ project, baseDir, width, height, onClose, servic
     return () => { mounted.current = false; operation.current?.abort(); };
   }, [project, baseDir, service]);
   const choices = screen === 'intro' ? ['Set up project memory', 'Cancel']
-    : screen === 'installation' ? ['Install isolated Basic Memory with uv', 'Check installation again', 'Cancel']
+    : screen === 'installation' ? ['Use isolated Basic Memory installation (uv)', 'Check installation again', 'Cancel']
     : screen === 'location' ? ['Create a new memory directory', 'Use an existing notes directory', 'Cancel']
     : screen === 'review' ? ['Configure and check connection', 'Back', 'Cancel']
     : screen === 'panel' ? [state.config?.enabled ? 'Disable memory' : 'Enable memory', 'Repair / check existing connection', 'Reconfigure memory', 'Close'] : [];
@@ -62,18 +64,17 @@ export function MemoryManager({ project, baseDir, width, height, onClose, servic
     else if (screen === 'installation') {
       if (index === 2) onClose();
       else if (index === 1) void perform('Detecting installation…', detect);
-      else void perform('Installing Python environment and Basic Memory…', async signal => {
-        if (!detected.uv) throw new Error('uv is not installed. Install uv using its official instructions, then select Check installation again. No sudo is needed.');
-        const executable = await service.install(detected.uv, baseDir, signal, log);
-        if (mounted.current) { setDetected(value => ({ ...value, executable })); setMessage(`Installed runtime remains at ${executable} if setup is cancelled.`); go('location'); }
-      });
+      else if (!detected.uv) setError('uv is not installed. Install uv using its official instructions, then select Check installation again. No sudo is needed.');
+      else go('location');
     } else if (screen === 'location') {
       if (index === 2) onClose();
-      else { setExisting(index === 1); setDirectory(index ? '' : join(memoryRoot(baseDir), 'notes', crypto.randomUUID())); go('path'); }
+      else { setExisting(index === 1); setDirectory(index ? '' : join(memoryRoot(baseDir), 'notes', randomUUID())); go('path'); }
     } else if (screen === 'review') {
       if (index === 2) onClose(); else if (index === 1) go('location');
       else void perform('Configuring and checking project…', async signal => {
-        const config = await service.setup(project, directory, detected.executable!, baseDir, signal, log);
+        const executable = detected.executable ?? await service.install(detected.uv!, baseDir, signal, log);
+        if (!detected.executable && mounted.current) setMessage(`Installed runtime remains at ${executable} if setup is cancelled.`);
+        const config = await service.setup(project, directory, executable, baseDir, signal, log);
         if (mounted.current) { setState({ state: 'ready', config }); setMessage('Saved. Changes apply to the next agent launch; active agents keep their starting scope.'); go('panel'); }
       });
     } else if (screen === 'panel') {
@@ -97,9 +98,12 @@ export function MemoryManager({ project, baseDir, width, height, onClose, servic
     {screen === 'path' ? <><Text>{existing ? 'Existing notes directory (must exist)' : 'New notes directory'} · Enter empty for {directory || 'no default'}</Text><TextInput key={String(existing)} onSubmit={value => {
       const chosen = value.trim() ? resolve(value.trim()) : directory;
       if (!chosen) { setError('Enter a directory path'); return; }
-      setDirectory(chosen); go('review');
+      void perform('Checking directory…', async () => {
+        if (existing && !await stat(chosen).then(info => info.isDirectory()).catch(() => false)) throw new Error('The existing notes directory must exist');
+        if (mounted.current) { setDirectory(chosen); go('review'); }
+      });
     }} /></> : null}
-    {screen === 'review' ? <><Text>Project: {project}</Text><Text>Notes: {directory}</Text><Text>Backend: {detected.executable}</Text><Text>Pace will create a separate backend configuration and index this directory. A uniquely named temporary write/read probe is deleted after checking. Previous ready settings remain until success.</Text></> : null}
+    {screen === 'review' ? <><Text>Project: {project}</Text><Text>Notes: {directory}</Text><Text>Backend: {detected.executable ?? `Install Basic Memory ${BASIC_MEMORY_VERSION} with uv under ${memoryRoot(baseDir)}/runtime`}</Text><Text>Pace will create a separate backend configuration and index this directory. A uniquely named temporary write/read probe is deleted after checking. Previous ready settings remain until success.</Text></> : null}
     {screen === 'panel' ? <><Text>Backend: Basic Memory {BASIC_MEMORY_VERSION}</Text><Text>Project: {state.config?.backendProject ?? 'configuration unavailable'}</Text><Text>Location: {state.config?.dataDirectory ?? 'unknown'}</Text><Text>{state.error ?? 'Zero notes is a valid ready database. Enable/disable preserves all notes.'}</Text></> : null}
     {busy ? <Text color="yellow">{busy} · Esc cancels</Text> : choices.map((choice, i) => <Text key={choice} color={index === i ? '#59E6A7' : undefined}>{index === i ? '❯' : ' '} {choice}</Text>)}
     {error ? <Text color="red">{error}</Text> : null}{message ? <Text>{message}</Text> : null}

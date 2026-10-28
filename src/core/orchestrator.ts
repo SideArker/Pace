@@ -87,6 +87,8 @@ export class Orchestrator {
     queuedOperation?: QueuedOperation,
   ): Promise<TurnOutcome> {
     const startedAt = performance.now();
+    const priorMemoryAttempts = new Set(session.attempts?.map(attempt => attempt.id));
+    const memoryAttemptIds = () => session.attempts?.filter(attempt => !priorMemoryAttempts.has(attempt.id) && attempt.role === 'main' && attempt.memoryProvenance).map(attempt => attempt.id) ?? [];
     const prompts = loadRoutingPrompts(this.store.baseDir);
     if (!intent && !queuedOperation && /^\/adopt(?:\s|$)/.test(prompt)) {
       queuedOperation = { ...operation(prompt, session.id, session.activeTask?.id), intent: "adopt_side", sourceSideId: prompt.replace(/^\/adopt(?:\s+|$)/, "").trim() };
@@ -618,6 +620,7 @@ export class Orchestrator {
           ...(displayPrompt ? { displayPrompt } : {}),
           result: execution.result,
           memoryAttemptId: completedAttemptId,
+          ...(memoryAttemptIds().length ? { memoryAttemptIds: memoryAttemptIds() } : {}),
           at: new Date().toISOString(),
           route,
           routeNote: note,
@@ -665,6 +668,8 @@ export class Orchestrator {
       const retainedTurns = repeatedFailure &&
         (!previousFailure.fileEdits || previousFailure.fileEdits === "none" || fileEdits === previousFailure.fileEdits)
         ? session.turns.slice(0, -1) : session.turns;
+      const discardedMemory = memoryAttemptIds();
+      if (discardedMemory.length) session.memoryRetractedAttempts = [...new Set([...(session.memoryRetractedAttempts ?? []), ...discardedMemory])];
       const usage = addUsage(stages);
       const estimatedCostUsd = stages.length > 0 && stages.every(
         (stage) => stage.estimatedCostUsd !== undefined,

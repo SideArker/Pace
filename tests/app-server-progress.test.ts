@@ -45,6 +45,7 @@ it("planning retains native plan events and interactive questions inside the art
   expect(replies).toEqual([{ answers: { scope: { answers: ["Local"] } } }]);
   expect(calls.find(call => call.method === "turn/start")?.params).toMatchObject({ cwd: root, approvalPolicy: "never", sandboxPolicy: { type: "workspaceWrite", writableRoots: [root], networkAccess: false, excludeSlashTmp: true, excludeTmpdirEnvVar: true } });
   expect(serverArgs()).toContain("default_mode_request_user_input");
+  expect(serverArgs().slice(serverArgs().indexOf("--disable"), serverArgs().indexOf("--disable") + 2)).toEqual(["--disable", "multi_agent"]);
 });
 
 it("streams a message snapshot under one ID and uses the completed text as authoritative", () => {

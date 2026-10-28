@@ -10,8 +10,8 @@ export async function captureCheckpoint(store: PaceStore, session: Session, sign
   const attempt = session.attempts?.find(attempt => attempt.id === turn?.memoryAttemptId && attempt.role === 'main' && attempt.status === 'completed');
   if (!attempt) return;
   const config = (await loadMemory(session.projectPath, store.baseDir)).config;
-  if (!config?.enabled) return;
-  const scope = { config, baseDir: store.baseDir, sessionId: session.id, taskId: attempt.taskId, attemptId: attempt.id, role: 'main' as const, startedAt: attempt.startedAt };
+  if (!config?.enabled || attempt.memoryProvenance?.projectId !== config.id) return;
+  const scope = { config, baseDir: store.baseDir, sessionId: session.id, taskId: attempt.taskId, attemptId: attempt.id, role: 'main' as const, startedAt: attempt.startedAt, projectPath: session.projectPath, branch: attempt.memoryProvenance.branch, commit: attempt.memoryProvenance.commit };
   const access = new MemoryAccess(scope, undefined, signal);
   try {
     await access.remember({ key: `checkpoint:${checkpoint.sourceTurnAt}`, type: 'observation',

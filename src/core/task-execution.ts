@@ -120,7 +120,9 @@ export function durableRunner(
         if (state.config?.enabled) {
           const git = async (...command: string[]) => (await promisify(execFile)('git', command, { cwd: session.projectPath, timeout: 3000 })).stdout.trim();
           memoryScope = { config: state.config, baseDir: store.baseDir, sessionId: session.id, taskId, attemptId: id, role, startedAt: record.startedAt,
+            projectPath: session.projectPath,
             branch: await git('branch', '--show-current').catch(() => undefined), commit: await git('rev-parse', 'HEAD').catch(() => undefined) };
+          current().memoryProvenance = { projectId: state.config.id, branch: memoryScope.branch, commit: memoryScope.commit };
           args[10] = { ...args[10], scope: memoryScope };
         } else if (state.state === 'unavailable') await output({ kind: 'system', text: `Project memory degraded: ${state.error}. Continuing without memory.` });
       }

@@ -90,6 +90,7 @@ function isProjection(value: unknown): boolean {
 }
 function isAttempt(value: unknown): boolean {
   return isRecord(value) && (value.taskCriteria === undefined || (Array.isArray(value.taskCriteria) && value.taskCriteria.every(isCriterion))) && text(value.id) && text(value.taskId) && integer(value.generation) && text(value.stage) && role(value.role) &&
+    (value.memoryProvenance === undefined || (isRecord(value.memoryProvenance) && text(value.memoryProvenance.projectId) && optionalText(value.memoryProvenance.branch) && optionalText(value.memoryProvenance.commit))) &&
     (value.pricing === undefined || (isRecord(value.pricing) && text(value.pricing.checkedAt) && text(value.pricing.source) && value.pricing.processing === "standard" && text(value.pricing.context) && isRecord(value.pricing.rates) && Object.values(value.pricing.rates).every(rates => isRecord(rates) && ["input", "cachedInput", "cacheWriteInput", "output"].every(key => nonnegative(rates[key]))))) &&
     oneOf(value.status, ["pending", "running", "completed", "failed", "cancelled", "awaiting_user"]) &&
     isRoute(value.route) && typeof value.startedAt === "string" &&
@@ -135,6 +136,7 @@ function isDeferred(value: unknown): boolean {
     (value.operation === undefined || validOperation(value.operation));
 }
 function validNewFields(value: Record<string, unknown>): boolean {
+  if (!optionalText(value.memoryRevision)) return false;
   if (value.memoryRetractedAttempts !== undefined && (!Array.isArray(value.memoryRetractedAttempts) || !value.memoryRetractedAttempts.every(text))) return false;
   const records = (field: string, validate: (item: unknown) => boolean) => value[field] === undefined ||
     (Array.isArray(value[field]) && value[field].every(validate) &&
@@ -237,6 +239,8 @@ function isCheckpointGeneration(value: unknown): boolean {
 
 function isTurn(turn: unknown): boolean {
   return isRecord(turn) && (turn.promptTrace === undefined || isPromptTrace(turn.promptTrace)) && optionalText(turn.scoutHandoff) &&
+        optionalText(turn.memoryAttemptId) &&
+        (turn.memoryAttemptIds === undefined || Array.isArray(turn.memoryAttemptIds) && turn.memoryAttemptIds.every(text)) &&
         (turn.fileEdits === undefined || turn.fileEdits === "none" || (typeof turn.fileEdits === "string" && /^[0-9a-f-]{36}$/.test(turn.fileEdits))) &&
         (turn.steeringRecordIds === undefined || (Array.isArray(turn.steeringRecordIds) && turn.steeringRecordIds.every(text))) &&
         (turn.steeringPrompts === undefined || (Array.isArray(turn.steeringPrompts) && turn.steeringPrompts.every(text))) &&

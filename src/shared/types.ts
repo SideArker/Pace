@@ -45,6 +45,7 @@ export type Config = {
 };
 export type TurnSummary = {
   memoryAttemptId?: string;
+  memoryAttemptIds?: string[];
   scoutHandoff?: string;
   promptTrace?: import("../core/prompt-trace.js").PromptTrace;
   operation?: QueuedOperation;
@@ -170,6 +171,7 @@ export type VexProjection = {
   maxBytes: number; omittedClasses: string[]; requiredEvidenceOmitted: boolean;
 };
 export type StageAttempt = {
+  memoryProvenance?: { projectId: string; branch?: string; commit?: string };
   taskCriteria?: { id: string; text: string; required: boolean }[];
   pricing?: import("../core/routing/pricing.js").PriceSnapshot;
   id: string; taskId: string; generation: number; stage: string; role: AgentRole;
