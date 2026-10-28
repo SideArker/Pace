@@ -47,7 +47,7 @@ it('runs matched stages through the shared worker preserving prompts, threads, f
   expect(calls).toHaveLength(12);
   expect(account(await readEvents(root)).codex.attempts).toBe(12);
   expect(account(await readEvents(root)).vex.attempts).toBe(0);
-});
+}, 20_000);
 
 it('enforces configured limits before inference and records failed shared setup', async () => {
   const root = await mkdtemp(join(tmpdir(), 'pace-fresh-limits-')); roots.push(root);

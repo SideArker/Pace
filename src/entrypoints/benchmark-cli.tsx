@@ -12,18 +12,19 @@ export const benchmarkHelp=`Usage:
   pace benchmark                              Open Benchmark Center (TTY)
   pace benchmark list                         List named profiles; no inference
   pace benchmark run CATEGORY --profile NAME [--preview]
-    [--max-turns N] [--max-usd N] [--controlled]
+    [--max-turns N] [--max-usd N] [--controlled] [--repeats N (Memory Confirm only)]
   pace benchmark results [RUN_ID] [--files | --file RELATIVE_PATH]
   pace benchmark resume RUN_ID [--preview]
   pace benchmark analyze|summarize RUN_ID
 
 Run is an explicit Start. Preview/list/results never invoke models.
 Dollars estimate Standard API equivalents; a threshold stops subsequent calls.
-Fresh completion is experimental. Controlled isolation is unavailable.`;
+Memory profiles: prepare, quick, standard, confirm, full-cycle.
+Fresh completion is uncontrolled; Memory requires Linux isolation.`;
 export function parseBenchmarkArgs(args:string[]) {
   const positional:string[]=[],values:Record<string,string>={},flags=new Set<string>();
   const booleans=['--preview','--offline','--controlled','--files','--help'];
-  const valued=['--profile','--baseline','--source','--max-turns','--max-usd','--dataset','--file'];
+  const valued=['--profile','--baseline','--source','--max-turns','--max-usd','--dataset','--file','--repeats'];
   for(let i=0;i<args.length;i++) {
     const value=args[i]!;
     if(booleans.includes(value)){if(flags.has(value))throw new Error(`Duplicate flag: ${value}`);flags.add(value);}
@@ -42,9 +43,10 @@ export async function benchmarkCommand(args:string[],service=benchmarkCommandSer
   if(!action){allowed([],[]);if(!process.stdin.isTTY||!process.stdout.isTTY)throw new Error('Benchmark Center needs a TTY. Use benchmark list, results, or run CATEGORY --profile NAME.');await panel();return;}
   if(action==='list'){allowed([],[]);if(positional.length!==1)throw new Error('Usage: benchmark list');console.log(catalog.map(p=>`${p.category}/${p.name} · ${p.evaluation}`).join('\n'));return;}
   if(action==='run') {
-    allowed(['--profile','--baseline','--source','--max-turns','--max-usd','--dataset'],['--preview','--offline','--controlled']);
+    allowed(['--profile','--baseline','--source','--max-turns','--max-usd','--dataset','--repeats'],['--preview','--offline','--controlled']);
     if(positional.length!==2||!values['--profile'])throw new Error('Usage: benchmark run CATEGORY --profile NAME (complete named profile required)');
     const selection:Selection={category:id!,profile:values['--profile']!,baseline:values['--baseline'],source:values['--source'],dataset:values['--dataset'],offline:flags.has('--offline'),controlled:flags.has('--controlled'),maxTurns:values['--max-turns']===undefined?undefined:Number(values['--max-turns']),maxUsd:values['--max-usd']===undefined?undefined:Number(values['--max-usd'])};
+    if(values['--repeats']!==undefined)selection.repeats=Number(values['--repeats']);
     const preview=await preflight(selection);console.log(JSON.stringify(preview,null,2));
     if(!flags.has('--preview'))await withCancellation(signal=>startRun(selection,{preview,signal,onEvent:event=>{if(event.kind==='log')process.stdout.write(String(event.text));}}).then(result=>{console.log(JSON.stringify(result,null,2));if(result.state.execution!=='completed')process.exitCode=1;}));return;
   }

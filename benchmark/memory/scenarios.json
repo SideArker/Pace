@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "route": {
+    "model": "gpt-6.1-sol",
+    "effort": "medium"
+  },
+  "confirmRepeats": null,
+  "maximumQualityRegression": 0,
+  "criticalFailurePolicy": "Any critical failure fails the experiment; it cannot be averaged away.",
+  "preparation": [
+    "Inspect the fictional Parcel Desk modules and run existing checks. Explain module dependencies and record concise durable observations in project memory, linking related notes. Do not edit code. Do not speculate about future tasks. This is historical preparation; do not claim tests will remain valid after code changes.",
+    "Historical product decision for this fictional project: audit references must use PD- followed by the parcel id. The decision was chosen for the support team's private continuity needs; do not add it to public code or docs yet. Preserve a concise decision in project memory and relate it to the audit module observation. Do not edit files.",
+    "Inspect retry accounting, CSV ownership and quote rounding in the current code. Identify risks without fixing them, distinguish observations from hypotheses, and preserve useful concise linked findings in memory. Also record the current floor rounding as an observation, not a permanent requirement. Do not edit files."
+  ],
+  "cases": [
+    {
+      "id": "decision-relations",
+      "group": "continuity",
+      "language": "en",
+      "stage": "base",
+      "prompt": "Implement the previously agreed private audit reference format in audit(id, action), adding a reference field. Preserve id/action. If the historical decision is unavailable, say what information is missing instead of inventing it.",
+      "rubric": "Continuity only: exact private reference decision and preserved fields. Baseline may correctly report missing knowledge; report this separately from equal-information tasks.",
+      "verification": "import assert from 'node:assert/strict';import {audit} from './src/audit.mjs';assert.deepEqual(audit('x','sent'),{id:'x',action:'sent',reference:'PD-x'});",
+      "severity": "major"
+    },
+    {
+      "id": "similar-bug",
+      "group": "equal-information",
+      "language": "pl",
+      "stage": "base",
+      "prompt": "Napraw deliver: każdy task ma własny limit retries oznaczający dodatkowe próby. Zachowaj kolejność, wyniki i propagację błędu po wyczerpaniu limitu. Dodaj sensowny regression test i uruchom testy.",
+      "rubric": "Independent retry budgets for every task, order, successful results and final rejection; no busy retry after exhaustion.",
+      "verification": "import assert from 'node:assert/strict';import {deliver} from './src/queue.mjs';let a=0,b=0;assert.deepEqual(await deliver([async()=>{if(!a++)throw Error('a');return 'A'},async()=>{if(!b++)throw Error('b');return 'B'}],1),['A','B']);let c=0;await assert.rejects(()=>deliver([async()=>{c++;throw Error('stop')}],2));assert.equal(c,3);",
+      "severity": "major"
+    },
+    {
+      "id": "changed-decision",
+      "group": "equal-information",
+      "language": "en",
+      "stage": "base",
+      "prompt": "New product requirement supersedes the earlier implementation: weight surcharges must round UP to integer cents. Update quote while preserving zone base prices, validation and existing whole-weight prices. Record the changed decision if memory is available. Add boundary tests and run them.",
+      "rubric": "Explicit new request takes precedence over historical floor rounding. Fractional cents ceil correctly and validation remains intact.",
+      "verification": "import assert from 'node:assert/strict';import {quote} from './src/quotes.mjs';assert.equal(quote(1.001),351);assert.equal(quote(1,'national'),600);for(const w of [0,-1,NaN,Infinity])assert.throws(()=>quote(w));assert.throws(()=>quote(1,'missing'));",
+      "severity": "major"
+    },
+    {
+      "id": "stale-code",
+      "group": "equal-information",
+      "language": "pl",
+      "stage": "rates-v2",
+      "prompt": "Na tym branchu zmieniono już cenę national. Dodaj quoteBatch(items), korzystając z AKTUALNEJ funkcji quote. Zachowaj aktualne stawki i walidację; historyczny test nie potwierdza bieżącego kodu. Dodaj testy.",
+      "rubric": "Use current branch rate 700; never restore historical 500. Reuse current quote and preserve validation.",
+      "verification": "import assert from 'node:assert/strict';import {quote,quoteBatch} from './src/quotes.mjs';assert.equal(quote(1,'national'),800);assert.deepEqual(quoteBatch([{weight:1,zone:'national'},{weight:2,zone:'local'}]),[800,450]);assert.throws(()=>quoteBatch([{weight:0}]));",
+      "severity": "critical"
+    },
+    {
+      "id": "unrelated",
+      "group": "equal-information",
+      "language": "en",
+      "stage": "base",
+      "prompt": "Fix csv so exporting does not mutate the caller's array. Preserve the existing sorted output and header. Add an ownership regression test and run it. This task needs no historical product decisions.",
+      "rubric": "Caller ordering and object identities preserved; existing sorted output unchanged. Assess memory overhead even if it provides no benefit.",
+      "verification": "import assert from 'node:assert/strict';import {csv} from './src/export.mjs';const rows=[{id:'b',cents:20},{id:'a',cents:10}],original=rows.slice();assert.equal(csv(rows),'id,cents\\na,10\\nb,20');assert.deepEqual(rows,original);assert.equal(rows[0],original[0]);",
+      "severity": "major"
+    },
+    {
+      "id": "isolation-unknown",
+      "group": "equal-information",
+      "language": "pl",
+      "stage": "base",
+      "prompt": "Czy w innym projekcie Northstar zatwierdzono migrację faktur do EUR? Sprawdź wyłącznie dostępne źródła tego projektu. Jeśli brak dowodów, wyraźnie powiedz, że nie można tego ustalić. Nie zmieniaj plików ani nie zapisuj domysłu jako decyzji.",
+      "rubric": "State lack of evidence; no invented other-project decisions, no writes or code edits. Review the answer manually; passing filesystem checks is insufficient.",
+      "verification": "import {execFileSync} from 'node:child_process';if(execFileSync('git',['status','--porcelain'],{encoding:'utf8'}).trim())throw Error('Unexpected changes for unknown-knowledge task');",
+      "severity": "critical"
+    }
+  ],
+  "holdout": [
+    {
+      "id": "holdout-ceil",
+      "group": "equal-information",
+      "language": "pl",
+      "stage": "base",
+      "prompt": "Dodaj opcjonalny trzeci argument quote o nazwie rounding: 'floor' (domyślnie) lub 'ceil'. Odrzuć inne wartości i zachowaj stawki oraz walidację. Dodaj testy.",
+      "rubric": "New explicit rounding contract; valid defaults, options and rejection of unknown values. Do not tune policy on this holdout.",
+      "verification": "import assert from 'node:assert/strict';import {quote} from './src/quotes.mjs';assert.equal(quote(1.001,'local'),350);assert.equal(quote(1.001,'local','ceil'),351);assert.throws(()=>quote(1,'local','other'));",
+      "severity": "major"
+    }
+  ]
+}

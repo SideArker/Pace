@@ -40,7 +40,7 @@ export async function reviewItems(id: string, root = resultsRoot): Promise<Revie
   for (const file of await inventory(dir)) {
     if (!file.endsWith('/run.json')) continue;
     const run = await json<any>(file);
-    if (run.benchmark !== 'fresh-completion') continue;
+    if (!['fresh-completion', 'memory'].includes(run.benchmark)) continue;
     const path = relative(dir, file), sha256 = hash(await readFile(file)), review = saved.items[path];
     if (review && review.sha256 !== sha256) throw new Error(`Reviewed artifact identity changed: ${path}`);
     items.push({ path, sha256, run, review, label: `${run.id} / ${run.repetition} / ${run.arm} · ${run.error ? 'failed' : run.checksPassed ? 'checks passed; manual review required' : 'checks failed'}` });
@@ -69,6 +69,14 @@ export function familyComparisons(items: ReviewItem[]) {
   const groups = new Map<string, ReviewItem[]>();
   for (const item of items) { const key = `${item.run.id}/${item.run.repetition}/${item.run.pairId ?? item.path}`; groups.set(key, [...(groups.get(key) ?? []), item]); }
   return [...groups].map(([key, rows]) => {
+    if (rows[0]?.run.benchmark === 'memory') {
+      const baseline = rows.find(row => row.run.arm === 'baseline'), candidate = rows.find(row => row.run.arm === 'memory');
+      const compatible = !!baseline && !!candidate && ['pairId', 'originalPromptSha256', 'fixtureSha256', 'verificationSha256', 'commit', 'datasetCommit', 'seedSha256'].every(field => typeof baseline.run[field] === 'string' && baseline.run[field] === candidate.run[field]) && JSON.stringify(baseline.run.route) === JSON.stringify(candidate.run.route) && JSON.stringify(baseline.run.policy) === JSON.stringify(candidate.run.policy);
+      const qualityPassing = compatible && qualityPass(baseline!) && qualityPass(candidate!);
+      const priced = typeof baseline?.run.estimatedCostUsd === 'number' && typeof candidate?.run.estimatedCostUsd === 'number';
+      return { key, compatible, qualityPassing, group: baseline?.run.group ?? candidate?.run.group, baselineCostUsd: baseline?.run.estimatedCostUsd ?? null, candidateCostUsd: candidate?.run.estimatedCostUsd ?? null,
+        deltaCostUsd: qualityPassing && priced ? candidate!.run.estimatedCostUsd - baseline!.run.estimatedCostUsd : null, scope: 'Current Codex calls only. Preparation, import, backend work and failures are separate. Unknown backend costs prevent a complete savings claim.' };
+    }
     const baseline = rows.find(row => row.run.arm === 'same-thread'), candidate = rows.find(row => row.run.arm === 'fresh-thread');
     const compatible = !!baseline && !!candidate && ['pairId', 'historyThreadId', 'promptSha256', 'handoffSha256', 'fixtureSha256', 'verificationSha256', 'commit'].every(field => typeof baseline.run[field] === 'string' && baseline.run[field] === candidate.run[field]) &&
       JSON.stringify(baseline.run.route) === JSON.stringify(candidate.run.route) && JSON.stringify(baseline.run.input) === JSON.stringify(candidate.run.input) &&
@@ -85,8 +93,39 @@ export async function resultSummary(id: string, root = resultsRoot) {
   const state = await json<RunState>(join(dir, 'state.json')).catch(() => undefined);
   if (state?.execution === 'running' && !await resourceIsLive(root, id)) state.execution = 'interrupted';
   const rows = await reviewItems(id, root), events = await readEvents(dir);
-  return { state, accounting: account(events), comparisons: familyComparisons(rows), missingReviews: rows.filter(row => !row.review).length,
+  return { state, accounting: account(events), comparisons: familyComparisons(rows), memory: rows.some(row => row.run.benchmark === 'memory') ? memorySummary(rows) : undefined, missingReviews: rows.filter(row => !row.review).length,
     note: 'Checks and manual quality/context review are separate. No production policy changes follow automatically. Small samples do not establish general savings.' };
+}
+export function memorySummary(rows: ReviewItem[]) {
+  const memory = rows.filter(row => row.run.benchmark === 'memory');
+  const pairs = familyComparisons(memory);
+  const groups = ['equal-information', 'continuity'].map(group => {
+    const selected = memory.filter(row => row.run.group === group), comparisons = pairs.filter(pair => 'group' in pair && pair.group === group);
+    const values = comparisons.flatMap(pair => pair.deltaCostUsd === null ? [] : [pair.deltaCostUsd]);
+    const mean = values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+    const variance = values.length > 1 ? values.reduce((sum, value) => sum + (value - mean!) ** 2, 0) / (values.length - 1) : null;
+    const t95 = [0, 12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262][Math.min(9, values.length - 1)] ?? 2.262;
+    const width = variance === null ? null : t95 * Math.sqrt(variance / values.length);
+    return { group, distinctTasks: new Set(selected.map(row => row.run.id)).size, matchedPairs: comparisons.length, qualityPassingPairs: comparisons.filter(pair => pair.qualityPassing).length,
+      failedChecks: selected.filter(row => !row.run.checksPassed).length, failures: selected.filter(row => row.run.error).map(row => ({ task: row.run.id, arm: row.run.arm, error: row.run.error })),
+      knownCurrentModelDeltaUsd: { n: values.length, mean, minimum: values.length ? Math.min(...values) : null, maximum: values.length ? Math.max(...values) : null, mean95Interval: width === null ? null : [mean! - width, mean! + width], assumption: 'Paired sample mean with Student-t approximation; small convenience samples do not establish general savings. Ungraded, incompatible or failed pairs are excluded.' } };
+  });
+  const distinctTasks = new Set(memory.map(row => row.run.id)).size;
+  const preparation = memory[0]?.run.preparationCostUsd ?? null;
+  const cycles = [...new Set(memory.filter(row => row.run.experiment === 'full-cycle').map(row => row.run.repetition))].map(repetition => {
+    const selected = memory.filter(row => row.run.experiment === 'full-cycle' && row.run.repetition === repetition);
+    return { repetition, arms: ['baseline', 'memory'].map(arm => {
+      const current = selected.filter(row => row.run.arm === arm), history = current[0]?.run.cyclePreparation?.[arm];
+      const currentModelCostUsd = current.length && current.every(row => !row.run.error && typeof row.run.estimatedCostUsd === 'number') ? current.reduce((sum, row) => sum + row.run.estimatedCostUsd, 0) : null;
+      return { arm, historicalModelCostUsd: history?.modelCostUsd ?? null, currentModelCostUsd, wholeCycleModelCostUsd: history?.modelCostUsd !== null && history?.modelCostUsd !== undefined && currentModelCostUsd !== null ? history.modelCostUsd + currentModelCostUsd : null, backendCostUsd: null };
+    }) };
+  });
+  return { groups, fullCycles: cycles, criticalFailures: memory.filter(row => row.review && !qualityPass(row) && row.review.severity === 'critical').map(row => ({ task: row.run.id, arm: row.run.arm, evidence: row.review!.evidence, affectedBehavior: row.review!.affectedBehavior })),
+    datasetCommit: memory[0]?.run.datasetCommit, backendVersion: memory.find(row => row.run.arm === 'memory')?.run.backendVersion, policy: memory[0]?.run.policy,
+    preparation: { totalHistoricalModelWorkUsd: preparation, memoryOnlyShareUsd: null, note: 'Historical work is shared context; its entire cost is not automatically memory-only overhead.' },
+    importDurationMs: memory.reduce((sum, row) => sum + Number(row.run.importDurationMs ?? 0), 0),
+    amortization: { distinctTasks, repeatedExecutionsDoNotIncreaseN: true, historicalModelWorkUsdPerDistinctTask: preparation === null || !distinctTasks ? null : preparation / distinctTasks },
+    completeSavings: null, backendCostUsd: null, note: 'Backend/indexing billing is unknown. Tests require manual review; severity and affected behavior are preserved. No claim of zero overhead or complete savings is supported.' };
 }
 export async function analyzeResult(id: string, action: 'analyze'|'summarize'|'reaccount', root = resultsRoot): Promise<string> {
   if (action === 'reaccount') throw new Error('Reaccount belongs to the retired context/model experiment; raw recorded usage is preserved');

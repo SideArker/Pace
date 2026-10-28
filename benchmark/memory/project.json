@@ -1,0 +1,9 @@
+{
+  "README.md": "# Parcel Desk\nA fictional local parcel quote service. No external dependencies. Run `node test.mjs`. Quotes use integer cents. Requests with invalid weights or zones must throw. Keep exports backwards compatible. Queue tasks run in order; retry counts mean extra attempts. CSV export preserves caller input.\n",
+  "package.json": "{\"name\":\"parcel-desk\",\"version\":\"1.0.0\",\"type\":\"module\",\"scripts\":{\"test\":\"node test.mjs\"}}\n",
+  "src/quotes.mjs": "export const zones = { local: 250, national: 500 };\nexport function quote(weight, zone = 'local') {\n  if (!Number.isFinite(weight) || weight <= 0 || !Object.hasOwn(zones, zone)) throw new Error('Invalid parcel');\n  return zones[zone] + Math.floor(weight * 100);\n}\n",
+  "src/queue.mjs": "export async function deliver(tasks, retries = 0) {\n  const results = []; let attempt = 0;\n  for (const task of tasks) {\n    while (true) {\n      try { results.push(await task()); break; }\n      catch (error) { if (attempt++ >= retries) throw error; }\n    }\n  }\n  return results;\n}\n",
+  "src/export.mjs": "export function csv(rows) {\n  return ['id,cents', ...rows.sort((a,b)=>a.id.localeCompare(b.id)).map(row=>`${row.id},${row.cents}`)].join('\\n');\n}\n",
+  "src/audit.mjs": "export function audit(id, action) { return { id, action }; }\n",
+  "test.mjs": "import assert from 'node:assert/strict';\nimport { quote } from './src/quotes.mjs';\nimport { deliver } from './src/queue.mjs';\nimport { csv } from './src/export.mjs';\nassert.equal(quote(1), 350);\nassert.deepEqual(await deliver([async()=>1,async()=>2]),[1,2]);\nassert.equal(csv([{id:'a',cents:10}]),'id,cents\\na,10');\nconsole.log('Parcel Desk checks passed');\n"
+}

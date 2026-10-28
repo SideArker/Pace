@@ -27,12 +27,12 @@ it('lists each family and builds the same profile configuration for CLI and UI w
   const cli=await preflight({category:parsed.positional[1]!,profile:parsed.values['--profile']!,offline:false,controlled:false});
   expect(cli).toEqual(await preflight({category,profile:'quick'}));expect(cli.plan.length).toBeGreaterThan(0);
  }
- expect(catalog.every(p=>p.category==='fresh-completion')).toBe(true);expect(vex).not.toHaveBeenCalled();expect(codex).not.toHaveBeenCalled();
+ expect([...new Set(catalog.map(p=>p.category))]).toEqual(['fresh-completion','memory']);expect(vex).not.toHaveBeenCalled();expect(codex).not.toHaveBeenCalled();
 });
 it('rejects unknown and inapplicable options, invalid budgets, unavailable memory and missing frozen confirmation sources',async()=>{
  expect(()=>parseBenchmarkArgs(['run','routing','--profiel','quick'])).toThrow('Unknown flag');
  expect(()=>parseBenchmarkArgs(['--profile'])).toThrow();
- await expect(preflight({category:'memory',profile:'quick'})).rejects.toThrow('Unknown benchmark profile');
+ await expect(preflight({category:'memory',profile:'unknown'})).rejects.toThrow('Unknown benchmark profile');
  await expect(preflight({category:'fresh-completion',profile:'quick',maxTurns:NaN})).rejects.toThrow();
  await expect(preflight({category:'context-models',profile:'confirmation-A'})).rejects.toThrow('Unknown benchmark profile');
  await expect(preflight({category:'task-control',profile:'quick',baseline:'/missing-built-checkout'})).rejects.toThrow();

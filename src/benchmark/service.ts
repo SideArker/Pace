@@ -29,6 +29,7 @@ export function account(events: Event[]) {
 type Options={preview?:Preview;root?:string;onEvent?:(event:Event)=>void;signal?:AbortSignal;canStart?:()=>string|undefined;registerChild?:(pid:number)=>Promise<void>};
 export async function startRun(selection: Selection, options: Options={}) {
   assertDebug(); const preview=await preflight(selection);
+  if (preview.blockedReasons?.length) throw new Error(preview.blockedReasons.join('\n'));
   if(options.preview&&hash(JSON.stringify(options.preview))!==hash(JSON.stringify(preview)))throw new Error('Benchmark preview changed; refresh the preview before Start');
   const blocked=options.canStart?.(); if(blocked)throw new Error(blocked);
   const root=options.root??resultsRoot,release=await acquireLock(root);
@@ -37,7 +38,7 @@ export async function startRun(selection: Selection, options: Options={}) {
     const provenance=await benchmarkProvenance();
     const id=`${preview.profile.category}-${new Date().toISOString().replace(/[^0-9]/g,'')}-${randomUUID().slice(0,8)}`;
     const dir=join(root,id);await mkdir(dir);
-    const manifest:RunManifest={schemaVersion:1,id,createdAt:new Date().toISOString(),preview,...provenance,priceSnapshot:JSON.parse(await readFile(join(repositoryRoot,'versions.json'),'utf8')).pricing,controlled:false};
+    const manifest:RunManifest={schemaVersion:1,id,createdAt:new Date().toISOString(),preview,...provenance,priceSnapshot:JSON.parse(await readFile(join(repositoryRoot,'versions.json'),'utf8')).pricing,controlled:preview.profile.category==='memory'};
     await atomicJson(join(dir,'center-manifest.json'),manifest);
     await release.setRun(id);runRelease=await acquireLock(dir);await runRelease.setRun(id);
     return await execute(dir,manifest,1,{...options,registerChild:async pid=>{await release.registerChild(pid);await runRelease!.registerChild(pid);}});

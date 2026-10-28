@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "id": "parcel-desk-v1",
+  "remote": null,
+  "visibility": null,
+  "localRepository": "../pace-memory-dataset",
+  "commit": "8f4ae82f963564e6f4ff9042b23a4bb7379432b9",
+  "seedSha256": "d63bd7b1748158c622cb0d04983afea2b3419243a058c67d129c5dedbd7d24c5",
+  "status": "ready-local"
+}

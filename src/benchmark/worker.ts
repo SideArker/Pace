@@ -25,9 +25,14 @@ export async function worker(payload: {manifest:RunManifest;out:string;events:st
   try {
   const {preview}=payload.manifest, profile=preview.profile;
   configureControl({signal:abort.signal,events:payload.events,segment:payload.segment,completed:new Set(payload.completed),calls:payload.calls,knownUsd:payload.knownUsd,maxTurns:preview.maximumModelTurns,timeoutMs:Math.ceil(profile.timeoutMinutes*60000),maxUsd:preview.selection.maxUsd,prices:payload.manifest.priceSnapshot as any,onEvent:event=>{if(process.connected)process.send?.(event,()=>{});}});
+  if (profile.category === 'memory') {
+    const { runMemoryBenchmark } = await import('./drivers/memory.js');
+    await runMemoryBenchmark({ preview, out: payload.out, signal: abort.signal });
+  } else {
   const { runFreshCompletion, parseFreshSuite } = await import('./drivers/fresh-completion.js');
   const suite = parseFreshSuite(await json(join(repositoryRoot, profile.suite!)));
   await runFreshCompletion({ suite, repeats: profile.repeats, out: payload.out, signal: abort.signal, prompts: (preview.effectiveConfig as any).prompts });
+  }
   abort.signal.throwIfAborted();
   } finally {
     process.off('SIGTERM',cancel);process.off('SIGINT',cancel);process.off('message',message);process.off('disconnect',disconnect);process.stdout.off('error',outputError);process.stderr.off('error',outputError);
