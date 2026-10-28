@@ -177,6 +177,8 @@ When Vex chooses a split workflow, the scout runs in a fresh read-only thread an
 
 To check routing choices across repeated labeled requests and compare actual workflow costs, use the commands in [benchmark/README.md](benchmark/README.md).
 
+For creating versioned memory datasets and distributing them through GitHub or Supabase Storage, see [the dataset authoring guide](docs/memory-datasets.md).
+
 Codex receives Vex as a separate Codex-owned MCP stdio server, so Codex can call Vex tools during coding turns. Pace does not proxy those calls or make extra routing decisions for Codex. The app-server configuration forwards provider environment variable names, keeping their values out of command arguments. Pace resolves the project's actual filesystem path before starting Codex, including its original casing on Windows, while preserving case-insensitive session lookup. Request Approval is the default: main turns use a workspace-write sandbox with network access disabled and App Server `on-request` approvals. Full Access uses `danger-full-access` and no approval prompts. Limited uses a read-only sandbox and App Server `untrusted` approvals; Codex may run commands it considers trusted without prompting, while every typed Bash command needs approval. Scout and side turns remain read-only with approvals disabled in all modes. The mode selected when a turn starts stays with that turn.
 
 ### External MCP servers
