@@ -19,13 +19,30 @@ function sideExcerpt(value: string | undefined, limit = SIDE_TEXT_LIMIT): string
   return `${value.slice(0, head)}${SIDE_SNAPSHOT_OMISSION}${value.slice(-(available - head))}`;
 }
 
+function relevantActivity(question: string, session: Session): { attemptId: string; text: string }[] {
+  const terms = [...new Set((question.toLowerCase().match(/[\p{L}\p{N}_-]{3,}/gu) ?? [])
+    .filter(term => !["what", "when", "where", "which", "about", "from", "with", "that", "this", "were", "have", "show", "tell", "does"].includes(term)))];
+  if (!terms.length) return [];
+  const matches = (session.attempts ?? []).filter(attempt => attempt.taskId === session.activeTask?.id)
+    .flatMap(attempt => attempt.observations.filter(observation => observation.kind === "activity" && observation.text)
+      .map(observation => {
+        const value = observation.text!;
+        const lower = value.toLowerCase();
+        const hits = terms.filter(term => lower.includes(term));
+        if (!hits.length) return undefined;
+        const at = lower.indexOf(hits[0]!);
+        return { attemptId: attempt.id, score: hits.length, text: sideExcerpt(value.slice(Math.max(0, at - 250), at + 850), 1_100)! };
+      }).filter((item): item is { attemptId: string; score: number; text: string } => !!item));
+  return matches.sort((a, b) => b.score - a.score).slice(0, 8).map(({ attemptId, text }) => ({ attemptId, text }));
+}
+
 /** Build a small model-facing view; the saved Pace session remains the full record. */
 export function buildAsidePrompt(question: string, session: Session, instruction: string, snapshotAt: string): string {
   const task = session.activeTask;
   const snapshot = {
     snapshotAt,
-    scope: "Selected recent conversation and execution evidence; this is not the full Pace or Codex history.",
-    omitted: "Older turns, task records and tool observations are retained in Pace but omitted here to keep this request bounded.",
+    scope: "Recent conversation and execution evidence, plus relevant saved activity from the active task; this is not the full Pace or Codex history.",
+    omitted: "Other older turns and observations remain in Pace but are omitted here to keep this request bounded.",
     turns: session.turns.slice(-5).map(turn => ({
       at: turn.at, intent: turn.intent,
       prompt: sideExcerpt(turn.displayPrompt ?? turn.prompt, 1_500),
@@ -52,6 +69,7 @@ export function buildAsidePrompt(question: string, session: Session, instruction
             ? { kind: observation.kind, paths: observation.paths?.slice(-12) }
             : { kind: observation.kind, text: sideExcerpt(observation.text, 700) }),
     })),
+    relevantActivity: relevantActivity(question, session),
   };
   return `${instruction}\n\nContext snapshot:\n${JSON.stringify(snapshot)}\n\nUser side question:\n${question}`;
 }
@@ -78,13 +96,23 @@ export async function runAside(orchestrator: Orchestrator, question: string, sou
       return route;
     },
   });
+  let route;
   if (!selected.ok) {
     session.controlDecisions = [...(session.controlDecisions ?? []), { ...decisionAudit(started, selected.details.requestAttempts.length, undefined, selected.failure, selected.details), taskId: session.activeTask?.id, role: "aside", stage: "aside", objective: prompts.side.objective, at: snapshotAt }];
     await requiredSave(orchestrator.store, session, activate);
-    await requiredSave(orchestrator.store, source, activate);
-    throw new Error(`Vex could not choose a side route after two attempts: ${String(selected.failure)}`);
+    if (!/HTTP 403\b/.test(String(selected.failure))) {
+      await requiredSave(orchestrator.store, source, activate);
+      throw new Error(`Vex could not choose a side route after two attempts: ${String(selected.failure)}`);
+    }
+    route = enabled.some(model => model.model === config.defaultRoute.model && model.efforts.includes(config.defaultRoute.effort!))
+      ? config.defaultRoute : enabled.some(model => model.model === session.route.model && model.efforts.includes(session.route.effort!))
+        ? session.route : { model: enabled[0]!.model, effort: enabled[0]!.efforts[0]! };
+    session.controlDecisions.push({ id: randomUUID(), source: "policy", contextAction: "continue", choice: `${route.model}:${route.effort}`, confidence: 0, probabilities: {}, requests: 0, durationMs: 0, objective: prompts.side.objective, role: "aside", stage: "aside", taskId: session.activeTask?.id, at: snapshotAt });
+    progress({ kind: "system", text: `Vex unavailable for side answer; using ${route.model} at ${route.effort} reasoning.` });
+    await requiredSave(orchestrator.store, session, activate);
+  } else {
+    route = selected.value;
   }
-  const route = selected.value;
   const id = randomUUID();
   let asideAttemptId: string | undefined;
   progress({ kind: "route", route, role: "aside", taskId: session.activeTask?.id });

@@ -51,6 +51,17 @@ function compactState(state: RoutingState): RoutingState {
     } : undefined,
   };
 }
+function compactAttempt(attempt: NonNullable<Session["attempts"]>[number]) {
+  return {
+    id: attempt.id, role: attempt.role, stage: attempt.stage, status: attempt.status,
+    result: attempt.result ? excerpt(attempt.result, 900) : undefined,
+    error: attempt.error ? excerpt(attempt.error, 400) : undefined,
+    observations: attempt.observations.slice(-4).map(item => item.kind === "tasks"
+      ? { kind: item.kind, items: item.items?.slice(-5).map(entry => ({ text: excerpt(entry.text, 180), completed: entry.completed })) }
+      : item.kind === "artifacts" ? { kind: item.kind, paths: item.paths?.slice(-8) }
+      : { kind: item.kind, text: item.text ? excerpt(item.text, 600) : undefined }),
+  };
+}
 export class VexDiagnosticError extends Error {
   constructor(readonly stage: "discovery" | "startup" | "connection" | "tool validation", cause: unknown) {
     super(`${stage}: ${String(cause)}`, { cause });
@@ -133,7 +144,7 @@ export function stageRequest(
 export function controlRequest(prompt: string, session: Session, prompts = DEFAULT_ROUTING_PROMPTS): VexRequest {
   const choices = Object.entries(prompts.control.choices).filter(([id]) => id !== "adopt_side" || session.sideAnswers?.some(answer => answer.result && !answer.error && answer.taskId === session.activeTask?.id));
   return { question: prompts.control.question, decisionType: "routing", options: choices.map(([id, description]) => ({ id, description })), constraints: `${prompts.control.constraints}\n\n${PROJECTION_CONSTRAINT}`,
-    context: { latestRequest: excerpt(prompt, 12000), recentConversation: recentConversation(session.turns), activeTask: session.activeTask, attempts: (session.attempts ?? []).filter(item => item.taskId === session.activeTask?.id).slice(-12), sideAnswers: session.sideAnswers?.filter(item => item.taskId === session.activeTask?.id), conversationState: compactState({ previousRoute: session.route, activeTask: session.activeTask, hasCodexThread: !!session.threadId }) } };
+    context: { latestRequest: excerpt(prompt, 4_000), recentConversation: recentConversation(session.turns).slice(-5), attempts: (session.attempts ?? []).filter(item => item.taskId === session.activeTask?.id).slice(-4).map(compactAttempt), sideAnswers: session.sideAnswers?.filter(item => item.taskId === session.activeTask?.id).slice(-4).map(item => ({ id: item.id, question: excerpt(item.question, 400), result: item.result ? excerpt(item.result, 500) : undefined })), conversationState: compactState({ previousRoute: session.route, activeTask: session.activeTask, hasCodexThread: !!session.threadId }) } };
 }
 export function assessmentRequest(session: Session, attemptId: string, prompts = DEFAULT_ROUTING_PROMPTS): VexRequest {
   const attempt = session.attempts?.find(item => item.id === attemptId);

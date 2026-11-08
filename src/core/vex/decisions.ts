@@ -44,6 +44,8 @@ export async function chooseDecision<T>({ vex, request, accept, signal, checkAbo
       checkAborted?.();
       if (signal?.aborted || error instanceof TransitionSaveError) throw error;
       failure = error;
+      // Permission failures are deterministic for this request; retrying the same payload cannot help.
+      if (/HTTP 403\b/.test(String(error))) break;
       continue;
     }
     // Save/accept is deliberately outside the retry block.
