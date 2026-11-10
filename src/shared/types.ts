@@ -132,7 +132,7 @@ export type WorkflowState = {
   version: 1; generation: number; shape: WorkflowShape; stage: "scout" | "plan" | "final";
   status?: StageAttempt["status"];
   mainRoute?: Route; mainThreadId?: string; scoutHandoff?: string;
-  source: "vex" | "user"; needsAssessment?: boolean;
+  source: "vex" | "user" | "policy"; needsAssessment?: boolean;
 };
 export type AttemptObservation = {
   kind: "activity" | "tasks" | "answer" | "artifacts";
@@ -189,7 +189,7 @@ export type ControlRecord = {
   projection?: VexProjection; usage?: "unknown"; costUsd?: "unknown";
   id: string; taskId?: string; attemptId?: string; stage?: string; role: AgentRole;
   objective: string; choice: string; confidence: number; probabilities: Record<string, number>;
-  durationMs: number; at: string; source: "vex" | "user"; contextAction: "continue";
+  durationMs: number; at: string; source: "vex" | "user" | "policy"; contextAction: "continue";
 };
 export type SideAnswer = {
   id: string; taskId?: string; attemptId: string; question: string; snapshotAt: string;

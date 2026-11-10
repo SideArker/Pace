@@ -8,29 +8,24 @@ import { retainedConversationPrompt } from "./orchestrator-helpers.js";
 import { autoLaunchPrompt, skillPrompt, type Skill } from "./system/skills.js";
 
 export function prepareTurnPrompt({
-  prompt, session, intent, userClarification, taskRelation, priorTask,
-  usedThreadForClarification, prompts, skills, handoff,
+  prompt, session, intent, taskRelation, priorTask, prompts, skills, handoff,
 }: {
   prompt: string;
   session: Session;
   intent?: OperationIntent;
-  userClarification?: string;
   taskRelation: TaskRelation;
   priorTask: Session["activeTask"];
-  usedThreadForClarification: boolean;
   prompts: RoutingPrompts;
   skills: Skill[];
   handoff?: string;
 }) {
-  const basePrompt = userClarification
-    ? `${prompt}\n\nClarification: ${userClarification}`
-    : prompt;
+  const basePrompt = prompt;
   const resumingDeferred = session.deferredTurn?.prompt === prompt && session.deferredTurn?.intent === intent;
   const resumedAfterLimit = resumingDeferred && (!session.deferredTurn?.reason || session.deferredTurn.reason === "usage");
   const retryingFailure = retryableTurn(session)?.prompt === prompt;
   const resolvedPrompt = taskRelation === "continue" && priorTask && !session.threadId
     ? `${basePrompt}\n\nPace's saved task brief (verify against conversation): ${priorTask.originalRequest}\nLater instructions: ${JSON.stringify(priorTask.instructions)}\nLast outcome: ${priorTask.latestOutcome ?? "Unknown"}\n${prompts.execution.savedTaskInstruction}`
-    : (taskRelation === "continue" || usedThreadForClarification) && session.threadId && intent !== "verify_plan" && intent !== "revise_plan"
+    : taskRelation === "continue" && session.threadId && intent !== "verify_plan" && intent !== "revise_plan"
       ? `${basePrompt}\n\n${prompts.execution.existingThreadInstruction}`
       : basePrompt;
   const safePrompt = resumedAfterLimit
@@ -39,7 +34,7 @@ export function prepareTurnPrompt({
       ? `${resolvedPrompt}\n\nThis request was interrupted by an error. Inspect current files and prior conversation before editing. Continue only unfinished work. Report completed work, remaining work, and checks.`
       : resolvedPrompt;
   const baseExecutionPrompt = skillPrompt(
-    `${safePrompt}\n\n${prompts.execution.coverageInstruction}`,
+    `${safePrompt}\n\n${prompts.execution.coverageInstruction}\nWhen a consequential user decision is needed during this running turn, use the built-in request_user_input tool so Pace can show its question dialog. Do not ask that decision only in ordinary assistant text. A question that can wait until after the turn may be part of the final response.`,
     skills,
     session.activeSkills,
     session.skillOptions,
@@ -48,7 +43,6 @@ export function prepareTurnPrompt({
     ? `${baseExecutionPrompt}\n\n${prompts.handoff.reportInstruction}\n${handoff}`
     : baseExecutionPrompt;
   return { promptWithHandoff, resumingDeferred, sections: [
-    ...promptChange("Pace clarification", prompt, basePrompt),
     ...promptChange("Pace saved task / continuation / retry", basePrompt, safePrompt),
     ...promptChange("Pace coverage and available/active skills", safePrompt, baseExecutionPrompt),
     ...promptChange("Validated scout handoff (intentional transfer)", baseExecutionPrompt, promptWithHandoff),

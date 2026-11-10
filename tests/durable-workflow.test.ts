@@ -39,6 +39,18 @@ it("bounds the model-facing aside snapshot while retaining recent evidence and t
   expect(prompt).toContain("Older or excess context omitted");
   expect(JSON.stringify(session.attempts[0]!.observations)).toHaveLength(fullLength);
 });
+
+it("finds relevant saved command output outside the recent observation window", () => {
+  const session = newSession(process.cwd(), "auto");
+  session.activeTask = { id: "task", originalRequest: "Implement checkout", instructions: [] };
+  session.attempts = [{ id: "old", taskId: "task", generation: 1, stage: "final", role: "main", status: "completed", route: {}, startedAt: "now", observations: [
+    { kind: "activity", text: "command: npm run build\nCheckout validator failed on duplicate SKU" },
+    ...Array.from({ length: 12 }, (_, index) => ({ kind: "activity" as const, text: `Unrelated output ${index}` })),
+  ] }];
+  const prompt = buildAsidePrompt("Why did checkout build fail?", session, "Answer", "now");
+  expect(prompt).toContain("Checkout validator failed on duplicate SKU");
+  expect(prompt).toContain('"relevantActivity"');
+});
 async function setup(shape = "single") {
   const root = await mkdtemp(join(tmpdir(), "pace-workflow-")); roots.push(root);
   const store = new PaceStore(join(root, "storage")); const session = newSession(root, "auto");
@@ -71,8 +83,8 @@ it("keeps workflow, lead and stage across restart; a plan correction never repea
   expect(env.calls.map(call => call[6])).toEqual(["side", "planning", "planning"]);
   expect(env.calls[2]?.[3]).toBe(lead); expect(loaded.route).toEqual(route);
   expect(loaded.activeTask?.id).toBe(taskId); expect(JSON.parse(loaded.activeTask!.workflow!.scoutHandoff!)).toEqual(JSON.parse(report));
-  expect(env.requests.slice(before).map(item => item.options[0]?.id)).toEqual(["continue", "closed"]);
-  expect(loaded.attempts).toHaveLength(3); expect(loaded.attempts?.every(item => item.assessment)).toBe(true);
+  expect(env.requests.slice(before).map(item => item.options[0]?.id)).toEqual(["continue"]);
+  expect(loaded.attempts).toHaveLength(3);
 });
 
 it("deliberate replan creates a new workflow generation and reruns only explicitly selected scout", async () => {
@@ -88,8 +100,10 @@ for (const action of ["continue", "reroute", "replace", "clarify"]) it(`executes
   const id = env.session.activeTask?.id; const thread = env.session.threadId; const route = structuredClone(env.session.route);
   const before = env.calls.length; env.setAction(action);
   const outcome = await env.orchestrator.turn("OK", env.session, config, () => {});
-  if (action === "clarify") expect(env.calls).toHaveLength(before);
-  else { expect(env.calls).toHaveLength(before + 1); expect(env.calls.at(-1)?.[3]).toBe(thread); expect(env.session.activeTask?.id === id).toBe(action !== "replace"); }
+  expect(env.calls).toHaveLength(before + 1);
+  expect(env.calls.at(-1)?.[3]).toBe(thread);
+  expect(env.session.activeTask?.id === id).toBe(action !== "replace");
+  if (action === "clarify") expect(outcome.session.activeTask?.workflow?.shape).toBe("single");
 });
 
 it("removes automatic aside from task control while preserving explicit /btw", async () => {
@@ -144,13 +158,13 @@ for (const shape of ["single", "scout"]) it(`post-${shape} save failure is recov
   if (shape === "scout") expect(env.calls.at(-1)?.[6]).toBe("main");
 });
 
-it("Vex completion has recorded core evidence and does not derive completion from turn/completed", async () => {
+it("keeps completion unknown without an extra Vex assessment call", async () => {
   const env = await setup(); env.setAssessment("unknown");
   await env.orchestrator.turn("Implement and check all modules", env.session, config, () => {});
   expect(env.session.activeTask?.assessment).toBe("unknown");
-  const request = env.requests.find(item => item.options[0]?.id === "closed")!;
-  expect(request.context.evidence).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "tasks" }), expect.objectContaining({ kind: "activity", text: expect.stringContaining("Assertions passed") }), expect.objectContaining({ kind: "answer" }), expect.objectContaining({ kind: "artifacts" })]));
-  expect(env.session.attempts?.[0]?.assessment).toMatchObject({ value: "unknown", evidence: 4 });
+  expect(env.requests.some(item => item.options[0]?.id === "closed")).toBe(false);
+  expect(env.session.attempts?.[0]?.observations).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "tasks" }), expect.objectContaining({ kind: "activity", text: expect.stringContaining("Assertions passed") }), expect.objectContaining({ kind: "answer" }), expect.objectContaining({ kind: "artifacts" })]));
+  expect(env.session.attempts?.[0]?.assessment).toBeUndefined();
 });
 
 it("bounds assessment and continuation evidence after huge command output without changing durable observations", async () => {
@@ -176,7 +190,7 @@ it("bounds assessment and continuation evidence after huge command output withou
   expect(env.session.activeTask?.assessment).toBe("unknown");
   const loaded = (await env.store.load(env.root, env.session.id))!;
   expect(loaded.attempts?.[0]?.observations.some(item => item.text?.includes(output))).toBe(true);
-  expect(env.requests.filter(item => item.options[0]?.id === "closed").every(item => (item.context.projection as { truncated?: boolean })?.truncated)).toBe(true);
+  expect(env.requests.some(item => item.options[0]?.id === "closed")).toBe(false);
 });
 
 it("persists a new thread immediately and checkpoints progress while execution is still active", async () => {
@@ -358,7 +372,7 @@ it("a concurrent side completion cannot receive the main answer's assessment or 
   const attempts = (await env.store.load(env.root, env.session.id))!.attempts!;
   const completion = attempts.filter(item => item.role === "main").at(-1)!;
   const side = attempts.find(item => item.role === "aside")!;
-  expect(completion.assessment).toBeDefined();
+  expect(completion.assessment).toBeUndefined();
   expect(completion.observations.at(-1)?.kind).toBe("artifacts");
   expect(side.observations.some(item => item.kind === "artifacts")).toBe(false);
 });
@@ -395,7 +409,7 @@ it("manual delegation chooses a lead once and retains it on the next ordinary st
   const before = env.requests.length;
   await env.orchestrator.turn("Continue", env.session, config, () => {});
   expect(env.calls.map(item => item[6])).toEqual(["side", "main", "main"]);
-  expect(env.requests.slice(before).map(item => item.options[0]?.id)).toEqual(["closed"]);
+  expect(env.requests.slice(before)).toEqual([]);
 });
 
 it("an execution session accepts later queued prompts addressed to its own task", async () => {
@@ -434,18 +448,16 @@ it("executes an explicit plan file even when the source session artifact is miss
   expect(prepared.prompt).toContain("Keep the existing schema.");
 });
 
-it("interactive clarification offers and executes a scout without Luna and records the user's choice", async () => {
+it("Vex clarification defaults to a single agent without opening a workflow dialog", async () => {
   const env = await setup("clarify");
+  let questions = 0;
   const progress = Object.assign((event: import("../src/integrations/codex-types.js").Progress) => {
-    if (event.kind === "question") {
-      expect(event.questions[0]?.options.some(item => item.label === "Scout codebase first")).toBe(true);
-      event.respond({ workflow: { answers: ["Scout codebase first"] } });
-    }
+    if (event.kind === "question") questions++;
   }, { interactive: true });
   await env.orchestrator.turn("Help with the repository", env.session, config, progress);
-  expect(env.calls.map(item => item[6])).toEqual(["side", "main"]);
-  expect(env.session.activeTask?.workflow?.source).toBe("user");
-  expect(env.session.controlDecisions?.some(item => item.source === "user" && item.choice === "scout")).toBe(true);
+  expect(env.calls.map(item => item[6])).toEqual(["main"]);
+  expect(env.session.activeTask?.workflow?.shape).toBe("single");
+  expect(questions).toBe(0);
 });
 
 it("a first-message side answer persists and refreshes a previously unsaved session", async () => {
@@ -455,6 +467,19 @@ it("a first-message side answer persists and refreshes a previously unsaved sess
   expect(env.session.activeTask).toBeUndefined();
   expect(env.session.threadId).toBeUndefined();
   expect((await env.store.load(env.root, env.session.id))?.attempts?.[0]?.role).toBe("aside");
+});
+
+it("keeps a side answer available when Vex returns HTTP 403", async () => {
+  const env = await setup();
+  env.vex.choose = async () => { throw new Error("Vex decision tool failed (HTTP 403)"); };
+  const outcome = await env.orchestrator.aside("Explain this detail", env.session, config, () => {});
+  expect(outcome.role).toBe("aside");
+  expect(outcome.route).toEqual(config.defaultRoute);
+  expect(env.session.sideAnswers).toHaveLength(1);
+  expect(env.session.controlDecisions).toEqual(expect.arrayContaining([
+    expect.objectContaining({ source: "vex", failed: true, requests: 1 }),
+    expect.objectContaining({ source: "policy", role: "aside", requests: 0 }),
+  ]));
 });
 
 it("invalid Vex responses retain retry count and latency without a guessed action or model call", async () => {
@@ -485,7 +510,7 @@ for (const action of ["continue", "reroute", "replan"]) it(`regression: ${action
   env.setAction(action);
   await env.orchestrator.turn("Continue the same task", env.session, config, () => {});
   expect(env.requests.slice(before).map(item => item.options[0]?.id)).toEqual(
-    action === "continue" ? ["continue", "closed"] : action === "reroute" ? ["continue", "0:medium", "closed"] : ["continue", "single", "0:medium", "closed"],
+    action === "continue" ? ["continue"] : action === "reroute" ? ["continue", "0:medium"] : ["continue", "single", "0:medium"],
   );
   expect(env.session.activeTask!.workflow!.mainRoute).toEqual(lead);
 });
@@ -499,7 +524,7 @@ it("regression: explicit manual lead survives restart without consulting routing
   const loaded = (await new PaceStore(env.store.baseDir).load(env.root, env.session.id))!;
   await env.orchestrator.turn("Continue", loaded, manual, () => {});
   expect(env.calls.map(call => call[2])).toEqual(Array(2).fill({ model: "gpt-6.1-sol", effort: "high" }));
-  expect(env.requests.every(request => request.options[0]?.id === "closed")).toBe(true);
+  expect(env.requests).toEqual([]);
 });
 
 it("ordinary continuation records control but does not repeat workflow choice or transcript chatter", async () => {

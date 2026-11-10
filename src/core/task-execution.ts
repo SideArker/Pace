@@ -19,7 +19,7 @@ export async function requiredSave(store: PaceStore, session: Session, activate:
   try { await store.saveChanges(session, activate); }
   catch (error) { throw new TransitionSaveError(error); }
 }
-export function ensureTask(session: Session, shape: WorkflowShape, source: "vex" | "user", replace = false) {
+export function ensureTask(session: Session, shape: WorkflowShape, source: "vex" | "user" | "policy", replace = false) {
   if (replace || !session.activeTask) throw new Error("Create the task brief before selecting its workflow");
   session.activeTask.id ??= randomUUID();
   session.activeTask.assessment ??= "unknown";

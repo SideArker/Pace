@@ -13,7 +13,7 @@ export async function runMemoryAgent({ prompt, workspace, baseDir, route, runner
   const store = new PaceStore(baseDir), session = newSession(workspace, 'manual'); session.route = route;
   session.activeTask = { id: randomUUID(), originalRequest: prompt.slice(0, 8000), instructions: [] }; ensureTask(session, 'single', 'user');
   await store.save(session, false);
-  const prepared = prepareTurnPrompt({ prompt, session, taskRelation: 'replace', priorTask: undefined, usedThreadForClarification: false, prompts: DEFAULT_ROUTING_PROMPTS, skills: [] });
+  const prepared = prepareTurnPrompt({ prompt, session, taskRelation: 'replace', priorTask: undefined, prompts: DEFAULT_ROUTING_PROMPTS, skills: [] });
   const { runnerPrompt, runThreadId } = prepareRunnerPrompt({ executionPrompt: prepared.promptWithHandoff, session, verifierTurn: false, planningTurn: false, skills: [] });
   let attemptId: string | undefined;
   const execution = await durableRunner(runner, store, session, 'main', 'final', false, undefined, id => { attemptId = id; }).run(

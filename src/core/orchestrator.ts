@@ -11,6 +11,7 @@ import {
 } from "./vex/client.js";
 import {
   chosenRoute,
+  type RoutingDecision,
 } from "./routing/router.js";
 import { costForUsage, pricedModels, refreshVersionManifest } from "./routing/pricing.js";
 import { advanceTask, retainedTask, type TaskRelation } from "./active-task.js";
@@ -30,7 +31,6 @@ import { prepareTurnPrompt, prepareRunnerPrompt } from "./orchestrator-prompts.j
 import { loadMemory } from './memory/config.js';
 import { loadGlobalMemory } from './memory/global.js';
 import { prepareTurnArtifacts, finishPlanArtifact } from "./orchestrator-artifacts.js";
-import { requestWorkflowClarification } from "./orchestrator-clarification.js";
 import { prepareTurnSkills } from "./orchestrator-skills.js";
 import {
   completionObjective,
@@ -166,9 +166,41 @@ export class Orchestrator {
       systemMessages.push(text);
       onProgress({ kind: "system", text });
     };
-    const { choose, assess } = createTurnRouting({
+    const { choose } = createTurnRouting({
       vex: this.vex, session, prompts, verifierTurn, routing, save, onProgress, signal, trace,
     });
+    let vexAvailable = true;
+    let usedFallback = false;
+    const chooseWithFallback = async (decisionRequest: Parameters<typeof choose>[0], objective: string): Promise<RoutingDecision> => {
+      try {
+        if (vexAvailable) return await choose(decisionRequest, objective);
+      } catch (error) {
+        if (!(error instanceof VexUnavailableError) || !/HTTP 403\b/.test(String(error))) throw error;
+        vexAvailable = false;
+      }
+      const options = decisionRequest.options;
+      if (objective === "side source" && options.length !== 1)
+        throw new Error("Vex could not identify which side answer to adopt; specify its answer ID.");
+      const preferredRoute = `${config.defaultRoute.model} at ${config.defaultRoute.effort} reasoning`;
+      const choice = objective === "task control" ? (priorTask ? "continue" : "replace")
+        : objective === "workflow" ? (session.kind === "planning" ? "plan" : "single")
+        : options.find(option => option.description === preferredRoute)?.id
+          ?? options.find(option => option.description === `${session.route.model} at ${session.route.effort} reasoning`)?.id
+          ?? options[0]?.id;
+      if (!choice || !options.some(option => option.id === choice))
+        throw new Error(`Vex could not decide ${objective}, and no configured fallback is available.`);
+      usedFallback = true;
+      const selected = options.find(option => option.id === choice)!;
+      systemMessage(`Vex unavailable for ${objective}; using ${choice}.`);
+      routing.push({ objective, choice, choiceLabel: selected.description, confidence: 0, probabilities: {}, attempts: 0 });
+      session.controlDecisions = [...(session.controlDecisions ?? []), {
+        id: randomUUID(), source: "policy", contextAction: "continue", choice, confidence: 0,
+        probabilities: {}, requests: 0, durationMs: 0, objective, at: new Date().toISOString(),
+        taskId: session.activeTask?.id, role: verifierTurn ? "verifier" : "main",
+      }];
+      await save();
+      return { contractVersion: "1", choice, abstained: false, confidence: 0, probabilities: {} };
+    };
     const previousPlanRoute = intent === "verify_plan" && session.planRoute
       ? { ...session.planRoute }
       : intent === "continue_verify" && session.verifierThreadId
@@ -187,9 +219,7 @@ export class Orchestrator {
       preserveRoute = !!session.activeTask?.workflow?.mainRoute;
       shape = session.activeTask?.workflow?.shape ?? "plan";
     }
-    let usedThreadForClarification = false;
     let handoff: string | undefined;
-    let userClarification: string | undefined;
     let fileEdits: string | undefined;
     let editCapture: Awaited<ReturnType<typeof beginFileEdits>> | undefined;
     const finishFileEdits = async () => {
@@ -203,7 +233,7 @@ export class Orchestrator {
       } catch (error) { systemMessage(`File undo unavailable: ${String(error)}`); }
     };
     let auto = session.routingMode === "auto" || intent === "verify_plan" || intent === "revise_plan";
-    let workflowSource: "user" | "vex" = auto ? "vex" : "user";
+    let workflowSource: "user" | "vex" | "policy" = auto ? "vex" : "user";
     const manualWorkflow = !auto && intent !== "verify_plan" && intent !== "revise_plan" ? session.manualWorkflow : undefined;
     const delegated = !!manualWorkflow && Object.values(manualWorkflow.routes).some(value => value === "vex" || (value !== undefined && !value.effort));
     if (!auto) {
@@ -216,7 +246,8 @@ export class Orchestrator {
           await awaitRouting(Promise.resolve(this.vex.verify?.()), signal);
         } catch (error) {
           signal?.throwIfAborted();
-          throw new VexUnavailableError(error, "connection");
+          vexAvailable = false;
+          systemMessage(`Vex connection unavailable; using the configured route where needed.`);
         }
       }
       if (!enabled.length)
@@ -258,10 +289,10 @@ export class Orchestrator {
             "Auto routing supports at most 12 model and effort pairs. Narrow /models.",
           );
         if (!verifierTurn && intent !== "revise_plan" && (priorTask || session.turns.length) && intent !== "execute_plan") {
-          control = intent === "adopt_side" ? "continue" : (await choose(controlRequest(request, session, prompts), "task control")).choice;
+          control = intent === "adopt_side" ? "continue" : (await chooseWithFallback(controlRequest(request, session, prompts), "task control")).choice;
           if (control === "adopt_side") {
             const sources = (session.sideAnswers ?? []).filter(item => item.result && !item.error && item.taskId === session.activeTask?.id);
-            const selected = await choose({ question: "Which side answer did the user select to pass to the main task?", constraints: "Select only the side finding referred to by the user. Do not forward every answer.", context: { request, sources }, options: sources.map(item => ({ id: item.id, description: item.question })), decisionType: "routing" }, "side source");
+            const selected = await chooseWithFallback({ question: "Which side answer did the user select to pass to the main task?", constraints: "Select only the side finding referred to by the user. Do not forward every answer.", context: { request, sources }, options: sources.map(item => ({ id: item.id, description: item.question })), decisionType: "routing" }, "side source");
             const source = sources.find(item => item.id === selected.choice)!;
             source.adopted = true; request = adoptedSidePrompt(session, source.id); prompt = request; control = "continue";
           }
@@ -286,91 +317,16 @@ export class Orchestrator {
             workflowRequest.options = workflowRequest.options.filter(option => ["single", "plan", "scout_plan"].includes(option.id));
           else if (taskRelation === "continue" && priorTask)
             workflowRequest.options = workflowRequest.options.filter(option => option.id !== "clarify");
-          shape = (await choose(workflowRequest, "workflow")).choice;
+          shape = (await chooseWithFallback(workflowRequest, "workflow")).choice;
+          if (usedFallback) workflowSource = "policy";
         }
         if (shape === "clarify") {
           shape = "single";
           systemMessage("Vex defaulted into single workflow because it was unsure about the deliverable.");
-        } else if (!preserveWorkflow && intent !== "verify_plan" && intent !== "revise_plan") {
+        } else if (!usedFallback && !preserveWorkflow && intent !== "verify_plan" && intent !== "revise_plan") {
           systemMessage(`Vex chose ${shape} workflow.`);
         }
-        if (shape === "clarify") {
 
-          const clarification = requestWorkflowClarification(session, enabled, onProgress, signal);
-          const userDecision = clarification ? await clarification : undefined;
-
-          if (userDecision?.choice === "manual") {
-            shape = "single";
-            auto = false;
-            route = session.route;
-            note = `Manual route to ${session.route.model ?? "Codex default"}`;
-            systemMessage("Bypassing Vex: running with manual route.");
-            answeredQuestions.push({
-              question: "Vex is unsure about the deliverable for this request. How would you like to proceed?",
-              answer: "Use manual route",
-            });
-          } else if (userDecision?.choice) {
-            workflowSource = "user";
-            session.controlDecisions = [...(session.controlDecisions ?? []), { id: randomUUID(), taskId: session.activeTask?.id, role: "main", objective: "workflow clarification", choice: userDecision.choice, confidence: 1, probabilities: { [userDecision.choice]: 1 }, durationMs: 0, at: new Date().toISOString(), source: "user", contextAction: "continue" }];
-            await save();
-            shape = userDecision.choice;
-            note = `User chose ${shape} workflow`;
-            systemMessage(`User selected ${shape} workflow.`);
-            answeredQuestions.push({
-              question: "Vex is unsure about the deliverable for this request. How would you like to proceed?",
-              answer: userDecision.choice,
-            });
-          } else if (userDecision?.clarification) {
-            userClarification = userDecision.clarification;
-            systemMessage(`Clarification provided: ${userClarification}`);
-            request = `${request}\n\nUser clarification on deliverable: ${userClarification}`;
-            answeredQuestions.push({
-              question: "Vex is unsure about the deliverable for this request. How would you like to proceed?",
-              answer: userClarification,
-            });
-            {
-              shape = (
-                await choose(
-                  shapeRequest(request, routingTurns, enabled, prompts, routingState),
-                  "workflow",
-                )
-              ).choice;
-              if (shape === "clarify") throw new Error("Vex still requires clarification. Select a workflow or a manual route.");
-            }
-            systemMessage(`Vex chose ${shape} workflow.`);
-          } else {
-            const result =
-              taskRelation === "continue" && priorTask
-                ? "How should this message change the active task? Specify the requested outcome or select a workflow."
-                : taskRelation === "continue"
-                ? "I can't identify an earlier task from this conversation. Choose the other saved conversation in the conversation picker, or paste the original request or plan."
-                : "What outcome would you like from this request? Please describe the deliverable.";
-            const durationMs = Math.round(performance.now() - startedAt);
-            session.turns = [
-              ...session.turns,
-              {
-                prompt,
-                result,
-                at: new Date().toISOString(),
-                routeNote: "Vex requested clarification",
-                ...(systemMessages.length ? { systemMessages } : {}),
-                durationMs,
-              },
-            ].slice(-20);
-            if (session.activeTask?.workflow) session.activeTask.workflow.status = "awaiting_user";
-            await save();
-            return {
-              session,
-              result,
-              note: "Vex requested clarification",
-              route: {},
-              durationMs,
-              artifacts: [],
-              stages,
-              routing,
-            };
-          }
-        }
       }
       signal?.throwIfAborted();
       if (!verifierTurn) {
@@ -424,7 +380,7 @@ export class Orchestrator {
           onProgress(progress);
         };
         const firstHandoff = await runPlanningStage({
-          request, routingTurns, enabled, prompts, routingState, choose, runner: durableRunner(runner, this.store, session, "scout", "scout", activateOnSave, async id => { scoutAttemptId = id; }),
+          request, routingTurns, enabled, prompts, routingState, choose: chooseWithFallback, runner: durableRunner(runner, this.store, session, "scout", "scout", activateOnSave, async id => { scoutAttemptId = id; }),
           session, signal, onProgress: stageProgress, stages, skills,
           routeOverride: manualWorkflow?.routes.scout,
         });
@@ -432,7 +388,6 @@ export class Orchestrator {
         if (session.activeTask?.workflow) { session.activeTask.workflow.scoutHandoff = handoff; session.activeTask.workflow.stage = shape === "scout_plan" ? "plan" : "final"; session.activeTask.workflow.status = "pending"; }
         const attempt = session.attempts!.find(item => item.id === scoutAttemptId)!; attempt.handoff = handoff;
         await save();
-        await assess(attempt.id, false);
       }
       if (handoff) onProgress({ kind: "handoff", text: handoff });
       if ((auto || manualWorkflow) && !preserveRoute && intent !== "continue_verify") {
@@ -444,23 +399,24 @@ export class Orchestrator {
         const selected = manualWorkflow?.routes.final ?? (shape === "plan" ? manualWorkflow?.routes.plan : undefined);
         if (!auto && selected && selected !== "vex" && selected.effort) route = selected;
         else {
-          const candidates = enabled;
+          const candidates = session.kind === "planning" || verifierTurn ? enabled
+            : enabled.map(model => model.model === "gpt-6-luna" ? { ...model, efforts: model.efforts.filter(effort => effort !== "low") } : model).filter(model => model.efforts.length);
           const available = selected && selected !== "vex" && selected.model
             ? candidates.filter(model => model.model === selected.model) : candidates;
           route = chosenRoute(
             (
-              await choose(
+              await chooseWithFallback(
                 stageRequest(request, routingTurns, available, objective, handoff, available, prompts, routingState),
                 objective,
               )
             ).choice,
             available,
           );
-          if (auto || (selected && (selected === "vex" || !selected.effort))) {
+          if (!usedFallback && (auto || (selected && (selected === "vex" || !selected.effort)))) {
             systemMessage(`Vex routed to ${route.model ?? "Codex default"} at ${route.effort ?? "default"} reasoning`);
           }
         }
-      if (auto && !preserveRoute) note = usedThreadForClarification ? "Vex clarification delegated to existing Codex thread" : `Vex chose ${shape} workflow`;
+      if (auto && !preserveRoute) note = usedFallback ? "Vex unavailable; configured default route" : `Vex chose ${shape} workflow`;
       }
       signal?.throwIfAborted();
       if (preserveRoute) note = "Vex retained the task stage and lead route";
@@ -474,8 +430,7 @@ export class Orchestrator {
         text: `${note}: ${route.model ?? "Codex default"} · ${route.effort ?? "default"}`,
       });
       const { promptWithHandoff, resumingDeferred, sections: turnSections } = prepareTurnPrompt({
-        prompt, session, intent, userClarification, taskRelation, priorTask,
-        usedThreadForClarification, prompts, skills, handoff,
+        prompt, session, intent, taskRelation, priorTask, prompts, skills, handoff,
       });
       const executionPrompt = intent === "verify_plan" || intent === "continue_verify"
         ? `${promptWithHandoff}\n\nIndependently verify the plan. Propose precise changes for every finding. Work read-only; do not edit or save the plan.`
@@ -644,7 +599,6 @@ export class Orchestrator {
       completedAttempt.observations.push({ kind: "artifacts", paths: artifacts });
       if (!verifierTurn && session.activeTask) { session.activeTask.latestOutcome = execution.result.slice(0, 2000); session.activeTask.failed = false; session.activeTask.assessment = "unknown"; }
       await save();
-      await assess(completedAttempt.id, !verifierTurn);
       session.turns.at(-1)!.promptTrace = redactTrace(trace, secretValues);
       if (resumingDeferred) session.deferredTurn = undefined;
       await save();

@@ -38,14 +38,35 @@ it('keeps the existing thread when routing changes model', async () => {
   } };
   const session = newSession('/example/project', 'auto');
   const store = new PaceStore(dir);
-  const vex = { choose: async (request: VexRequest) => decision(request, request.options[0]?.id === 'continue' ? 'replace' : request.options[0]?.id === 'single' ? 'single' : request.context.originalRequest === 'first' ? '1:high' : '0:low') };
+  const vex = { choose: async (request: VexRequest) => decision(request, request.options[0]?.id === 'continue' ? 'replace' : request.options[0]?.id === 'single' ? 'single' : request.context.originalRequest === 'first' ? '0:high' : '0:medium') };
   const orchestrator = new Orchestrator(store, runner, vex);
   await orchestrator.turn('first', session, config, () => {});
   await orchestrator.turn('second', session, config, () => {});
   expect(calls[0]).toMatchObject({ id: undefined, route: { model: 'gpt-6-sol', effort: 'high' } });
-  expect(calls[1]).toMatchObject({ id: 'thread-1', route: { model: 'gpt-6-luna', effort: 'low' } });
+  expect(calls[1]).toMatchObject({ id: 'thread-1', route: { model: 'gpt-6-sol', effort: 'medium' } });
   expect(calls[1]?.prompt).not.toContain('Retained conversation:');
   expect((await store.latest('/example/project'))?.turns).toHaveLength(2);
+});
+
+it('falls back to the configured route after one HTTP 403 and records the failed decision', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  const choose = vi.fn(async () => { throw new Error('Vex decision tool failed (HTTP 403)'); });
+  const routes: Route[] = [];
+  const runner: CodexRunner = { async run(_prompt, _project, route) {
+    routes.push(route);
+    return { result: 'Done', completed: true };
+  } };
+  const session = newSession(dir, 'auto');
+  const outcome = await new Orchestrator(new PaceStore(dir), runner, { choose }).turn('Implement the fix', session, config, () => {});
+  expect(choose).toHaveBeenCalledTimes(1);
+  expect(routes).toEqual([config.defaultRoute]);
+  expect(outcome.note).toContain('Vex unavailable');
+  expect(session.activeTask?.workflow?.source).toBe('policy');
+  expect(session.turns.at(-1)?.promptTrace?.calls[0]?.assembledPrompt).toContain('built-in request_user_input tool');
+  expect(session.controlDecisions).toEqual(expect.arrayContaining([
+    expect.objectContaining({ source: 'vex', failed: true, requests: 1 }),
+    expect.objectContaining({ source: 'policy', choice: 'single', requests: 0 }),
+  ]));
 });
 
 it('starts a fresh thread after global preference changes and disabling, retaining conversation history', async () => {
@@ -83,7 +104,7 @@ it('lets Vex route paraphrased implementation follow-ups using conversation stat
   const vex = { choose: async (request: VexRequest) => {
     requests.push(request);
     if (request.options.some(option => option.id === 'closed')) return decision(request, 'unknown');
-    return decision(request, request.options[0]?.id === 'continue' ? 'continue' : request.options[0]?.id === 'single' ? 'single' : '1:high');
+    return decision(request, request.options[0]?.id === 'continue' ? 'continue' : request.options[0]?.id === 'single' ? 'single' : '0:high');
   } };
   const orchestrator = new Orchestrator(new PaceStore(dir), runner, vex);
   await orchestrator.turn('Could you turn that plan into working code?', session, config, () => {});
@@ -93,7 +114,7 @@ it('lets Vex route paraphrased implementation follow-ups using conversation stat
     conversationState: { openTasks: ['Implement CSV writer'], hasCodexThread: true },
   });
   expect(requests[0]?.context.conversationState).toMatchObject({ activeTask: { originalRequest: 'Plan a CSV export and tests. No edits yet.' } });
-  expect(requests[2]?.options.map(option => option.id)).toEqual(['0:low', '1:medium', '1:high']);
+  expect(requests[2]?.options.map(option => option.id)).toEqual(['0:medium', '0:high']);
   expect(calls[0]?.route).toEqual({ model: 'gpt-6-sol', effort: 'high' });
   expect(calls[0]?.prompt).toMatch(/^Could you turn that plan into working code\?/);
   expect(calls[0]?.prompt).not.toContain('Follow-up task context:');
@@ -170,7 +191,7 @@ it('replays only retained turns after undo starts a new Codex thread', async () 
     sentThread = threadId;
     return { threadId: 'new-thread', result: 'done', completed: true };
   } };
-  const vex = { choose: async (request: VexRequest) => decision(request, request.options[0]?.id === 'continue' ? 'replace' : request.options[0]?.id === 'single' ? 'single' : '1:high') };
+  const vex = { choose: async (request: VexRequest) => decision(request, request.options[0]?.id === 'continue' ? 'replace' : request.options[0]?.id === 'single' ? 'single' : '0:high') };
   await new Orchestrator(new PaceStore(dir), runner, vex).turn('Current request', session, config, () => {});
   expect(sentThread).toBeUndefined();
   expect(sentPrompt).toContain('Keep this request');
@@ -196,7 +217,7 @@ it('runs a read-only scout, reroutes after handoff, and sums stage costs', async
   const vex = { choose: async (request: VexRequest) => {
     requests.push(request);
     if (request.options.some(option => option.id === 'closed')) return decision(request, 'unknown');
-    return decision(request, request.options[0]?.id === 'continue' ? 'replace' : request.options[0]?.id === 'single' ? 'scout' : request.context.stageObjective === 'Read-only repository scout' ? '0:low' : '1:high');
+    return decision(request, request.options[0]?.id === 'continue' ? 'replace' : request.options[0]?.id === 'single' ? 'scout' : request.context.stageObjective === 'Read-only repository scout' ? '0:low' : '0:high');
   } };
   const session = newSession(dir, 'auto');
   session.threadId = 'existing-main-thread';
@@ -215,8 +236,8 @@ it('runs a read-only scout, reroutes after handoff, and sums stage costs', async
   expect(calls.map(call => call.id)).toEqual([undefined, 'existing-main-thread']);
   expect(calls[0]?.prompt).toContain('We discussed the parser in src/a.ts');
   expect(calls[0]?.route).toEqual({ model: 'gpt-6-luna', effort: 'low' });
-  expect(requests[2]?.options.map(option => option.id)).toEqual(['0:low', '1:medium', '1:high']);
-  expect((requests[2]?.context.availableModels as { id: string }[]).map(model => model.id)).toContain('gpt-6-sol');
+  expect(requests[3]?.options.map(option => option.id)).toEqual(['0:medium', '0:high']);
+  expect((requests[3]?.context.availableModels as { id: string }[]).map(model => model.id)).toContain('gpt-6-sol');
   expect(calls[1]?.prompt).toContain('Parser is defined here');
   expect(calls[1]?.prompt).toContain(session.turns.at(-1)!.scoutHandoff!);
   expect(session.turns.at(-1)?.promptTrace?.calls[1]?.assembledPrompt).toBe(calls[1]?.prompt);
@@ -230,7 +251,7 @@ it('runs a read-only scout, reroutes after handoff, and sums stage costs', async
   expect((await new PaceStore(dir).latest(dir))?.turns.at(-1)?.stages?.[0]?.handoff).toContain('Parser is defined here');
   expect(outcome.usage).toMatchObject({ input_tokens: 300, output_tokens: 25 });
   expect(outcome.estimatedCostUsd).toBeCloseTo(outcome.stages[0]!.estimatedCostUsd! + outcome.stages[1]!.estimatedCostUsd!, 12);
-  expect(outcome.routing).toHaveLength(6);
+  expect(outcome.routing).toHaveLength(4);
 });
 
 it('passes scout findings to a terminal artifact plan', async () => {
@@ -248,7 +269,7 @@ it('passes scout findings to a terminal artifact plan', async () => {
   const vex = { choose: async (request: VexRequest) => {
     requests.push(request);
     if (request.options.some(option => option.id === 'closed')) return decision(request, 'unknown');
-    return decision(request, request.options[0]?.id === 'single' ? 'scout_plan' : '0:low');
+    return decision(request, request.options[0]?.id === 'single' ? 'scout_plan' : request.context.stageObjective === 'Read-only repository scout' ? '0:low' : '1:high');
   } };
   const session = newSession('/example/project', 'auto');
   const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('Implement broad migration', session, config, () => {});
@@ -258,7 +279,7 @@ it('passes scout findings to a terminal artifact plan', async () => {
   expect(calls.map(call => call.threadId)).toEqual([undefined, undefined]);
   expect(requests.find(item => item.context.priorStageHandoff)?.context.priorStageHandoff).toContain('Scout found parser');
   expect(outcome.stages).toHaveLength(2);
-  expect(outcome.routing).toHaveLength(5);
+  expect(outcome.routing).toHaveLength(3);
   expect(outcome.usage?.input_tokens).toBe(200);
   expect(outcome.estimatedCostUsd).toBeCloseTo(outcome.stages.reduce((sum, stage) => sum + stage.estimatedCostUsd!, 0), 12);
   expect(session.kind).toBe('planning');
@@ -317,87 +338,28 @@ it('does not resume the old thread when a fresh run omits its new ID', async () 
   expect(session.threadTurnCount).toBe(1);
 });
 
-it('asks for clarification without starting Codex', async () => {
+it('runs a single agent when Vex cannot choose a workflow', async () => {
   dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
-  const runner: CodexRunner = { async run() { throw new Error('Codex must not run'); } };
-  const vex = { choose: async (request: VexRequest) => decision(request, 'clarify') };
+  const runner: CodexRunner = { async run() { return { result: 'Done', completed: true }; } };
+  const vex = { choose: async (request: VexRequest) => decision(request, request.options.some(option => option.id === 'clarify') ? 'clarify' : request.options[0]!.id) };
   const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('Something', newSession('/example/project', 'auto'), config, () => {});
-  expect(outcome.result).toContain('What outcome');
-  expect(outcome.stages).toHaveLength(0);
-});
-
-it('prompts user interactively when Vex chooses clarify and proceeds with chosen single workflow', async () => {
-  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
-  let ranPrompt = '';
-  const runner: CodexRunner = { async run(prompt) { ranPrompt = prompt; return { result: 'completed single', completed: true }; } };
-  const vex = {
-    choose: async (request: VexRequest) => {
-      if (request.options.some(o => o.id === 'clarify')) return decision(request, 'clarify');
-      return decision(request, request.options[0]!.id);
-    },
-  };
-  let questionSeen: any;
-  const onProgress = Object.assign((progress: any) => {
-    if (progress.kind === 'question') {
-      questionSeen = progress;
-      progress.respond({ workflow: { answers: ['Run as single agent'] } });
-    }
-  }, { interactive: true });
-
-  const session = newSession('/example/project', 'auto');
-  const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('Fix the thing', session, config, onProgress);
-  expect(questionSeen).toBeDefined();
-  expect(questionSeen.questions[0].header).toBe('Clarification Needed');
-  expect(outcome.result).toBe('completed single');
-  expect(ranPrompt).toContain('Fix the thing');
+  expect(outcome.result).toBe('Done');
   expect(outcome.stages).toHaveLength(1);
+  expect(outcome.session.activeTask?.workflow?.shape).toBe('single');
 });
 
-it('prompts user interactively when Vex chooses clarify and uses manual route bypass', async () => {
+it('uses Codex question events for consequential decisions after Vex defaults to single', async () => {
   dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
-  let ranRoute: any;
-  const runner: CodexRunner = { async run(_p, _dir, route) { ranRoute = route; return { result: 'completed manual', completed: true }; } };
-  const vex = {
-    choose: async (request: VexRequest) => decision(request, 'clarify'),
-  };
-  const onProgress = Object.assign((progress: any) => {
-    if (progress.kind === 'question') {
-      progress.respond({ workflow: { answers: ['Use manual route (GPT-6 Sol Medium)'] } });
-    }
-  }, { interactive: true });
-
-  const session = newSession('/example/project', 'auto');
-  session.route = { model: 'gpt-6-sol', effort: 'medium' };
-  const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('Something ambiguous', session, config, onProgress);
-  expect(outcome.result).toBe('completed manual');
-  expect(ranRoute).toEqual({ model: 'gpt-6-sol', effort: 'medium' });
-  expect(outcome.note).toContain('Manual route');
-});
-
-it('prompts user interactively and updates request with typed clarification', async () => {
-  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
-  let ranPrompt = '';
-  const runner: CodexRunner = { async run(prompt) { ranPrompt = prompt; return { result: 'completed with clarification', completed: true }; } };
-  let calls = 0;
-  const vex = {
-    choose: async (request: VexRequest) => {
-      calls++;
-      if (calls === 1) return decision(request, 'clarify');
-      if (request.options.some(o => o.id === 'single')) return decision(request, 'single');
-      return decision(request, request.options[0]!.id);
-    },
-  };
-  const onProgress = Object.assign((progress: any) => {
-    if (progress.kind === 'question') {
-      progress.respond({ workflow: { answers: ['Inspect the auth tests and fix JWT expiration'] } });
-    }
-  }, { interactive: true });
-
-  const session = newSession('/example/project', 'auto');
-  const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('Fix it', session, config, onProgress);
-  expect(outcome.result).toBe('completed with clarification');
-  expect(ranPrompt).toContain('Clarification: Inspect the auth tests and fix JWT expiration');
-  expect(outcome.stages).toHaveLength(1);
+  let questionSeen = false;
+  const runner: CodexRunner = { async run(_prompt, _project, _route, _thread, progress) {
+    await progress({ kind: 'question', id: 'q1', questions: [{ id: 'decision', header: 'Choice', question: 'Which fix?', options: [], isSecret: false }], respond: () => {} });
+    return { result: 'Done', completed: true };
+  } };
+  const vex = { choose: async (request: VexRequest) => decision(request, request.options.some(option => option.id === 'clarify') ? 'clarify' : request.options[0]!.id) };
+  const onProgress = (event: Progress) => { if (event.kind === 'question') { questionSeen = true; event.respond({ decision: { answers: ['Fix A'] } }); } };
+  const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('Fix it', newSession('/example/project', 'auto'), config, onProgress);
+  expect(questionSeen).toBe(true);
+  expect(outcome.session.activeTask?.workflow?.shape).toBe('single');
 });
 
 it('stops before completion when scout report lacks verifiable findings schema', async () => {
@@ -412,7 +374,7 @@ it('stops before completion when scout report lacks verifiable findings schema',
     mainRuns++;
     return { result: 'unexpected', completed: true };
   } };
-  const vex = { choose: async (request: VexRequest) => decision(request, request.options[0]?.id === 'single' ? 'scout' : '0:low') };
+  const vex = { choose: async (request: VexRequest) => decision(request, request.options[0]?.id === 'single' ? 'scout' : request.context.stageObjective === 'Read-only repository scout' ? '0:low' : '0:high') };
   const session = newSession('/example/project', 'auto');
   await expect(new Orchestrator(new PaceStore(dir), runner, vex).turn('Implement feature', session, config, () => {})).rejects.toThrow('Invalid stage handoff');
   expect(mainRuns).toBe(0);
@@ -435,7 +397,7 @@ it('uses a corrected scout report for the completion stage', async () => {
     expect(prompt).toContain('Parser lives here');
     return { result: 'done', completed: true };
   } };
-  const vex = { choose: async (request: VexRequest) => decision(request, request.options[0]?.id === 'single' ? 'scout' : '0:low') };
+  const vex = { choose: async (request: VexRequest) => decision(request, request.options[0]?.id === 'single' ? 'scout' : request.context.stageObjective === 'Read-only repository scout' ? '0:low' : '0:high') };
   const outcome = await new Orchestrator(new PaceStore(dir), runner, vex).turn('Implement feature', newSession('/example/project', 'auto'), config, () => {});
   expect(sideRuns).toBe(2);
   expect(outcome.stages).toHaveLength(3);
@@ -475,7 +437,7 @@ it('keeps explicit plan execution on writable completion routes', async () => {
   const vex = { choose: async (request: VexRequest) => {
     requests.push(request);
     if (request.options.some(option => option.id === 'closed')) return decision(request, 'unknown');
-    return decision(request, request.options[0]?.id === 'single' ? 'single' : '1:high');
+    return decision(request, request.options[0]?.id === 'single' ? 'single' : '0:high');
   } };
   const fullPlan = '# Parser plan\n\n## Implementation steps\n\n1. Update src/parser.ts.\n\n## Verification\n\n- Run npm test.\n';
   const displayPrompt = 'Executing saved plan in a fresh agent session. The plan details are hidden from this chat.';

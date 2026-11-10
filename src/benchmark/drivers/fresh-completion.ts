@@ -85,7 +85,7 @@ export async function runFreshCompletion({ suite, repeats, out, signal, runner =
       if (await git('status', '--porcelain')) throw new Error('Read-only scout changed the fixture');
       pair.handoff = handoff; pair.handoffSha256 = hash(handoff); pair.handoffBytes = Buffer.byteLength(handoff);
       await writeFile(join(directory, 'scout.json'), handoff + '\n');
-      const prompt = prepareTurnPrompt({ prompt: task.prompt, session: newSession(workspace, 'manual'), taskRelation: 'replace', priorTask: undefined, usedThreadForClarification: false, prompts, skills: [], handoff }).promptWithHandoff;
+      const prompt = prepareTurnPrompt({ prompt: task.prompt, session: newSession(workspace, 'manual'), taskRelation: 'replace', priorTask: undefined, prompts, skills: [], handoff }).promptWithHandoff;
       const arms = repetition % 2 ? ['same-thread', 'fresh-thread'] : ['fresh-thread', 'same-thread'];
       for (const arm of arms) {
         signal?.throwIfAborted();

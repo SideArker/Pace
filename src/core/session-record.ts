@@ -112,7 +112,7 @@ function isControl(value: unknown): boolean {
     role(value.role) && text(value.objective) && text(value.choice) && nonnegative(value.confidence) &&
     (value.confidence as number) <= 1 && isRecord(value.probabilities) &&
     Object.values(value.probabilities).every(probability => nonnegative(probability) && (probability as number) <= 1) &&
-    nonnegative(value.durationMs) && typeof value.at === "string" && oneOf(value.source, ["vex", "user"]) && value.contextAction === "continue";
+    nonnegative(value.durationMs) && typeof value.at === "string" && oneOf(value.source, ["vex", "user", "policy"]) && value.contextAction === "continue";
 }
 function isSide(value: unknown): boolean {
   return isRecord(value) && text(value.id) && optionalText(value.taskId) && text(value.attemptId) &&
@@ -126,7 +126,7 @@ function isWorkflow(value: unknown): boolean {
     oneOf(value.stage, ["scout", "plan", "final"]) &&
     (value.status === undefined || oneOf(value.status, ["pending", "running", "completed", "failed", "cancelled", "awaiting_user"])) &&
     (value.mainRoute === undefined || isRoute(value.mainRoute)) && optionalText(value.mainThreadId) && optionalText(value.scoutHandoff) &&
-    oneOf(value.source, ["vex", "user"]) && (value.needsAssessment === undefined || typeof value.needsAssessment === "boolean");
+    oneOf(value.source, ["vex", "user", "policy"]) && (value.needsAssessment === undefined || typeof value.needsAssessment === "boolean");
 }
 function isDeferred(value: unknown): boolean {
   return isRecord(value) && typeof value.prompt === "string" && !!value.prompt.trim() &&
