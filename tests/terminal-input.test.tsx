@@ -32,3 +32,7 @@ it("renders the Linux logo without querying unsupported Kitty keyboard mode", as
     expect(output).not.toContain("\x1b[?0u");
   } finally { instance.unmount(); }
 });
+
+it("allows the terminal to render the shared 40 ms work clock at 25 FPS", () => {
+  expect(interactiveInkOptions.maxFps).toBe(25);
+});

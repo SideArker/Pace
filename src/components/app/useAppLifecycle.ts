@@ -36,7 +36,7 @@ export function useAppLifecycle({ state, transcript, queue }: {
   useEffect(() => {
     if (!runningIds.length && !sideBusy && shellJobs === 0 && !processes.length) return;
     if (!animate && !shellJobs && !processes.length) return;
-    const timer = setInterval(() => setTick((value) => value + 1), animate ? 80 : 1000);
+    const timer = setInterval(() => setTick((value) => value + 1), animate ? 40 : 1000);
     return () => clearInterval(timer);
   }, [runningIds.length, sideBusy, shellJobs, processes.length, animate]);
   useEffect(

@@ -2,6 +2,9 @@ import { expect, it } from "vitest";
 import { updateAgentTasks, taskSummary } from "../src/core/tasks.js";
 import { appItemProgress } from "../src/integrations/codex-events.js";
 import { updateProcesses } from "../src/components/RunningProcesses.js";
+import { RunningProcesses } from "../src/components/RunningProcesses.js";
+import React from "react";
+import { renderToString } from "ink";
 
 it("mirrors App Server plan steps without managing separate user tasks", () => {
   const progress = appItemProgress({ id: "plan-1", type: "plan", steps: [
@@ -26,4 +29,14 @@ it("keeps a command visible until its completed event arrives", () => {
   expect(active).toEqual([{ id: "turn-1-cmd", sessionId: "session-1", command: "/usr/bin/python3 manage.py test", startedAt: 1000 }]);
   expect(updateProcesses(active, "session-1", started, 3000)).toBe(active);
   expect(updateProcesses(active, "session-1", { ...started, completed: true }, 4000)).toEqual([]);
+});
+
+it("shows current command output and the turn stop action", () => {
+  const output = renderToString(React.createElement(RunningProcesses, {
+    processes: [{ id: "turn-1-cmd", sessionId: "s", command: "npm test", startedAt: 1000 }], now: 3000,
+    lines: [{ id: 1, role: "activity", sourceId: "turn-1-cmd", text: "Running: npm test", spaceBefore: false,
+      activity: { category: "command", completed: false, detail: "Suite started\nTest A passed\nTest B passed" } }],
+  }), { columns: 80 });
+  expect(output).toContain("Test B passed");
+  expect(output).toContain("Stop turn: Ctrl+C");
 });

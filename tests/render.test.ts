@@ -78,8 +78,22 @@ describe("activity transcript", () => {
       outputsExpanded: false, detailsExpanded: false, width: 80,
     }), { columns: 80 });
     expect(output.trim().split("\n")).toHaveLength(1);
-    expect(output).toContain("Running command");
-    expect(output).not.toContain("npm run dev");
+    expect(output).toContain("Bash(npm run dev");
+    expect(output).not.toContain("Running command");
+  });
+
+  it.each([
+    ['command', 'Running: Bash: npm test', 'Bash(npm test)'],
+    ['files', 'Edited src/main.ts', 'Edit(src/main.ts)'],
+    ['search', 'Web search: Ink rendering', 'Search(Ink rendering)'],
+    ['tool', 'Tool memory: in_progress', 'Tool(memory)'],
+    ['plan', 'Inspect startup', 'Inspect startup'],
+  ] as const)("shows the active %s target without expanding details", (category, text, expected) => {
+    const output = renderToString(React.createElement(Transcript, { lines: [{ id: 1, role: 'activity', text, spaceBefore: false,
+      activity: { category, completed: false, detail: 'Folded details' } }],
+      outputsExpanded: false, detailsExpanded: false, width: 80 }), { columns: 80 });
+    expect(output).toContain(expected);
+    expect(output).not.toContain('Folded details');
   });
 
   it("limits expanded command output to ten lines without wrapping", () => {

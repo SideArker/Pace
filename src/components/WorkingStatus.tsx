@@ -23,8 +23,7 @@ export function ColorSweep({ text, tick, animated }: { text: string; tick: numbe
 }
 
 export function workLabel(status: string): string {
-  // Actionable states remain explicit; ordinary provider status prose stays internal.
-  return /^(?:waiting\b|approval\b|question\b|failed\b|error\b)/i.test(status) ? status : "Working";
+  return status.trim() && !/^working(?:…|\.\.\.)?$/i.test(status.trim()) ? status : "Working";
 }
 
 export function WorkingStatus({ busy, status, runningCount, shellJobs, tick, usage, tip, hasActivity = false }: {
@@ -35,12 +34,14 @@ export function WorkingStatus({ busy, status, runningCount, shellJobs, tick, usa
   if (!busy && !runningCount && !shellJobs) return null;
   const action = busy ? workLabel(status) : runningCount
     ? `${runningCount} background turn${runningCount === 1 ? "" : "s"} running` : "Ready";
-  const showAction = !busy || !hasActivity || action !== "Working";
+  const actionable = /^(?:waiting\b|approval\b|question\b|failed\b|error\b|blocked\b)/i.test(action);
+  const moving = busy && !actionable;
+  const showAction = !busy || !hasActivity || actionable;
   return <Box flexDirection="column" flexShrink={0}>
     {showAction || shellJobs ? <Box gap={1}>
       {showAction ? <>
-        {busy && action === "Working" ? <WorkSpinner tick={tick} /> : null}
-        <ColorSweep text={action} tick={tick} animated={busy && action === "Working" ? undefined : false} />
+        {moving ? <WorkSpinner tick={tick} /> : null}
+        <Text wrap="truncate-end"><ColorSweep text={action} tick={tick} animated={moving ? undefined : false} /></Text>
       </> : null}
       {shellJobs ? <Text color={theme.warning}>· ⚡ {shellJobs} Bash command{shellJobs === 1 ? "" : "s"} running</Text> : null}
     </Box> : null}

@@ -58,6 +58,14 @@ export function splitTranscript(lines: Line[]): { history: Line[][]; live: Line[
   return { history, live: lines.slice(settledEnd) };
 }
 
+export function settleTurnActivities(lines: Line[], turnId: number, now = Date.now()): Line[] {
+  const prefix = `turn-${turnId}-`;
+  return lines.map(line => line.sourceId?.startsWith(prefix) && line.activity && !line.activity.completed
+    ? { ...line, activity: { ...line.activity, completed: true,
+      durationMs: line.activity.startedAt === undefined ? undefined : now - line.activity.startedAt } }
+    : line);
+}
+
 const activityColors = {
   thinking: "accent",
   command: "primary",
@@ -204,7 +212,7 @@ export function Transcript({
                 </Box>
                 <Box flexShrink={1}>
                   <Text wrap={line.activity.category === "command" ? "truncate" : undefined} color={theme[activityColors[line.activity.category]]} bold={line.activity.category === "command"}>
-                    {!line.activity.completed && !expanded ? <ColorSweep text={({ thinking: "Thinking", command: "Running command", files: "Editing files", search: "Searching", tool: "Using tool", plan: "Updating plan" })[line.activity.category]} tick={tick} /> : <>◆ {activityTitle(line, width)}</>}
+                    {!line.activity.completed && !expanded ? <ColorSweep text={line.activity.category === "thinking" ? "Thinking" : activityTitle(line, width)} tick={tick} /> : <>◆ {activityTitle(line, width)}</>}
                   </Text>
                 </Box>
                 {line.activity.detail ? (

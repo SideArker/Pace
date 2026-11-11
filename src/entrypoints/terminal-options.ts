@@ -2,4 +2,5 @@
 export const interactiveInkOptions = {
   kittyKeyboard: { mode: process.platform === "linux" ? "disabled" : "auto" },
   exitOnCtrlC: false,
+  maxFps: 25,
 } as const;

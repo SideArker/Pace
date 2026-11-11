@@ -11,7 +11,7 @@ it("puts the action, live usage, and tip on separate rows", () => {
     />, { columns: width });
     const lines = output.trim().split("\n");
     expect(lines).toHaveLength(3);
-    expect(lines[0]).toContain("Working");
+    expect(lines[0]).toContain("Thinking...");
     expect(lines[0]).not.toContain("input");
     expect(lines[0]).not.toContain("Tip:");
     expect(lines[1]).toContain("120 input · 30 output");
@@ -25,7 +25,7 @@ it("shows only available rows and keeps background work on the action row", () =
     busy status="Editing files" runningCount={1} shellJobs={0} tick={1} tip="Use /tasks"
   />).trim().split("\n");
   expect(tipOnly).toHaveLength(2);
-  expect(tipOnly[0]).toContain("Working");
+  expect(tipOnly[0]).toContain("Editing files");
   expect(tipOnly[1]).toContain("Tip: Use /tasks");
 
   const background = renderToString(<WorkingStatus
@@ -46,11 +46,10 @@ it.each(['Waiting for approval', 'Waiting for answer', 'Failed'])('keeps actiona
   expect(output).toContain(status);
 });
 
-it('does not expose provider work messages as the live label', () => {
+it('shows what the agent is doing in the live label', () => {
   for (const status of ['Running: grep error.log', 'Using Sol…', 'Thinking about different approaches']) {
     const output = renderToString(<WorkingStatus busy status={status} runningCount={1} shellJobs={0} tick={1} />);
-    expect(output).toContain('Working');
-    expect(output).not.toContain(status);
+    expect(output).toContain(status);
   }
 });
 
@@ -62,4 +61,8 @@ it('hides the generic work row when a transcript activity is visible, keeping us
   expect(output).toContain('30 output tokens');
   expect(output).toContain('Tip: Use /context');
   expect(renderToString(<WorkingStatus {...props} status="Waiting for approval" />)).toContain('Waiting for approval');
+});
+
+it.each(['', 'Working…', 'Working...', 'Working'])('uses a generic fallback for %j', status => {
+  expect(renderToString(<WorkingStatus busy status={status} runningCount={1} shellJobs={0} tick={0} />)).toContain('Working');
 });
