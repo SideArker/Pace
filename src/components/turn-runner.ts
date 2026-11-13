@@ -39,6 +39,7 @@ export function createTurnRunner({
   turnSequence, activeSessionId, jobs, promptQueue, titleAborts, pendingApprovals, pendingQuestions, unreadCompletions,
   sessionLines,
   runner, orchestrator, store, rememberSession, onTurnStart, setRunningIds, addFor, activityFor, recordThoughtUsage, resetThoughtUsage, getTurnActivities, setStatusFor,
+  finishTurnActivities = () => {},
   showApproval, showQuestion, dismissQuestion, setSession, setVexState, refreshUsage, setQueueVersion, setProcesses, setLiveUsage, getConfig,
   readLimits = readUsageLimits,
 }: {
@@ -62,6 +63,7 @@ export function createTurnRunner({
   recordThoughtUsage: (sessionId: string, turnId: number, total: number) => void;
   resetThoughtUsage: (sessionId: string) => void;
   getTurnActivities: (sessionId: string, turnId: number) => TurnActivity[];
+  finishTurnActivities?: (sessionId: string, turnId: number) => void;
   setStatusFor: Status;
   showApproval: (request: Extract<Progress, { kind: "approval" }>, sessionId?: string, owner?: AbortController) => void;
   showQuestion: (request: Extract<Progress, { kind: "question" }>, sessionId?: string, owner?: AbortController) => void;
@@ -191,13 +193,12 @@ export function createTurnRunner({
           if (progress.kind === "message") {
             setStatusFor(sessionId, progress.completed === false ? "Responding…" : "Finishing response…");
             const sourceId = progress.id ? `turn-${turnId}-${progress.attemptId ?? "main"}-${progress.id}` : undefined;
-            if (progress.text.trim() || sourceId && streamingMessages.has(sourceId)) {
-              addFor(sessionId, "codex", progress.text, sourceId ? { sourceId, streaming: progress.completed === false } : undefined);
-              if (progress.completed !== false && progress.text.trim()) emittedMessages++;
-              if (sourceId) {
-                if (progress.completed === false) streamingMessages.set(sourceId, progress.text);
-                else streamingMessages.delete(sourceId);
-              }
+            if (progress.completed === false) {
+              if (sourceId) streamingMessages.set(sourceId, progress.text);
+            } else if (progress.text.trim()) {
+              addFor(sessionId, "codex", progress.text, sourceId ? { sourceId, streaming: false } : undefined);
+              emittedMessages++;
+              if (sourceId) streamingMessages.delete(sourceId);
             }
           }
         },
@@ -269,8 +270,8 @@ export function createTurnRunner({
         : outcome.role === "aside" ? "Side answer complete; main task retained"
         : outcome.role === "verifier" ? "Verification complete; planner retained"
         : assessment === "partial" ? "Task has remaining work"
-        : assessment === "unknown" ? "Task completion unknown" : "Done");
-      if (turnSession.routingMode === "auto") setVexState("connected");
+        : assessment === "unknown" ? "Turn complete" : "Done");
+      if (turnSession.routingMode === "auto") setVexState(outcome.note.startsWith("Vex unavailable") ? "failed" : "connected");
       refreshUsage();
     } catch (error) {
       succeeded = false;
@@ -335,6 +336,7 @@ export function createTurnRunner({
       if (failedTurn?.usage) addFor(sessionId, "meta", formatTurnFooter(failedTurn.route ?? activeRoute, failedTurn.routeNote ?? "", failedTurn.usage, failedTurn.durationMs ?? 0, failedTurn.estimatedCostUsd));
     } finally {
       for (const [sourceId, text] of streamingMessages) addFor(sessionId, "codex", text, { sourceId, streaming: false });
+      finishTurnActivities(sessionId, turnId);
       const job = jobs.current.get(sessionId);
       await job?.pendingSteer?.catch(() => {});
       const lastTurn = turnSession.turns.at(-1);

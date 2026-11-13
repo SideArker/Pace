@@ -2,7 +2,7 @@ import { PassThrough, Writable } from "node:stream";
 import React from "react";
 import { Box, render, Static, Text } from "ink";
 import { describe, expect, it } from "vitest";
-import { splitTranscript, Transcript, type Line } from "../src/components/Transcript.js";
+import { settleTurnActivities, splitTranscript, Transcript, type Line } from "../src/components/Transcript.js";
 import { HeaderLogo } from "../src/components/Header.js";
 
 class TerminalOutput extends Writable {
@@ -29,6 +29,28 @@ function View({ lines, status, resetKey = 0, showHeader = true, expanded = false
 }
 
 describe("native terminal history", () => {
+  it("does not repaint a completed answer after an activity lacks its completion event", async () => {
+    const stdout = new TerminalOutput();
+    const stdin = new PassThrough() as PassThrough & { isTTY: boolean; setRawMode: (enabled: boolean) => void };
+    stdin.isTTY = true;
+    stdin.setRawMode = () => {};
+    const pending: Line = { id: 1, role: "activity", text: "Thinking", sourceId: "turn-1-main-thought", spaceBefore: false,
+      activity: { category: "thinking", completed: false } };
+    const answer: Line = { id: 2, role: "codex", text: `A complete answer.\n${"more\n".repeat(40)}`, spaceBefore: false };
+    const instance = render(<View lines={[pending]} status="Working" showHeader={false} />, {
+      stdin, stdout, stderr: new PassThrough(), interactive: true, patchConsole: false,
+      alternateScreen: false, maxFps: 1000,
+    });
+    try {
+      await instance.waitUntilRenderFlush();
+      const settled = settleTurnActivities([pending, answer], 1);
+      for (let index = 0; index < 5; index++) {
+        instance.rerender(<View lines={settled} status={`Ready ${index}`} showHeader={false} />);
+        await instance.waitUntilRenderFlush();
+      }
+    } finally { instance.unmount(); }
+    expect(stdout.writes.join("").match(/A complete answer\./g)).toHaveLength(1);
+  });
   it("redraws streamed text and appends only its authoritative completion to history", async () => {
     const stdout = new TerminalOutput();
     const stdin = new PassThrough() as PassThrough & { isTTY: boolean; setRawMode: (enabled: boolean) => void };

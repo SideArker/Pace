@@ -6,7 +6,7 @@ import { artifactLabel } from "../../core/system/artifacts.js";
 import { linesFromSession } from "../session-transcript.js";
 import { formatCommandActivity } from "../shell-runner.js";
 import { updateProcesses, type RunningProcess } from "../RunningProcesses.js";
-import type { Line } from "../Transcript.js";
+import { settleTurnActivities, type Line } from "../Transcript.js";
 
 type TranscriptOptions = {
   store: PaceStore;
@@ -80,11 +80,18 @@ export function createTranscriptActions({
     sessionLines.current.set(sessionId, updated);
     if (activeSessionId.current === sessionId) setLines(updated);
   };
+  const finishTurnActivities = (sessionId: string, turnId: number) => {
+    const old = sessionLines.current.get(sessionId) ?? [];
+    const updated = settleTurnActivities(old, turnId);
+    if (updated.every((line, index) => line === old[index])) return;
+    sessionLines.current.set(sessionId, updated);
+    if (activeSessionId.current === sessionId) setLines(updated);
+  };
   const renderSessionTurns = (targetSession: Session) => {
     const { lines: newLines, nextId: id } = linesFromSession(targetSession, nextId.current, reference => artifactLabel(store, targetSession, reference));
     nextId.current = id;
     sessionLines.current.set(targetSession.id, newLines);
     if (activeSessionId.current === targetSession.id) setLines(newLines);
   };
-  return { addFor, add, activityFor, activity, recordThoughtUsage, renderSessionTurns };
+  return { addFor, add, activityFor, activity, recordThoughtUsage, finishTurnActivities, renderSessionTurns };
 }

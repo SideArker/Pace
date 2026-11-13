@@ -21,12 +21,12 @@ export function createExecutionActions({ state, transcript, queue, interactions,
     setSession, setVexState, setQueueVersion, setProcesses, setLiveUsage, latestConfig, runTurnRef,
     nextId, shells, setShellJobs } = state;
   const { promptQueue } = queue;
-  const { addFor, add, activityFor, activity, recordThoughtUsage } = transcript;
+  const { addFor, add, activityFor, activity, recordThoughtUsage, finishTurnActivities } = transcript;
   const { setStatusFor, showApproval, showQuestion, dismissQuestion } = interactions;
   const runTurn = createTurnRunner({
     turnSequence, activeSessionId, jobs, promptQueue, titleAborts, pendingApprovals, pendingQuestions, unreadCompletions, sessionLines,
     runner, orchestrator, store, rememberSession, onTurnStart: sessionId => thisPaceIds.current.add(sessionId), setRunningIds, addFor, activityFor,
-    recordThoughtUsage, resetThoughtUsage: (sessionId: string) => lastReasoningTokens.current.delete(sessionId),
+    recordThoughtUsage, finishTurnActivities, resetThoughtUsage: (sessionId: string) => lastReasoningTokens.current.delete(sessionId),
     getTurnActivities: (sessionId: string, turnId: number) => (sessionLines.current.get(sessionId) ?? [])
       .filter(line => line.sourceId?.startsWith(`turn-${turnId}-`) && line.activity?.completed)
       .slice(-200)

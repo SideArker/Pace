@@ -214,7 +214,7 @@ it("UI direct execute from manual planning creates a normal fresh task using the
   const fresh = (await env.store.list(env.root)).find(item => item.executionSource)!;
   expect(fresh).toMatchObject({ kind: "normal", routingMode: "auto", executionSource: { sessionId: env.source.id, taskId: "task", plan: env.source.plan } });
   expect(env.source.kind).toBe("planning"); expect(env.jobs.current.size).toBe(0);
-  expect(env.statuses).toContain("Task completion unknown");
+  expect(env.statuses).toContain("Turn complete");
 });
 
 it("UI drains restored verify and execute operations with original identity and role", async () => {

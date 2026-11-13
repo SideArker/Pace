@@ -46,19 +46,20 @@ async function fixture() {
   return { root, session, store, config, runner, runTurn, transcript, jobs, activeSessionId, sessionLines, lines: () => sessionLines.current.get(session.id) ?? [], visible: () => visible };
 }
 
-it("redraws partial messages in place, preserves chronological order, and settles final text once", async () => {
+it("holds assistant prose until complete while preserving live activity and message order", async () => {
   const env = await fixture();
   env.runner.run = async (_prompt, _project, _route, _thread, output) => {
     await output({ kind: "message", id: "first", text: "Checking", completed: false });
-    const firstId = env.lines().find(line => line.role === "codex")!.id;
-    expect(splitTranscript(env.lines()).live.some(line => line.id === firstId)).toBe(true);
-    expect(splitTranscript(env.lines()).history.flat().some(line => line.id === firstId)).toBe(false);
+    expect(env.lines().some(line => line.role === "codex")).toBe(false);
     await output({ kind: "message", id: "first", text: "Checking files", completed: false });
+    expect(env.lines().some(line => line.role === "codex")).toBe(false);
     await output({ kind: "message", id: "first", text: "Checked files.", completed: true });
-    expect(env.lines().filter(line => line.role === "codex")).toMatchObject([{ id: firstId, text: "Checked files.", streaming: false }]);
+    expect(env.lines().filter(line => line.role === "codex")).toMatchObject([{ text: "Checked files.", streaming: false }]);
     await output({ kind: "activity", id: "command", category: "command", title: "Running: npm test", detail: "One test", completed: false });
+    expect(splitTranscript(env.lines()).live.some(line => line.activity?.category === "command")).toBe(true);
     await output({ kind: "activity", id: "command", category: "command", title: "Ran: npm test", detail: "All tests passed", completed: true });
     await output({ kind: "message", id: "second", text: "Finishing", completed: false });
+    expect(env.lines().filter(line => line.role === "codex")).toHaveLength(1);
     await output({ kind: "message", id: "second", text: "Finished.", completed: true });
     return { completed: true, result: "Finished.", threadId: "thread" };
   };
@@ -68,6 +69,18 @@ it("redraws partial messages in place, preserves chronological order, and settle
   const loaded = (await env.store.load(env.root, env.session.id))!;
   expect(loaded.turns.at(-1)?.result).toBe("Finished.");
   expect(loaded.turns.at(-1)?.activities).toMatchObject([{ detail: "All tests passed" }]);
+});
+
+it("settles an activity missing its completion event before the final answer enters history", async () => {
+  const env = await fixture();
+  env.runner.run = async (_prompt, _project, _route, _thread, output) => {
+    await output({ kind: "activity", id: "thought", category: "thinking", title: "Thinking", completed: false });
+    await output({ kind: "message", id: "final", text: "Done.", completed: true });
+    return { completed: true, result: "Done.", threadId: "thread" };
+  };
+  expect(await env.runTurn("Work", env.session, env.config)).toBe(true);
+  expect(env.lines().find(line => line.activity?.category === "thinking")?.activity?.completed).toBe(true);
+  expect(splitTranscript(env.lines()).live).toEqual([]);
 });
 
 for (const cancelled of [false, true]) it(`keeps partial text and settles its row after ${cancelled ? "cancellation" : "stream failure"}`, async () => {
