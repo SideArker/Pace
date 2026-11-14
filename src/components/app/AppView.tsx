@@ -19,7 +19,7 @@ import { RunningProcesses } from "../RunningProcesses.js";
 import { TaskPanel } from "../TaskPanel.js";
 import { ThemeManager } from "../ThemeManager.js";
 import { Transcript, splitTranscript, type Line } from "../Transcript.js";
-import { terminalLayout } from "../layout.js";
+import { terminalLayout, terminalTooSmall } from "../layout.js";
 import { WorkingStatus } from "../WorkingStatus.js";
 import type { AppController } from './useAppController.js';
 import { store, project } from './runtime.js';
@@ -59,6 +59,7 @@ export function AppView({ model }: { model: AppController }) {
   ];
   const terminalColumns = terminalDimensions.columns;
   const terminalRows = terminalDimensions.rows;
+  const compact = terminalRows < 16;
   const contentWidth = terminalLayout(terminalColumns, terminalRows).contentWidth;
   const composerChromeRows = (contentWidth < 50 || (contentWidth >= 72 && contentWidth < 112) ? 6 : 5) + (model.memoryStatus.enabled ? 1 : 0);
   const extraWorkingRows = (busy && session && liveUsage[session.id] ? 1 : 0) + (busy && workingTip ? 1 : 0);
@@ -66,6 +67,10 @@ export function AppView({ model }: { model: AppController }) {
 
   const visibleLiveLines = liveLines.slice(-Math.max(1, Math.floor((terminalRows - 12) / 4)));
   const hasVisibleActivity = visibleLiveLines.some(line => line.activity && !line.activity.completed);
+
+  if (terminalTooSmall(terminalColumns, terminalRows)) return <Box width={Math.max(1, terminalColumns)} height={Math.max(1, terminalRows)} alignItems="center" justifyContent="center">
+    <Text color={theme.warning} wrap="truncate">Resize terminal to at least 40 × 10.</Text>
+  </Box>;
 
   if (model.themeOpen) return <ThemeManager scheme={config?.colorScheme ?? "default"}
     width={terminalColumns} height={Math.max(1, terminalRows - 1)}
@@ -122,14 +127,14 @@ export function AppView({ model }: { model: AppController }) {
         usage={busy && session ? liveUsage[session.id] : undefined} tip={workingTip} />
       {backgroundApprovals.length ? <Text color={theme.warning} bold>⚠ {backgroundApprovals.length} background approval{backgroundApprovals.length === 1 ? "" : "s"} waiting · ↓ select conversation · Enter open</Text> : null}
       {backgroundQuestions.length ? <Text color={theme.accent} bold>◆ {backgroundQuestions.length} background question{backgroundQuestions.length === 1 ? "" : "s"} waiting · {question ? "Shift+Tab" : "↓"} select conversation · Enter open</Text> : null}
-      <RunningProcesses processes={processes} now={Date.now()} />
-      <TaskPanel tasks={session?.tasks ?? []} />
+      {!compact ? <RunningProcesses processes={processes.filter(process => process.sessionId === session?.id)} lines={lines} now={Date.now()} /> : null}
+      {!compact ? <TaskPanel tasks={session?.tasks ?? []} /> : null}
       {approval ? <ApprovalPanel approval={approval} /> : null}
       {question ? <QuestionPanel key={`${session?.id}-${question.id}`} questions={question.questions} onSubmit={question.respond} isActive={!pickerFocused && !approval} /> : null}
       {cancelArmed ? <Text color={theme.warning}>Press Esc again to cancel the turn</Text> : null}
       {session?.deferredTurn && !busy ? <Text color={theme.warning}>Automatic retry ({session.deferredTurn.reason ?? "usage"}): {session.deferredTurn.reason === "network" ? "checking connection" : `after ${new Date(session.deferredTurn.retryAt).toLocaleString()}`} · Esc cancels</Text> : null}
       </Box>
-      <ComposerFrame width={contentWidth} session={session} shellMode={shellMode} approvalMode={config?.approvalMode} memoryEnabled={model.memoryStatus.enabled} memoryUnavailable={model.memoryStatus.unavailable}>
+      <ComposerFrame compact={compact} width={contentWidth} session={session} shellMode={shellMode} approvalMode={config?.approvalMode} memoryEnabled={model.memoryStatus.enabled} memoryUnavailable={model.memoryStatus.unavailable}>
         <Composer key={session?.id} value={draft} width={contentWidth} maxRows={maxComposerRows} onChange={value => { setDraft(value); setSelection(0); }} onSubmit={(value, opts) => { void submit(value, opts); }} history={history}
           onImagePaste={async () => {
             try {
@@ -173,7 +178,7 @@ export function AppView({ model }: { model: AppController }) {
           autoLaunchSkills={session?.autoLaunchSkills}
         />
       ) : null}
-      <BottomPanel
+      {!compact ? <BottomPanel
         width={contentWidth}
         height={terminalRows}
         pendingInteraction={!!question || !!approval}
@@ -189,7 +194,7 @@ export function AppView({ model }: { model: AppController }) {
         queuedPrompts={queued}
         usageLimits={usageLimits}
         usageError={usageError}
-      />
+      /> : null}
     </Box>
   );
 }

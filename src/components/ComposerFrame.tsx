@@ -12,7 +12,7 @@ export function contextLabel(session: Session | undefined): string {
   return `${gauge} Context ${percent === undefined ? "?" : `${percent}%`}`;
 }
 
-export function ComposerFrame({ children, width, session, shellMode, approvalMode = "request-approval", memoryEnabled = false, memoryUnavailable = false }: {
+export function ComposerFrame({ children, width, session, shellMode, approvalMode = "request-approval", memoryEnabled = false, memoryUnavailable = false, compact = false }: {
   children: React.ReactNode;
   width: number;
   session?: Session;
@@ -20,6 +20,7 @@ export function ComposerFrame({ children, width, session, shellMode, approvalMod
   approvalMode?: ApprovalMode;
   memoryEnabled?: boolean;
   memoryUnavailable?: boolean;
+  compact?: boolean;
 }) {
   const theme = useTheme(session?.kind);
   const isPlanning = session?.kind === "planning";
@@ -38,16 +39,18 @@ export function ComposerFrame({ children, width, session, shellMode, approvalMod
     </Box>
   );
   return (
-    <Box flexDirection="column" width="100%" marginTop={1} flexShrink={0}>
+    <Box flexDirection="column" width="100%" marginTop={compact ? 0 : 1} flexShrink={0}>
       <Text color={theme.border} wrap="truncate">{rule}</Text>
       {children}
-      <Text color={theme.border} wrap="truncate">{rule}</Text>
+      {!compact ? <Text color={theme.border} wrap="truncate">{rule}</Text> : null}
+      {!compact ? <>
       <Box flexDirection={wide ? "row" : "column"} justifyContent="space-between" gap={wide ? 2 : 0} width="100%">
         {hints}
         {layout.narrow ? <Box flexDirection="column"><Text color={theme.muted} wrap="truncate">{`${isPlanning ? "[PLAN] " : ""}${contextLabel(session)} · ${mode}`}</Text><Text color={theme.muted} wrap="truncate">{`Approval: ${approval}`}</Text></Box>
           : <Box flexShrink={0}><Text color={theme.muted} wrap="truncate">{details}</Text></Box>}
       </Box>
       {memoryEnabled ? <Text color={memoryUnavailable ? theme.warning : theme.secondary} wrap="truncate">Memory Enabled{memoryUnavailable ? ' · connection/configuration unavailable' : ''}</Text> : null}
+      </> : null}
     </Box>
   );
 }

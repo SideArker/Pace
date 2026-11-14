@@ -63,7 +63,7 @@ async function mount(dimensions?: { columns: number; rows: number }) {
     alternateScreen: false, maxFps: 1000,
   });
   instances.push(instance);
-  await vi.waitFor(() => expect(stdout.writes.join("")).toContain("Ask Pace or type /"));
+  await vi.waitFor(() => expect(stdout.writes.join("")).toMatch(/Ask Pace or type \/|Resize terminal/));
   await instance.waitUntilRenderFlush();
   return {
     stdout, stdin, instance, onClear, save, saveFeedback,
@@ -75,6 +75,13 @@ async function mount(dimensions?: { columns: number; rows: number }) {
     },
   };
 }
+
+it("keeps the composer at 40 × 10 and requests resize below that boundary", async () => {
+  const minimum = await mount({ columns: 40, rows: 10 });
+  expect(minimum.stdout.writes.join("")).toContain("Ask Pace or type /");
+  const tooSmall = await mount({ columns: 39, rows: 9 });
+  expect(tooSmall.stdout.writes.join("")).toContain("Resize terminal to at least 40 × 10.");
+});
 
 it("dispatches information commands and the planning shortcut through the mounted application", async () => {
   const ui = await mount();
@@ -581,8 +588,8 @@ it.each(['completed', 'failed', 'cancelled'])('cleans up the work animation cloc
   });
   await ui.submit('Test work animation cleanup');
   await vi.waitFor(() => expect(turn).toHaveBeenCalledOnce());
-  await vi.waitFor(() => expect(intervals.mock.calls.some(call => call[1] === 80)).toBe(true));
-  const clockIndex = intervals.mock.calls.findIndex(call => call[1] === 80);
+  await vi.waitFor(() => expect(intervals.mock.calls.some(call => call[1] === 40)).toBe(true));
+  const clockIndex = intervals.mock.calls.findIndex(call => call[1] === 40);
   const clock = intervals.mock.results[clockIndex]!.value;
   if (outcome === 'cancelled') ui.stdin.write('\x03'); else finish();
   await vi.waitFor(() => expect(clear).toHaveBeenCalledWith(clock));
@@ -651,7 +658,7 @@ it('shows one command activity and advances its spinner and text color on the sa
   chalk.level = 3;
   const realInterval = globalThis.setInterval;
   const intervals = vi.spyOn(globalThis, 'setInterval').mockImplementation((callback, delay, ...args) =>
-    realInterval(callback, delay === 80 ? 60_000 : delay, ...args));
+    realInterval(callback, delay === 40 ? 60_000 : delay, ...args));
   let finish!: () => void;
   vi.spyOn(Orchestrator.prototype, 'turn').mockImplementation(async (_prompt, session, _config, progress) => {
     progress({ kind: 'activity', id: 'command', category: 'command', title: 'Running: npm test', completed: false });
@@ -665,21 +672,21 @@ it('shows one command activity and advances its spinner and text color on the sa
   };
   try {
     await ui.submit('Run the command fixture');
-    await vi.waitFor(() => expect(stripVTControlCharacters(frame())).toContain('Running command'));
+    await vi.waitFor(() => expect(stripVTControlCharacters(frame())).toContain('Bash(npm test)'));
     const first = frame();
-    expect(stripVTControlCharacters(first).match(/Running command/g)).toHaveLength(1);
+    expect(stripVTControlCharacters(first).match(/Bash\(npm test\)/g)).toHaveLength(1);
     expect(stripVTControlCharacters(first)).not.toContain('Working');
     expect(first).toContain('⠋');
-    expect(first).toMatch(/\x1b\[38;2;56;189;248mR/);
-    const tick = intervals.mock.calls.find(call => call[1] === 80)![0] as () => void;
+    expect(first).toMatch(/\x1b\[38;2;56;189;248mB/);
+    const tick = intervals.mock.calls.find(call => call[1] === 40)![0] as () => void;
     tick();
     await new Promise(resolve => setImmediate(resolve));
     await ui.instance.waitUntilRenderFlush();
     const next = frame();
     expect(next).toContain('⠙');
-    expect(next).toMatch(/\x1b\[38;2;56;189;248mu/);
+    expect(next).toMatch(/\x1b\[38;2;56;189;248ma/);
     expect(stripVTControlCharacters(next)).not.toContain('Working');
     finish();
-    await vi.waitFor(() => expect(stripVTControlCharacters(frame())).not.toContain('Running command'));
+    await vi.waitFor(() => expect(stripVTControlCharacters(frame())).toContain('Command fixture finished'));
   } finally { ui.instance.unmount(); finish?.(); chalk.level = oldLevel; }
 });
