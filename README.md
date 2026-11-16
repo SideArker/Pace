@@ -31,7 +31,7 @@ pace
 
 Requires Node.js 20+, a terminal, and working Codex authentication. Sign in with the [Codex CLI](https://developers.openai.com/codex/cli) (`codex login`) or use a supported Codex CLI environment credential. Pace never reads or stores a token itself. Codex expects a Git project.
 
-Run `pace doctor` to check your setup. Run `pace setup` to configure optional Vex routing. Pace does not ask for an API key during installation or startup.
+The first interactive launch opens a setup wizard for theme, approval mode and routing. Saving opens Pace and prevents the wizard from appearing again; cancelling leaves settings unchanged and offers setup again on the next launch. Existing settings or conversation storage identify returning users. Run `pace doctor` to check your setup. Run `pace setup` to configure optional Vex routing. Pace does not ask for an API key during installation or startup.
 
 <details>
 <summary>Build and run from a checkout</summary>
@@ -127,7 +127,7 @@ Run `pace exec "your request"` from a project directory to continue its active c
 
 `/theme` opens a dedicated screen with theme selection on the left and a live sample git diff and conversation on the right. Use ↑/↓ or Tab to preview, Enter to save, and Esc to return to chat without changing the saved scheme. Available schemes are `default`, `ocean`, `warm`, `forest`, `rose`, `violet`, `amber`, `slate`, and `mono`. Use `/theme <scheme>` (for example, `/theme forest`) to save directly in `~/.pace/config.json`. The default palette retains the planning accent; named palettes change UI accents while preserving error, warning and success meanings. File review keeps its existing appearance and controls. QR codes retain black/white contrast.
 
-The active activity label (for example, “Running command”) has a spinner and color sweep driven by the same 80 ms tick. The generic work row is hidden while that activity is visible; usage and tips remain. It stops with the turn; `NO_COLOR`, `FORCE_COLOR=0`, `TERM=dumb`, non-TTY output and the mono scheme use a static label. App Server status events remain internal state. Active transcript activities use stable labels until completion; Ctrl+O still exposes their details. Agent answers, approvals, questions and errors remain visible.
+The active activity label (for example, “Bash(npm test)”) has a spinner and color sweep driven by the same 40 ms tick. The generic work row is hidden while that activity is visible; usage and tips remain. It stops with the turn; `NO_COLOR`, `FORCE_COLOR=0`, `TERM=dumb`, non-TTY output and the mono scheme use a static label. The status row shows the current agent action. Active transcript activities show compact command, file, search and tool targets; Ctrl+O exposes their full details. Agent answers, approvals, questions and errors remain visible.
 
 The dock shares width thresholds at 78 and 118 columns for two/three columns; narrower terminals stack panels. Composer hints shorten below 50 columns. MCP, memory and benchmark managers reserve space for choices and navigation beneath long content and reduce visible list rows on short terminals.
 

@@ -142,15 +142,30 @@ else if (args[0] === "doctor") {
   }
 } else if (args[0] === "exec") {
   process.exitCode = await execTurn(args.slice(1).join(" "));
-} else if (args.length) {
+} else if (args.length && !(args.length === 1 && args[0] === "--setup")) {
   console.error(`Unknown command: ${args.join(" ")}. Run pace --help.`);
   process.exitCode = 2;
 } else {
-  let instance: ReturnType<typeof render>;
-  instance = render(<App onClear={() => {
-    instance?.clear();
-    runTerminalClear();
-    process.stdout.write("\x1b[3J\x1b[2J\x1b[H");
-  }} />, interactiveInkOptions);
-  await instance.waitUntilExit();
+  let start = true;
+  if (args[0] === "--setup" || (process.stdin.isTTY && process.stdout.isTTY)) {
+    try {
+      const { needsStartupSetup, runStartupSetup } = await import("./startup-setup.js");
+      if (args[0] === "--setup" || await needsStartupSetup(new PaceStore().baseDir)) {
+        start = await runStartupSetup();
+      }
+    } catch (error) {
+      console.error(`Could not run startup setup: ${String(error)}`);
+      process.exitCode = 1;
+      start = false;
+    }
+  }
+  if (start) {
+    let instance: ReturnType<typeof render>;
+    instance = render(<App onClear={() => {
+      instance?.clear();
+      runTerminalClear();
+      process.stdout.write("\x1b[3J\x1b[2J\x1b[H");
+    }} />, interactiveInkOptions);
+    await instance.waitUntilExit();
+  }
 }
