@@ -160,7 +160,7 @@ it("passes customized routing and handoff instructions through a turn", async ()
   const seen: string[] = [];
   const vex = { choose: async (request: VexRequest) => {
     requests.push(request);
-    return decision(request, request.options[0]?.id === "single" ? "scout" : "0:low");
+    return decision(request, request.options[0]?.id === "single" ? "scout" : request.options[0]!.id);
   } };
   const runner = { run: async (prompt: string, _project: string, _route: unknown, _thread: unknown, _progress: unknown, _signal: unknown, mode: string) => {
     seen.push(prompt);
@@ -168,7 +168,7 @@ it("passes customized routing and handoff instructions through a turn", async ()
       ? JSON.stringify({ summary: "Found files", findings: [], nextSteps: [], checks: [], risks: [] })
       : "done", completed: true };
   } };
-  const config: Config = { routingMode: "auto", defaultRoute: { model: "gpt-6-luna", effort: "low" }, models: [{ model: "gpt-6-luna", efforts: ["low"] }] };
+  const config: Config = { routingMode: "auto", defaultRoute: { model: "gpt-6.1-sol", effort: "medium" }, models: [{ model: "gpt-6-luna", efforts: ["low"] }, { model: "gpt-6.1-sol", efforts: ["medium"] }] };
   await new Orchestrator(new PaceStore(dir), runner, vex).turn("work", newSession(dir, "auto"), config, () => {});
   expect(requests[0]?.question).toBe("Custom workflow question");
   expect(requests[1]?.context.stageObjective).toBe("Custom scout stage");

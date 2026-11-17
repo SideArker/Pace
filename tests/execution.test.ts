@@ -69,6 +69,41 @@ it('falls back to the configured route after one HTTP 403 and records the failed
   ]));
 });
 
+it('records a failed Vex connection before using the configured route', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  const choose = vi.fn();
+  const session = newSession(dir, 'auto');
+  const outcome = await new Orchestrator(new PaceStore(dir), { run: async () => ({ result: 'Done', completed: true }) },
+    { verify: async () => { throw new Error('HTTP 403'); }, choose }).turn('Implement the fix', session, config, () => {});
+  expect(choose).not.toHaveBeenCalled();
+  expect(outcome.route).toEqual(config.defaultRoute);
+  expect(session.controlDecisions).toEqual(expect.arrayContaining([
+    expect.objectContaining({ source: 'vex', objective: 'connection', failed: true, requests: 0 }),
+    expect.objectContaining({ source: 'policy', requests: 0 }),
+  ]));
+});
+
+it('reroutes a saved Luna low completion stage and rejects an explicit Luna low completion route', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  const routes: Route[] = [];
+  const runner: CodexRunner = { run: async (_prompt, _project, route) => { routes.push(route); return { result: 'Done', completed: true }; } };
+  const low: Route = { model: 'gpt-6-luna', effort: 'low' };
+  const session = newSession(dir, 'auto');
+  session.route = low;
+  session.activeTask = { id: 'task', originalRequest: 'Implement the fix', instructions: [], workflow: {
+    version: 1, generation: 1, shape: 'single', stage: 'final', mainRoute: low, source: 'vex',
+  } };
+  const vex = { choose: async (request: VexRequest) => decision(request,
+    request.options.some(option => option.id === 'continue') ? 'continue' : request.options[0]!.id) };
+  await new Orchestrator(new PaceStore(dir), runner, vex).turn('Continue', session, config, () => {});
+  expect(routes).toEqual([{ model: 'gpt-6-sol', effort: 'medium' }]);
+  const manual = newSession(dir, 'manual');
+  manual.route = low;
+  await expect(new Orchestrator(new PaceStore(dir), runner, vex).turn('Implement', manual,
+    { ...config, routingMode: 'manual' }, () => {})).rejects.toThrow('Luna low cannot run a completion turn');
+  expect(routes).toHaveLength(1);
+});
+
 it('starts a fresh thread after global preference changes and disabling, retaining conversation history', async () => {
   dir = await mkdtemp(join(tmpdir(), 'pace-global-thread-test-'));
   const project = join(dir, 'repo'); await mkdir(project);

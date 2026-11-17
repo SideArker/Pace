@@ -18,6 +18,7 @@ import { advanceTask, retainedTask, type TaskRelation } from "./active-task.js";
 import { PaceStore } from "./sessions.js";
 import { verifyPlanPrompt, tryReadPlanFile, structuredHandoff, addUsage, awaitRouting, loadPlanningInstructions, planningPrompt } from "./orchestrator-helpers.js";
 import { createTurnRouting, VexUnavailableError } from "./orchestrator-routing.js";
+import { decisionAudit } from "./vex/decisions.js";
 export { VexUnavailableError } from "./orchestrator-routing.js";
 import { runPlanningStage } from "./workflow-stages.js";
 import { durableRunner, ensureTask, requiredSave, TransitionSaveError } from "./task-execution.js";
@@ -247,6 +248,12 @@ export class Orchestrator {
         } catch (error) {
           signal?.throwIfAborted();
           vexAvailable = false;
+          session.controlDecisions = [...(session.controlDecisions ?? []), {
+            ...decisionAudit(performance.now(), 0, undefined, error),
+            role: verifierTurn ? "verifier" : "main", objective: "connection",
+            taskId: session.activeTask?.id, at: new Date().toISOString(),
+          }];
+          await save();
           systemMessage(`Vex connection unavailable; using the configured route where needed.`);
         }
       }
@@ -299,8 +306,10 @@ export class Orchestrator {
           taskRelation = control === "replace" ? "replace" : "continue";
           relationResolved = true;
           preserveWorkflow = ["continue", "reroute"].includes(control) && !!session.activeTask?.workflow;
-          preserveRoute = control === "continue" && !!session.activeTask?.workflow?.mainRoute && validRoute(session.activeTask.workflow.mainRoute, enabled);
-          if (control === "continue" && session.activeTask?.workflow?.mainRoute && !preserveRoute)
+          const savedRoute = session.activeTask?.workflow?.mainRoute;
+          const lowLunaCompletion = savedRoute?.model === "gpt-6-luna" && savedRoute.effort === "low" && session.kind !== "planning";
+          preserveRoute = control === "continue" && !!savedRoute && validRoute(savedRoute, enabled) && !lowLunaCompletion;
+          if (control === "continue" && savedRoute && !validRoute(savedRoute, enabled))
             throw new Error("The task lead route is unavailable. Choose an enabled manual route or ask Vex to reroute.");
           if (preserveWorkflow) { shape = session.activeTask!.workflow!.shape; route = session.activeTask!.workflow!.mainRoute ?? session.route; }
           if (control === "clarify") shape = "clarify";
@@ -403,6 +412,7 @@ export class Orchestrator {
             : enabled.map(model => model.model === "gpt-6-luna" ? { ...model, efforts: model.efforts.filter(effort => effort !== "low") } : model).filter(model => model.efforts.length);
           const available = selected && selected !== "vex" && selected.model
             ? candidates.filter(model => model.model === selected.model) : candidates;
+          if (!available.length) throw new Error("No eligible completion route is enabled. Choose another model or raise Luna above low in /models.");
           route = chosenRoute(
             (
               await chooseWithFallback(
@@ -420,6 +430,8 @@ export class Orchestrator {
       }
       signal?.throwIfAborted();
       if (preserveRoute) note = "Vex retained the task stage and lead route";
+      if (!planningTurn && !verifierTurn && route.model === "gpt-6-luna" && route.effort === "low")
+        throw new Error("Luna low cannot run a completion turn. Select Sol or Luna at medium or higher reasoning.");
       if (intent !== "verify_plan" && intent !== "revise_plan" && intent !== "continue_verify") session.route = route;
       if (verifierTurn) session.verifier = { ...(session.verifier ?? {}), route: { ...route } };
       else if (session.activeTask?.workflow) { session.activeTask.workflow.mainRoute = { ...route }; session.activeTask.workflow.needsAssessment = false; }

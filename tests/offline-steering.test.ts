@@ -56,7 +56,7 @@ for (const item of suite.cases) it(`${item.id}: delivered steering survives rest
   expect(codexPrompts[0]!.split(item.steering)).toHaveLength(2);
   expect(codexPrompts[1]).not.toContain(item.steering);
   expect(requests.every(request => ["continue", "closed"].includes(request.options[0]!.id))).toBe(true);
-  expect(requests.some(request => request.context.projection)).toBe(true);
+  expect(requests.every(request => !request.context.projection)).toBe(true);
   expect(loaded.activeTask!.assessment).toBe("unknown");
   expect(loaded.controlDecisions!.every(record => record.promptProfile && record.requestAttempts?.length === 1 && record.usage === "unknown" && record.costUsd === "unknown")).toBe(true);
 });
