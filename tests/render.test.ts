@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import React from "react";
 import { renderToString } from "ink";
 import { Header, Transcript, splitTranscript, type Line } from "../src/components/Transcript.js";
@@ -158,6 +158,26 @@ describe("activity transcript", () => {
     expect(output).toContain("Thought for 2.3 seconds, 42 tokens");
     expect(output).toContain("■ ◆ Bash(false)");
     expect(output).toContain("■ ◆ Edit(src/file.ts)");
+  });
+
+  it("updates active thinking in tenths of a second and keeps completed time fixed", () => {
+    const clock = vi.spyOn(Date, "now");
+    const renderThought = (lines: Line[]) => renderToString(React.createElement(Transcript, {
+      lines, outputsExpanded: false, detailsExpanded: false,
+    }), { columns: 80 });
+    const active: Line = { id: 1, role: "activity", text: "Thinking", spaceBefore: false,
+      activity: { category: "thinking", completed: false, startedAt: 1000 } };
+    try {
+      clock.mockReturnValue(1100);
+      expect(renderThought([active])).toContain("Thinking for 0.1 seconds");
+      clock.mockReturnValue(1200);
+      expect(renderThought([active])).toContain("Thinking for 0.2 seconds");
+      expect(renderThought([{ ...active, activity: { ...active.activity!, completed: true, durationMs: 150 } }]))
+        .toContain("Thought for 0.2 seconds");
+      expect(renderThought([{ ...active, activity: { ...active.activity!, completed: true, durationMs: 200 } },
+        { ...active, id: 2, activity: { category: "thinking", completed: false, startedAt: 1100 } }]))
+        .toContain("Thinking for 0.3 seconds");
+    } finally { clock.mockRestore(); }
   });
 
   it("renders the full transcript for terminal history", () => {

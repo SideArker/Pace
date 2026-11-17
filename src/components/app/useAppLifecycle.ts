@@ -17,12 +17,13 @@ export function useAppLifecycle({ state, transcript, queue }: {
   transcript: ReturnType<typeof createTranscriptActions>;
   queue: ReturnType<typeof usePromptQueue>;
 }) {
-  const { runningIds, sideBusy, shellJobs, processes, setTick, remoteHost, pendingApprovals,
+  const { runningIds, sideBusy, shellJobs, processes, lines, setTick, remoteHost, pendingApprovals,
     pendingQuestions, jobs, titleAborts, shells, setVexState, setConfig, latestConfig, setSkills,
     sessionRecords, thisPaceIds, activeSessionId, sessionLines, preSessionLines, setSession,
     setOpenSessions, setMissingProjectPaths, setStatus } = state;
   const { stdout } = useStdout();
   const animate = supportsAnimation(stdout, process.env, state.config?.colorScheme);
+  const activeThinking = lines.some(line => line.activity?.category === "thinking" && !line.activity.completed);
   const { add } = transcript;
   const { promptQueue } = queue;
   useEffect(() => {
@@ -34,11 +35,11 @@ export function useAppLifecycle({ state, transcript, queue }: {
     return () => { active = false; };
   }, []);
   useEffect(() => {
-    if (!runningIds.length && !sideBusy && shellJobs === 0 && !processes.length) return;
-    if (!animate && !shellJobs && !processes.length) return;
-    const timer = setInterval(() => setTick((value) => value + 1), animate ? 40 : 1000);
+    if (!runningIds.length && !sideBusy && shellJobs === 0 && !processes.length && !activeThinking) return;
+    if (!animate && !shellJobs && !processes.length && !activeThinking) return;
+    const timer = setInterval(() => setTick((value) => value + 1), activeThinking ? 100 : animate ? 40 : 1000);
     return () => clearInterval(timer);
-  }, [runningIds.length, sideBusy, shellJobs, processes.length, animate]);
+  }, [runningIds.length, sideBusy, shellJobs, processes.length, animate, activeThinking]);
   useEffect(
     () => () => {
       void remoteHost.current?.close();

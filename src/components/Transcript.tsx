@@ -79,8 +79,10 @@ function activityTitle(line: Line, width: number): string {
   const activity = line.activity!;
   const text = line.text.replace(/^(?:Running|Ran|Failed): /, "");
   if (activity.category === "thinking") {
-    const duration = activity.durationMs ?? (activity.startedAt ? Date.now() - activity.startedAt : undefined);
-    return `Thought${duration === undefined ? "" : ` for ${Math.max(0, Math.round(duration / 100) / 10)} seconds`}${activity.tokens === undefined ? "" : `, ${activity.tokens} tokens`}`;
+    const elapsed = activity.startedAt === undefined ? undefined : Date.now() - activity.startedAt;
+    const duration = activity.completed ? activity.durationMs ?? elapsed
+      : activity.durationMs === undefined ? elapsed : activity.durationMs + (elapsed ?? 0);
+    return `${activity.completed ? "Thought" : "Thinking"}${duration === undefined ? "" : ` for ${Math.max(0, Math.round(duration / 100) / 10)} seconds`}${activity.tokens === undefined ? "" : `, ${activity.tokens} tokens`}`;
   }
   if (activity.category === "command") {
     const command = text.replace(/ \(exit [^)]+\)$/, "");
@@ -136,7 +138,7 @@ export function Transcript({
         activity: {
           ...line.activity,
           detail: [previous.activity.detail, line.activity.detail].filter(Boolean).join("\n\n") || undefined,
-          startedAt: previous.activity.startedAt,
+          startedAt: line.activity.completed ? previous.activity.startedAt : line.activity.startedAt,
           durationMs: previous.activity.durationMs === undefined && line.activity.durationMs === undefined ? undefined : (previous.activity.durationMs ?? 0) + (line.activity.durationMs ?? 0),
           tokens: previous.activity.tokens === undefined && line.activity.tokens === undefined ? undefined : (previous.activity.tokens ?? 0) + (line.activity.tokens ?? 0),
         },
@@ -212,7 +214,7 @@ export function Transcript({
                 </Box>
                 <Box flexShrink={1}>
                   <Text wrap={line.activity.category === "command" ? "truncate" : undefined} color={theme[activityColors[line.activity.category]]} bold={line.activity.category === "command"}>
-                    {!line.activity.completed && !expanded ? <ColorSweep text={line.activity.category === "thinking" ? "Thinking" : activityTitle(line, width)} tick={tick} /> : <>◆ {activityTitle(line, width)}</>}
+                    {!line.activity.completed && !expanded ? <ColorSweep text={activityTitle(line, width)} tick={tick} /> : <>◆ {activityTitle(line, width)}</>}
                   </Text>
                 </Box>
                 {line.activity.detail ? (

@@ -112,12 +112,12 @@ for (const menu of [false, true]) it(`selects manual routing through ${menu ? "t
       }
       await vi.waitFor(() => expect(ui.stdout.writes.join("")).toContain("Manual single workflow saved"));
     } else {
-      await ui.submit("/manual gpt-6-sol high");
+      await ui.submit("/manual gpt-6.2-sol high");
       await vi.waitFor(() => expect(ui.stdout.writes.join("")).toContain("Manual routing enabled:"));
     }
     const session = ui.save.mock.calls[0]![0];
     expect(await isolated.load(session.projectPath, session.id)).toMatchObject({ routingMode: "manual", turns: [],
-      ...(menu ? { manualWorkflow: { shape: "single", routes: { final: { model: "gpt-6-sol", effort: "high" } } } } : { route: { model: "gpt-6-sol", effort: "high" } }),
+      ...(menu ? { manualWorkflow: { shape: "single", routes: { final: { model: "gpt-6.2-sol", effort: "high" } } } } : { route: { model: "gpt-6.2-sol", effort: "high" } }),
     });
     expect(turn).not.toHaveBeenCalled();
   } finally { ui.instance.unmount(); await rm(root, { recursive: true, force: true }); }
@@ -375,7 +375,7 @@ it.each([
   try {
     ui.save.mockImplementation(target => saveChanges.call(isolated, target, false));
     vi.spyOn(PaceStore.prototype, "update").mockImplementation((identity, mutate) => update.call(isolated, identity, mutate, false));
-    await ui.submit("/manual gpt-6-sol high");
+    await ui.submit("/manual gpt-6.2-sol high");
     session = ui.save.mock.calls[0]![0];
     session.title = "Review conversation";
     if (lineComment) {
@@ -593,6 +593,29 @@ it.each(['completed', 'failed', 'cancelled'])('cleans up the work animation cloc
   const clock = intervals.mock.results[clockIndex]!.value;
   if (outcome === 'cancelled') ui.stdin.write('\x03'); else finish();
   await vi.waitFor(() => expect(clear).toHaveBeenCalledWith(clock));
+});
+
+it('refreshes active thinking every 100 ms and stops its clock when thinking completes', async () => {
+  vi.stubEnv('NO_COLOR', '1');
+  const ui = await mount();
+  const intervals = vi.spyOn(globalThis, 'setInterval');
+  const clear = vi.spyOn(globalThis, 'clearInterval');
+  let finish!: () => void;
+  vi.spyOn(Orchestrator.prototype, 'turn').mockImplementation(async (_prompt, session, _config, progress) => {
+    progress({ kind: 'activity', id: 'thought', category: 'thinking', title: 'Thinking', completed: false });
+    await new Promise<void>(resolve => { finish = resolve; });
+    progress({ kind: 'activity', id: 'thought', category: 'thinking', title: 'Thinking', completed: true });
+    return { session, result: 'Done', route: session.route, note: 'Mock', durationMs: 1, stages: [], routing: [], artifacts: [] };
+  });
+  try {
+    await ui.submit('Test thinking clock');
+    await vi.waitFor(() => expect(intervals.mock.calls.some(call => call[1] === 100)).toBe(true));
+    const clockIndex = intervals.mock.calls.findIndex(call => call[1] === 100);
+    const clock = intervals.mock.results[clockIndex]!.value;
+    expect(ui.stdout.writes.join('')).toContain('Thinking for');
+    finish();
+    await vi.waitFor(() => expect(clear.mock.calls.some(call => call[0] === clock)).toBe(true));
+  } finally { finish?.(); }
 });
 
 it('lists an artifact and executes its ID from a normal conversation through the mounted UI', async () => {
