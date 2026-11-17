@@ -8,6 +8,8 @@
     "ink": "^7.1.1",
     "qrcode-terminal": "^0.12.0",
     "react": "^19.3.0",
+    "react-devtools": "^8.0.0",
+    "react-devtools-core": "^8.0.0",
     "string-width": "^8.3.0",
     "ws": "^8.22.0",
     "zod": "^4.6.7"
