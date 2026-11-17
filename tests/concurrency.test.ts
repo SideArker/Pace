@@ -16,7 +16,7 @@ it("runs separate conversations concurrently and keeps background saves from cha
   const config = { ...DEFAULT_CONFIG, skillFolder: null };
   const first = newSession(directory, "manual");
   const second = newSession(directory, "manual");
-  first.route = { model: "gpt-6-sol", effort: "high" };
+  first.route = { ...DEFAULT_CONFIG.defaultRoute };
   second.route = { ...first.route };
 
   const pending = new Map<string, (value: Execution) => void>();
@@ -59,7 +59,7 @@ it("cancels one conversation without stopping another", async () => {
   const config = { ...DEFAULT_CONFIG, skillFolder: null };
   const first = newSession(directory, "manual");
   const second = newSession(directory, "manual");
-  first.route = { model: "gpt-6-sol", effort: "high" };
+  first.route = { ...DEFAULT_CONFIG.defaultRoute };
   second.route = { ...first.route };
   const controller = new AbortController();
   let ready!: () => void;

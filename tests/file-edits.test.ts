@@ -208,7 +208,7 @@ it("keeps concurrent conversations running but skips ambiguous file undo", async
 });
 
 it.each([false, true])("records completed and failed Codex edits (failure: %s) and invalidates redo on new work", async failure => {
-  session.route = { model: "gpt-6-sol", effort: "high" };
+  session.route = { ...DEFAULT_CONFIG.defaultRoute };
   const config = { ...DEFAULT_CONFIG, skillFolder: null };
   const orchestrator = new Orchestrator(store, { async run() {
     await writeFile(file("agent.txt"), "changed by runner");
@@ -229,7 +229,7 @@ it.each([false, true])("records completed and failed Codex edits (failure: %s) a
 });
 
 it("retains each failed retry that made file edits so all attempts can be undone", async () => {
-  session.route = { model: "gpt-6-sol", effort: "high" };
+  session.route = { ...DEFAULT_CONFIG.defaultRoute };
   let attempt = 0;
   const orchestrator = new Orchestrator(store, { async run() {
     await writeFile(file("partial"), `attempt ${++attempt}`);

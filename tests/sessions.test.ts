@@ -86,8 +86,31 @@ it('loads definitive routes for an untouched legacy automatic config', async () 
   const store = new PaceStore(dir);
   await writeFile(join(dir, 'config.json'), JSON.stringify({ models: [], defaultRoute: {}, routingMode: 'auto' }));
   const config = await store.loadConfig();
-  expect(config.defaultRoute).toEqual({ model: 'gpt-6-sol', effort: 'high' });
-  expect(config.models.map(model => model.model)).toEqual(['gpt-6-luna', 'gpt-6-sol', 'gpt-6-astra']);
+  expect(config.defaultRoute).toEqual({ model: 'gpt-6.2-sol', effort: 'high' });
+  expect(config.models.map(model => model.model)).toEqual(['gpt-6-luna', 'gpt-6.2-sol', 'gpt-6.1-terra', 'gpt-6.2-astra']);
+});
+
+it('removes pre-GPT-6 models from saved routing and repairs an obsolete default', async () => {
+  dir = await mkdtemp(join(tmpdir(), 'pace-test-'));
+  const store = new PaceStore(dir);
+  await store.saveConfig({ ...structuredClone((await store.loadConfig())), models: [
+    { model: 'gpt-5.6-sol', efforts: ['high'] },
+    { model: 'gpt-6.1-terra', efforts: ['medium'], defaultEffort: 'medium' },
+  ], defaultRoute: { model: 'gpt-5.6-sol', effort: 'high' } });
+  const config = await store.loadConfig();
+  expect(config.models.map(model => model.model)).toEqual(['gpt-6.1-terra']);
+  expect(config.defaultRoute).toEqual({ model: 'gpt-6.1-terra', effort: 'medium' });
+  expect(JSON.parse(await readFile(join(dir, 'config.json'), 'utf8')).models.map((model: { model: string }) => model.model)).toEqual(['gpt-6.1-terra']);
+  await store.saveConfig({ ...config, models: [{ model: 'gpt-5.6-sol', efforts: ['high'] }], defaultRoute: { model: 'gpt-5.6-sol', effort: 'high' } });
+  const migrated = await store.loadConfig();
+  expect(migrated.models.map(model => model.model)).toEqual(['gpt-6-luna', 'gpt-6.2-sol', 'gpt-6.1-terra', 'gpt-6.2-astra']);
+  expect(migrated.defaultRoute).toEqual({ model: 'gpt-6.2-sol', effort: 'high' });
+  await store.saveConfig({ ...config, models: [
+    { model: 'gpt-5.6-sol', efforts: ['high'] },
+    { model: 'gpt-6-luna', efforts: ['low'], enabled: false },
+    { model: 'gpt-6.2-sol', efforts: ['high'], defaultEffort: 'high' },
+  ], defaultRoute: { model: 'gpt-5.6-sol', effort: 'high' } });
+  expect((await store.loadConfig()).defaultRoute).toEqual({ model: 'gpt-6.2-sol', effort: 'high' });
 });
 
 it('discovers sessions across projects and marks moved projects missing', async () => {

@@ -12,10 +12,11 @@ it('sends original request, recent conversation, all valid pairs, capabilities, 
   const shape = shapeRequest(prompt, turns, DEFAULT_CONFIG.models);
   const stage = stageRequest(prompt, turns, DEFAULT_CONFIG.models, 'Produce requested plan', '{"summary":"repo finding"}');
   expect(shape.context).toMatchObject({ originalRequest: prompt, recentConversation: [{ user: 'Previous request', assistant: 'Previous answer' }] });
-  expect(shape.context.availableModels).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'gpt-6-sol', standardUsdPerMillionTokens: PRICE_SNAPSHOT.rates['gpt-6-sol'] })]));
+  expect(shape.context.availableModels).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'gpt-6.2-sol', standardUsdPerMillionTokens: PRICE_SNAPSHOT.rates['gpt-6.2-sol'] })]));
+  expect(shape.context.availableModels).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'gpt-6.1-terra', capability: expect.stringContaining('Visual reasoning') })]));
   expect(stage.context).toMatchObject({ originalRequest: prompt, stageObjective: 'Produce requested plan', priorStageHandoff: '{"summary":"repo finding"}' });
   expect(stage.options).toEqual(routeChoices(DEFAULT_CONFIG.models));
-  expect(stage.options).toHaveLength(10);
+  expect(stage.options).toHaveLength(12);
   expect(shape.decisionType).toBe('routing');
   expect(shape.constraints).toContain('Plan and scout_plan stop after saving a plan in conversation artifacts');
   expect(shapeRequest(prompt, turns, DEFAULT_CONFIG.models.filter(model => model.model !== 'gpt-6-luna')).options.map(option => option.id)).toContain('scout');
@@ -81,7 +82,7 @@ it('prices ordinary, cached, cache writes, and output once at the stage model ra
   expect(costForUsage({ model: 'gpt-6-sol', effort: 'high' }, usage)).toBeCloseTo((70 * 2 + 20 * 0.2 + 10 * 2.5 + 5 * 10) / 1_000_000, 12);
   expect(costForUsage({ model: 'gpt-6-luna', effort: 'low' }, usage)).toBeCloseTo((70 * 0.1 + 20 * 0.01 + 10 * 0.125 + 5 * 0.5) / 1_000_000, 12);
   expect(() => costForUsage({ model: 'gpt-6-sol' }, { ...usage, cached_input_tokens: 101 })).toThrow('cache tokens exceed');
-  expect(chosenRoute('1:high', DEFAULT_CONFIG.models)).toEqual({ model: 'gpt-6-sol', effort: 'high' });
+  expect(chosenRoute('1:high', DEFAULT_CONFIG.models)).toEqual({ model: 'gpt-6.2-sol', effort: 'high' });
 });
 
 it('accepts supported reasoning effort levels for user-selected models', () => {
