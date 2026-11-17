@@ -153,16 +153,16 @@ Pace discovers skills in `~/.agents/skills` by default (`C:\Users\<user>\.agents
 
 ## Models and routing
 
-With a fresh config, Pace enables Luna (`low`, `medium`, `high`), Sol (`medium`, `high`, `xhigh`, `ultra`), and Astra (`high`, `xhigh`, `ultra`). Existing configs keep their saved allowlists and effort levels. Pace refreshes the Codex App Server model catalog at startup and whenever `/models` opens. New models appear there automatically with their supported reasoning levels. Space enables a discovered model using its Codex default effort; M in the reasoning menu selects a manual route. Models listed only in [versions.json](versions.json) also appear with an "access unverified" label until Codex lists them. Saved custom IDs stay visible if the catalog is unavailable. Disabled models are never offered to Vex or Codex. If every model is off, Pace stops the turn and asks you to enable one. When a turn changes model, Pace resumes the existing Codex thread with the selected model and effort. The thread ID and its history remain available.
+With a fresh config, Pace enables GPT-6 Luna (`low`, `medium`, `high`), GPT-6.2 Sol (`medium`, `high`, `xhigh`, `ultra`), GPT-6.1 Terra (`medium`, `high`), and GPT-6.2 Astra (`high`, `xhigh`, `ultra`). Existing configs keep their saved GPT-6+ allowlists and effort levels; older models are removed when loaded. Pace refreshes the Codex App Server model catalog at startup and whenever `/models` opens. GPT-6+ models appear there with their supported reasoning levels. Space enables a discovered model using its Codex default effort; M in the reasoning menu selects a manual route. Models listed only in [versions.json](versions.json) also appear with an "access unverified" label until Codex lists them. Saved GPT-6+ custom IDs stay visible if the catalog is unavailable. Disabled models are never offered to Vex or Codex. If every model is off, Pace stops the turn and asks you to enable one. When a turn changes model, Pace resumes the existing Codex thread with the selected model and effort. The thread ID and its history remain available.
 
 The model menu uses the catalog returned by your authenticated Codex App Server. The catalog can change with your account and workspace; a live turn still confirms access. You can also edit `~/.pace/config.json` (`%USERPROFILE%\.pace\config.json` on Windows) directly:
 
 ```json
 {
   "routingMode": "auto",
-  "defaultRoute": { "model": "gpt-6-sol", "effort": "high" },
+  "defaultRoute": { "model": "gpt-6.2-sol", "effort": "high" },
   "models": [
-    { "model": "gpt-6-sol", "efforts": ["medium", "high", "xhigh"], "defaultEffort": "high" },
+    { "model": "gpt-6.2-sol", "efforts": ["medium", "high", "xhigh"], "defaultEffort": "high" },
     { "model": "gpt-6-luna", "efforts": ["low", "medium", "high"], "defaultEffort": "low" }
   ]
 }
