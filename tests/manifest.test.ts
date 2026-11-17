@@ -8,6 +8,10 @@ it('validates the published catalog and compares installed versions numerically'
   const manifest = currentVersionManifest();
   expect(manifest.models?.['gpt-6.1-sol']?.defaultEffort).toBe('medium');
   expect(manifest.pricing.rates['gpt-6.1-sol']).toEqual({ input: 2, cachedInput: 0.1, cacheWriteInput: 2.5, output: 10 });
+  expect(manifest.pricing.rates['gpt-6.2-astra']).toEqual({ input: 8, cachedInput: 0.4, cacheWriteInput: 10, output: 40 });
+  expect(manifest.pricing.rates['gpt-6.2-sol']).toEqual({ input: 2, cachedInput: 0.1, cacheWriteInput: 2.5, output: 10 });
+  expect(manifest.pricing.rates['gpt-6.1-terra']).toEqual({ input: 1, cachedInput: 0.05, cacheWriteInput: 1.25, output: 5 });
+  expect(Object.keys(manifest.pricing.rates).every(model => /^gpt-(?:[6-9]|\d{2,})(?:[.-]|$)/.test(model))).toBe(true);
   expect(newerPaceVersion('0.9.9', '0.10.0')).toBe(true);
   expect(newerPaceVersion('1.0.0', '0.99.0')).toBe(false);
   expect(() => parseVersionManifest({ ...manifest, pricing: { ...manifest.pricing, rates: { bad: { input: -1 } } } })).toThrow();

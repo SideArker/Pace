@@ -29,7 +29,10 @@
     "gpt-6-luna": "Collect and organize data, repeatable operations, bounded tasks, and explain established facts. Validate suitability for the full remaining scope.",
     "gpt-6-sol": "Synthesize dependencies, open problems, uncertainty, verify assumptions, and demanding implementations. Sol High is the quality baseline, not a routing mandate.",
     "gpt-6.1-sol": "near-Astra capability for complex coding at the Sol price tier; synthesize dependencies, open problems, uncertainty and demanding implementations.",
-    "gpt-6-astra": "most demanding end-to-end work"
+    "gpt-6.2-sol": "Everyday coding and agent workflows; synthesize dependencies, open problems, uncertainty, and demanding implementations at the Sol price tier.",
+    "gpt-6.1-terra": "Visual reasoning, precise computer use, clear writing, and scoped code fixes.",
+    "gpt-6-astra": "most demanding end-to-end work",
+    "gpt-6.2-astra": "most demanding end-to-end reasoning, coding, and professional work"
   },
   "effortCapabilities": {
     "minimal": "short direct response with minimal reasoning",
