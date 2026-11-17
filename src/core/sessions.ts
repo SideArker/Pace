@@ -12,7 +12,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { DEFAULT_CONFIG, isRecord, parseConfig } from "../shared/config.js";
+import { DEFAULT_CONFIG, isGpt6OrNewer, isRecord, parseConfig, validRoute } from "../shared/config.js";
 import type { Config, Notice, Session } from "../shared/types.js";
 import { normalizeProject, projectKey } from "./session-model.js";
 import { parseSession, parseSessionSummary } from "./session-record.js";
@@ -106,7 +106,16 @@ export class PaceStore {
       // An untouched config from older Pace versions meant "use the Codex default".
       if (config.routingMode === "auto" && !config.models.length && !config.defaultRoute.model)
         return structuredClone(DEFAULT_CONFIG);
-      return config;
+      const models = config.models.filter(model => isGpt6OrNewer(model.model));
+      if (models.length === config.models.length) return config;
+      const first = models.find(model => model.enabled !== false && model.model === DEFAULT_CONFIG.defaultRoute.model &&
+        model.efforts.includes(DEFAULT_CONFIG.defaultRoute.effort!)) ?? models.find(model => model.enabled !== false) ?? models[0];
+      const updated = !first
+        ? { ...config, models: structuredClone(DEFAULT_CONFIG.models), defaultRoute: { ...DEFAULT_CONFIG.defaultRoute } }
+        : { ...config, models, defaultRoute: validRoute(config.defaultRoute, models)
+          ? config.defaultRoute : { model: first.model, effort: first.defaultEffort ?? first.efforts[0] } };
+      await this.saveConfig(updated);
+      return updated;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT")
         return structuredClone(DEFAULT_CONFIG);

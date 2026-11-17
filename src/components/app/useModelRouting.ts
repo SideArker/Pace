@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type Dispatch, type RefObject, type SetSta
 import type { Config, ManualWorkflow, Route, Session } from "../../shared/types.js";
 import type { PaceStore } from "../../core/sessions.js";
 import { saveRoutingSelection } from "../../core/operations.js";
-import { EFFORTS, withModels } from "../../shared/config.js";
+import { EFFORTS, isGpt6OrNewer, withModels } from "../../shared/config.js";
 import { currentVersionManifest, modelRates, refreshVersionManifest } from "../../core/routing/pricing.js";
 import { readAvailableModels, type AvailableModel } from "../../integrations/models.js";
 import type { Line } from "../Transcript.js";
@@ -43,7 +43,7 @@ export function useModelRouting({
   config, setConfig, session, setSession, jobs, activeSessionId, store, rememberSession, add,
 }: ModelRoutingOptions) {
   const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
-  const [knownModels, setKnownModels] = useState(() => Object.keys(currentVersionManifest().pricing.rates));
+  const [knownModels, setKnownModels] = useState(() => Object.keys(currentVersionManifest().pricing.rates).filter(isGpt6OrNewer));
   const [modelCatalogStatus, setModelCatalogStatus] = useState<"loading" | "ready" | "unavailable">("loading");
   const modelCatalogRequest = useRef(0);
   const [modelMenu, setModelMenu] = useState<
@@ -61,13 +61,13 @@ export function useModelRouting({
       ...availableModels.map((model) => model.model),
       ...knownModels,
     ]),
-  ];
+  ].filter(isGpt6OrNewer);
   const menuEfforts = availableModels.find((model) => model.model === menuModel)?.efforts ?? currentVersionManifest().models?.[menuModel]?.efforts ?? EFFORTS;
   const refreshModelCatalog = (forceManifest = false) => {
     const request = ++modelCatalogRequest.current;
     setModelCatalogStatus("loading");
     void refreshVersionManifest(fetch, undefined, forceManifest).then(manifest => {
-      if (request === modelCatalogRequest.current) setKnownModels(Object.keys(manifest.pricing.rates));
+      if (request === modelCatalogRequest.current) setKnownModels(Object.keys(manifest.pricing.rates).filter(isGpt6OrNewer));
     });
     void readAvailableModels()
       .then((models) => {
@@ -87,7 +87,7 @@ export function useModelRouting({
     let active = true;
     void refreshVersionManifest().then(manifest => {
       if (!active) return;
-      setKnownModels(Object.keys(manifest.pricing.rates));
+      setKnownModels(Object.keys(manifest.pricing.rates).filter(isGpt6OrNewer));
     });
     return () => { active = false; };
   }, []);

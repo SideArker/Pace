@@ -9,6 +9,10 @@ export const EFFORTS: readonly Effort[] = [
   "ultra",
   "persistent",
 ];
+export function isGpt6OrNewer(model: string): boolean {
+  const version = /^gpt-(\d+)(?:[.-]|$)/.exec(model);
+  return version !== null && Number(version[1]) >= 6;
+}
 export const DEFAULT_CONFIG: Config = {
   models: [
     {
@@ -17,17 +21,22 @@ export const DEFAULT_CONFIG: Config = {
       defaultEffort: "low",
     },
     {
-      model: "gpt-6-sol",
+      model: "gpt-6.2-sol",
       efforts: ["medium", "high", "xhigh", "ultra"],
       defaultEffort: "high",
     },
     {
-      model: "gpt-6-astra",
+      model: "gpt-6.1-terra",
+      efforts: ["medium", "high"],
+      defaultEffort: "medium",
+    },
+    {
+      model: "gpt-6.2-astra",
       efforts: ["high", "xhigh", "ultra"],
       defaultEffort: "high",
     },
   ],
-  defaultRoute: { model: "gpt-6-sol", effort: "high" },
+  defaultRoute: { model: "gpt-6.2-sol", effort: "high" },
   routingMode: "auto",
   approvalMode: "request-approval",
   colorScheme: "default",

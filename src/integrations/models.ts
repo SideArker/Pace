@@ -1,4 +1,4 @@
-import { EFFORTS, isRecord } from "../shared/config.js";
+import { EFFORTS, isGpt6OrNewer, isRecord } from "../shared/config.js";
 import type { Effort } from "../shared/types.js";
 import { AppServer, type AppServerConnection } from "./app-server-process.js";
 
@@ -19,7 +19,7 @@ export function parseModelPage(value: unknown): { models: AvailableModel[]; next
         typeof entry.hidden !== "boolean" ||
         !Array.isArray(entry.supportedReasoningEfforts))
       throw new Error("Invalid Codex model catalog entry");
-    if (entry.hidden) continue;
+    if (entry.hidden || !isGpt6OrNewer(entry.model)) continue;
     const efforts = [...new Set(entry.supportedReasoningEfforts.flatMap((option: unknown) => {
       if (!isRecord(option) || !EFFORTS.includes(option.reasoningEffort as Effort)) return [];
       return [option.reasoningEffort as Effort];
