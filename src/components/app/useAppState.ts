@@ -6,6 +6,7 @@ import type { RemoteHost } from "../../remote/server.js";
 import type { RunningProcess } from "../RunningProcesses.js";
 import type { PendingApproval, PendingQuestion, TurnJob } from "../turn-runner.js";
 import type { Line } from "../Transcript.js";
+import type { RunningShell, ShellDirectory } from "../shell-runner.js";
 
 export function useAppState() {
   const [config, setConfig] = useState<Config>();
@@ -75,7 +76,8 @@ export function useAppState() {
   const pendingQuestions = useRef(new Map<string, PendingQuestion>());
   const sideAbort = useRef<AbortController | undefined>(undefined);
   const titleAborts = useRef(new Map<string, AbortController>());
-  const shells = useRef(new Set<{ kill: () => boolean }>());
+  const shells = useRef(new Set<RunningShell>());
+  const shellDirectories = useRef(new Map<string, ShellDirectory>());
   const lastInterruptAt = useRef(0);
   const switchingSession = useRef(false);
   const staticHistory = useRef<{ sessionId?: string; firstId?: number; key: number }>({ key: 0 });
@@ -103,7 +105,7 @@ export function useAppState() {
     turnSequence, jobs, queueSaves, setQueueVersion, activeSessionId,
     sessionLines, lastReasoningTokens, sessionDrafts, preSessionLines, sessionStatuses,
     unreadCompletions, pendingApprovals, pendingQuestions, sideAbort, titleAborts,
-    shells, lastInterruptAt, switchingSession, staticHistory, busy,
+    shells, shellDirectories, lastInterruptAt, switchingSession, staticHistory, busy,
     showConversationsTab, setShowConversationsTab,
   };
 }

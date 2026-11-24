@@ -3,6 +3,7 @@ import { ColorSweep, WorkSpinner } from "./WorkingStatus.js";
 import { useTheme } from "../shared/colors.js";
 import React from "react";
 import { Box, Text } from "ink";
+import { stripVTControlCharacters } from "node:util";
 import { MarkdownText } from "./TranscriptMarkdown.js";
 import { previewCommandDetail, summarizeCommand } from "./shell-runner.js";
 export { Header } from "./Header.js";
@@ -111,6 +112,24 @@ function DiffDetail({ detail, livePreview }: { detail: string; livePreview: bool
   ))}</Box>;
 }
 
+function ShellOutput({ line, width, preview, tick }: { line: Line; width: number; preview: boolean; tick: number }) {
+  const theme = useTheme();
+  const activity = line.activity!;
+  const plainText = (text: string) => stripVTControlCharacters(text).replace(/\r\n?/g, "\n").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "");
+  const output = plainText(activity.detail ?? "Waiting for output…").split("\n");
+  const hidden = preview ? Math.max(0, output.length - 6) : 0;
+  return <Box flexDirection="column" width={width}>
+    <Text color={activity.outcome === "failure" ? theme.error : theme.primary} bold wrap={preview ? "truncate" : "wrap"}>
+      {activity.completed ? "■" : <WorkSpinner tick={tick} />} {plainText(line.text.replace(": Bash: ", ": $ "))}
+    </Text>
+    {hidden ? <Text color={theme.muted}>[{hidden} earlier lines · Ctrl+O shows retained output]</Text> : null}
+    <Box paddingLeft={2} flexDirection="column">
+      <Text wrap={preview ? "truncate" : "wrap"}>{output.slice(hidden).join("\n")}</Text>
+    </Box>
+    {!activity.completed ? <Text color={theme.muted}>Ctrl+C stops Bash</Text> : null}
+  </Box>;
+}
+
 export function Transcript({
   lines,
   outputsExpanded,
@@ -206,6 +225,8 @@ export function Transcript({
                 <MarkdownText source={line.text} color={theme.muted} width={Math.max(10, width - 10)} />
               </Box>
             </Box>
+          ) : line.role === "activity" && line.activity?.category === "command" && line.sourceId?.startsWith("shell-") ? (
+            <ShellOutput line={line} width={width} preview={preview} tick={tick} />
           ) : line.role === "activity" && line.activity ? (
             <Box flexDirection="column" width={width}>
               <Box gap={1} width={width}>

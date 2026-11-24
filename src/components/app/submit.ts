@@ -53,7 +53,7 @@ export function createSubmit({ state, transcript, queue, routing, completion, se
     if (historyBusy.current) { add("info", "Wait for file history to finish saving."); return; }
     if (switchingSession.current) return;
     if (!session || !config) return;
-    const directVerifier = /^v\s+([\s\S]+)$/i.exec(raw.trim());
+    const directVerifier = !shellMode && /^v\s+([\s\S]+)$/i.exec(raw.trim());
     if (directVerifier && session.verifierThreadId) {
       continueVerifier(directVerifier[1]!);
       setDraft("");
@@ -61,14 +61,7 @@ export function createSubmit({ state, transcript, queue, routing, completion, se
     }
     const text = shellMode ? raw.trim() : normalizeNewCommand(raw);
     if (!text) return;
-    if (!isDebugBuild && /^\/(?:feedback|benchmark)(?:\s|$)/.test(text)) {
-      setDraft("");
-      add("error", `${text.split(/\s/)[0]} is available only in a debug build of Pace.`);
-      return;
-    }
     setHistory(old => [...old.slice(-99), raw]);
-    if (/^\/memory(?:\s|$)/.test(text)) { setDraft(''); if (text !== '/memory') add('error', 'Type /memory without arguments.'); else state.setMemoryOpen(true); return; }
-    if (/^\/benchmark(?:\s|$)/.test(text)) { setDraft(""); if (text !== "/benchmark") add("error", "Type /benchmark without arguments."); else setBenchmarkOpen(true); return; }
     if (text === "!") {
       add("info", shellMode ? "$ !" : "> !");
       setShellMode((value) => !value);
@@ -77,8 +70,13 @@ export function createSubmit({ state, transcript, queue, routing, completion, se
         "info",
         shellMode
           ? "Bash mode off."
-          : "Bash mode on. Type ! to return to Pace.",
+          : "Bash mode on. Output streams below each command. Ctrl+C stops running Bash commands; type ! to return to Pace.",
       );
+      return;
+    }
+    if (shellMode) {
+      setDraft("");
+      shell(text);
       return;
     }
     const shellCommand = oneOffShellCommand(text);
@@ -87,11 +85,13 @@ export function createSubmit({ state, transcript, queue, routing, completion, se
       shell(shellCommand);
       return;
     }
-    if (shellMode) {
+    if (!isDebugBuild && /^\/(?:feedback|benchmark)(?:\s|$)/.test(text)) {
       setDraft("");
-      shell(text);
+      add("error", `${text.split(/\s/)[0]} is available only in a debug build of Pace.`);
       return;
     }
+    if (/^\/memory(?:\s|$)/.test(text)) { setDraft(''); if (text !== '/memory') add('error', 'Type /memory without arguments.'); else state.setMemoryOpen(true); return; }
+    if (/^\/benchmark(?:\s|$)/.test(text)) { setDraft(""); if (text !== "/benchmark") add("error", "Type /benchmark without arguments."); else setBenchmarkOpen(true); return; }
     if (text === "/btw" || text.startsWith("/btw ")) {
       setDraft("");
       void askBtw(text.slice(4).trim());

@@ -19,9 +19,9 @@ export function createExecutionActions({ state, transcript, queue, interactions,
   const { session, config, turnSequence, activeSessionId, jobs, titleAborts, pendingApprovals,
     pendingQuestions, unreadCompletions, sessionLines, thisPaceIds, lastReasoningTokens, setRunningIds,
     setSession, setVexState, setQueueVersion, setProcesses, setLiveUsage, latestConfig, runTurnRef,
-    nextId, shells, setShellJobs } = state;
+    nextId, shells, shellDirectories, setShellJobs } = state;
   const { promptQueue } = queue;
-  const { addFor, add, activityFor, activity, recordThoughtUsage, finishTurnActivities } = transcript;
+  const { addFor, activityFor, recordThoughtUsage, finishTurnActivities } = transcript;
   const { setStatusFor, showApproval, showQuestion, dismissQuestion } = interactions;
   const runTurn = createTurnRunner({
     turnSequence, activeSessionId, jobs, promptQueue, titleAborts, pendingApprovals, pendingQuestions, unreadCompletions, sessionLines,
@@ -41,21 +41,23 @@ export function createExecutionActions({ state, transcript, queue, interactions,
   runTurnRef.current = runTurn;
   const shell = createShellRunner({
     project: session?.projectPath ?? project,
+    sessionId: session?.id ?? "",
+    directories: shellDirectories,
     nextId,
     shells,
     setShellJobs,
     approvalMode: config?.approvalMode ?? "request-approval",
-    activity,
-    add,
-    requestApproval: (command, reason) => new Promise(resolveDecision => {
+    activity: event => { if (session) activityFor(session.id, event); },
+    add: (role, text) => { if (session) addFor(session.id, role, text); },
+    requestApproval: (command, reason, cwd) => new Promise(resolveDecision => {
       showApproval({
         kind: "approval",
         id: `shell-approval-${nextId.current++}`,
         command,
-        cwd: session?.projectPath ?? project,
+        cwd,
         reason: config?.approvalMode === "limited" ? "Limited mode asks before each Bash command." : reason,
         respond: decision => resolveDecision(decision === "accept"),
-      });
+      }, session?.id);
     }),
   });
 

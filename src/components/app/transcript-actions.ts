@@ -47,8 +47,8 @@ export function createTranscriptActions({
     const sourceId = event.id;
     const previous = old.find(line => line.sourceId === sourceId);
     const startedAt = previous?.activity?.startedAt ?? Date.now();
-    const display = event.category === "command" ? formatCommandActivity(event.title, event.detail) : { title: event.title, detail: event.detail };
-    if (event.category === "command") setProcesses(old => updateProcesses(old, sessionId, event, Date.now()));
+    const display = event.category === "command" && !sourceId.startsWith("shell-") ? formatCommandActivity(event.title, event.detail) : { title: event.title, detail: event.detail };
+    if (event.category === "command" && !sourceId.startsWith("shell-")) setProcesses(old => updateProcesses(old, sessionId, event, Date.now()));
     const update = { text: display.title, activity: {
       category: event.category, detail: display.detail, completed: event.completed,
       outcome: event.outcome ?? (event.completed && /^(?:Failed|Failed to edit):?\b/.test(event.title) ? "failure" : undefined),

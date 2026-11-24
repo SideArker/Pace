@@ -33,6 +33,35 @@ describe("Header component", () => {
 });
 
 describe("activity transcript", () => {
+  it.each([40, 80, 120])("shows retained typed Bash output and wraps long lines at width %s", width => {
+    const output = renderToString(React.createElement(Transcript, {
+      lines: [{ id: 1, role: "activity", sourceId: "shell-1", text: "Ran: Bash: print results (exit 0)", spaceBefore: false,
+        activity: { category: "command", completed: true, detail: Array.from({ length: 15 }, (_, i) => `output-${i + 1}`).join("\n") + "\n" + "x".repeat(100) + "end-of-long-line" } }],
+      outputsExpanded: false, detailsExpanded: false, width,
+    }), { columns: width });
+    expect(output).toContain("exit 0");
+    expect(output).toContain("output-15");
+    expect(output.replace(/\s/g, "")).toContain("x".repeat(100) + "end-of-long-line");
+    expect(output.split("\n").every(line => line.length <= width)).toBe(true);
+  });
+
+  it("bounds live Bash output, expands retained lines, and strips terminal controls", () => {
+    const line: Line = { id: 1, role: "activity", sourceId: "shell-2", text: "Running: Bash: print output", spaceBefore: false,
+      activity: { category: "command", completed: false, detail: Array.from({ length: 15 }, (_, i) => `output-${i + 1}`).join("\n") + "\n\x1b[2J\x1b[31mred\x1b[0m\x07" } };
+    const render = (expanded: boolean) => renderToString(React.createElement(Transcript, {
+      lines: [line], outputsExpanded: expanded, detailsExpanded: expanded, livePreview: true, width: 80,
+    }), { columns: 80 });
+    const preview = render(false);
+    expect(preview).toContain("10 earlier lines");
+    expect(preview).toContain("output-15");
+    expect(preview).not.toContain("output-1\n");
+    expect(preview).toContain("Ctrl+C stops Bash");
+    expect(render(true)).toContain("output-1\n");
+    expect(preview).toContain("red");
+    expect(preview).not.toContain("\x1b");
+    expect(preview).not.toContain("\x07");
+  });
+
   it("labels routing notices as System messages", () => {
     const output = renderToString(React.createElement(Transcript, {
       lines: [{ id: 1, role: "system", text: "Vex routed to GPT-6 Sol High.", spaceBefore: false }],

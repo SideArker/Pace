@@ -134,7 +134,7 @@ export function AppView({ model }: { model: AppController }) {
       {cancelArmed ? <Text color={theme.warning}>Press Esc again to cancel the turn</Text> : null}
       {session?.deferredTurn && !busy ? <Text color={theme.warning}>Automatic retry ({session.deferredTurn.reason ?? "usage"}): {session.deferredTurn.reason === "network" ? "checking connection" : `after ${new Date(session.deferredTurn.retryAt).toLocaleString()}`} · Esc cancels</Text> : null}
       </Box>
-      <ComposerFrame compact={compact} width={contentWidth} session={session} shellMode={shellMode} approvalMode={config?.approvalMode} memoryEnabled={model.memoryStatus.enabled} memoryUnavailable={model.memoryStatus.unavailable}>
+      <ComposerFrame compact={compact} width={contentWidth} session={session} shellMode={shellMode} shellCwd={model.shellDirectories.current.get(session?.id ?? "")?.cwd} approvalMode={config?.approvalMode} memoryEnabled={model.memoryStatus.enabled} memoryUnavailable={model.memoryStatus.unavailable}>
         <Composer key={session?.id} value={draft} width={contentWidth} maxRows={maxComposerRows} onChange={value => { setDraft(value); setSelection(0); }} onSubmit={(value, opts) => { void submit(value, opts); }} history={history}
           onImagePaste={async () => {
             try {

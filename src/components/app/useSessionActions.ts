@@ -18,7 +18,7 @@ export function useSessionActions({ state, transcript, queue, conversations, set
 }) {
   const { session, config, jobs, switchingSession, activeSessionId, sessionDrafts, draft,
     thisPaceIds, sessionRecords, unreadCompletions, sessionLines, pendingApprovals, pendingQuestions,
-    sessionStatuses, shellJobs, lastInterruptAt, sideAbort, setSideBusy, setSession,
+    sessionStatuses, shells, lastInterruptAt, sideAbort, setSideBusy, setSession,
     setResumeMenu, setConvoMenu, setPickerFocused, setPickerIndex, setDraft, setShowHeader,
     setLines, setApproval, setQuestion, setHistory, setStatus, setQueueVersion,
     setOpenSessions, setShowConversationsTab } = state;
@@ -91,6 +91,11 @@ export function useSessionActions({ state, transcript, queue, conversations, set
     if (now - lastInterruptAt.current < 150) return;
     lastInterruptAt.current = now;
     const id = activeSessionId.current;
+    const activeShells = [...shells.current].filter(shell => shell.sessionId === id);
+    if (activeShells.length) {
+      for (const shell of activeShells) shell.kill();
+      return;
+    }
     const pending = id ? pendingApprovals.current.get(id) : undefined;
     pending?.respond("decline");
     const pendingQuestion = id ? pendingQuestions.current.get(id) : undefined;
@@ -109,8 +114,8 @@ export function useSessionActions({ state, transcript, queue, conversations, set
       if (id) setStatusFor(id, "Cancelling…");
     } else if (session?.deferredTurn) {
       void cancelRetry();
-    } else if (jobs.current.size) {
-      add("info", `${jobs.current.size} background turn(s) running. Use the conversation picker to switch or /exit to quit.`);
+    } else if (jobs.current.size || shells.current.size) {
+      add("info", `${jobs.current.size} background turn(s) and ${shells.current.size} Bash command(s) running. Use the conversation picker to switch or /exit to quit.`);
     } else exit();
   };
   const interruptRef = useRef(interrupt);

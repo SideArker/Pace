@@ -12,11 +12,12 @@ export function contextLabel(session: Session | undefined): string {
   return `${gauge} Context ${percent === undefined ? "?" : `${percent}%`}`;
 }
 
-export function ComposerFrame({ children, width, session, shellMode, approvalMode = "request-approval", memoryEnabled = false, memoryUnavailable = false, compact = false }: {
+export function ComposerFrame({ children, width, session, shellMode, shellCwd, approvalMode = "request-approval", memoryEnabled = false, memoryUnavailable = false, compact = false }: {
   children: React.ReactNode;
   width: number;
   session?: Session;
   shellMode: boolean;
+  shellCwd?: string;
   approvalMode?: ApprovalMode;
   memoryEnabled?: boolean;
   memoryUnavailable?: boolean;
@@ -33,7 +34,7 @@ export function ComposerFrame({ children, width, session, shellMode, approvalMod
   const hints = (
     <Box flexDirection={wide ? "row" : "column"} justifyContent={wide ? "space-between" : "flex-start"} width={wide ? undefined : "100%"} flexGrow={wide ? 1 : 0} flexShrink={1}>
       <Text color={isPlanning ? theme.accent : theme.dim} wrap="truncate">
-        {layout.narrow ? (isPlanning ? "/execute · /verify · Alt+P plan" : "/ commands · ← review") : isPlanning ? "/execute to run plan · /verify to review · Shift+Enter newline" : "/ for commands · ← at start: review · Shift+Enter newline"}
+        {shellMode ? `cwd: ${shellCwd ?? session?.projectPath ?? ""}` : layout.narrow ? (isPlanning ? "/execute · /verify · Alt+P plan" : "/ commands · ← review") : isPlanning ? "/execute to run plan · /verify to review · Shift+Enter newline" : "/ for commands · ← at start: review · Shift+Enter newline"}
       </Text>
       {width >= 72 ? <Text color={theme.dim} wrap="truncate">{isPlanning ? "Alt+P/Ctrl+P toggle plan" : "! for shell"}</Text> : null}
     </Box>
