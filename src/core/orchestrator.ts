@@ -230,7 +230,7 @@ export class Orchestrator {
       try {
         const recorded = await capture.finish();
         if (recorded.skipped) systemMessage(recorded.skipped);
-        else fileEdits = recorded.id ?? "none";
+        fileEdits = recorded.id ?? (recorded.skipped ? undefined : "none");
       } catch (error) { systemMessage(`File undo unavailable: ${String(error)}`); }
     };
     let auto = session.routingMode === "auto" || intent === "verify_plan" || intent === "revise_plan";

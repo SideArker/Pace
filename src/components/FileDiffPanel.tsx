@@ -64,8 +64,11 @@ export function FileDiffPanel({ store, session, width, height, onClose, onChange
   const numberedRows = useMemo(() => rows.flatMap((row, index) => row.oldLine !== undefined || row.newLine !== undefined ? [index] : []), [rows]);
   const digits = Math.max(3, String(rows.reduce((max, row) => Math.max(max, row.oldLine ?? 0, row.newLine ?? 0), 0)).length);
   const patchRows = Math.max(1, height - 10 - (commenting ? 3 : 0));
-  const locked = () => isActive() || fileTurnActive(session.projectPath);
-  const active = locked();
+  const active = isActive() || fileTurnActive(session.projectPath);
+  const locked = () => isActive() || fileTurnActive(session.projectPath) || !!record?.overlapped;
+  const captureWarning = record && !record.changes.length && snapshotIds === "[]" && !active
+    ? session.turns.flatMap(turn => turn.systemMessages ?? []).filter(message => message.startsWith("File undo unavailable:")).at(-1)
+    : undefined;
 
   useEffect(() => {
     let current = true;
@@ -100,7 +103,7 @@ export function FileDiffPanel({ store, session, width, height, onClose, onChange
 
   const change = async (decision: Decision | "undo", wholeConversation = false) => {
     if (changing.current) return;
-    if (locked()) { setError("Wait for running work in this project before reviewing files."); setConfirmation(undefined); return; }
+    if (locked()) { setError(record?.overlapped ? "Overlapping conversations: browsing and comments only." : "Wait for running work in this project before reviewing files."); setConfirmation(undefined); return; }
     if (decision === "undo" ? !session.lastFileReview : !file) return;
     changing.current = true; setBusy(true); onBusyChange?.(true); setError(undefined); setConfirmation(undefined);
     try {
@@ -191,7 +194,7 @@ export function FileDiffPanel({ store, session, width, height, onClose, onChange
   const row = rows[lineIndex];
   return <Box flexDirection="column" paddingX={1} width={width} height={Math.max(8, height)} overflowY="hidden">
     <Text bold color={theme.primary}>File review · Conversation changes</Text>
-    <Text color={theme.muted} wrap="truncate-end">{!record ? "Loading conversation changes…" : record.changes.length ? "All file changes in this conversation so far." : snapshotIds === "[]" && !active ? "No saved file edits. Run a new agent turn to record changes." : "No file changes in this conversation."}</Text>
+    <Text color={record?.overlapped ? theme.warning : theme.muted} wrap="truncate-end">{!record ? "Loading conversation changes…" : record.overlapped ? "Workspace changes · overlapping conversations; attribution unavailable." : record.changes.length ? "All file changes in this conversation so far." : snapshotIds === "[]" && !active ? "No saved file edits. Run a new agent turn to record changes." : "No file changes in this conversation."}</Text>
     <Text color={theme.muted} wrap="truncate-end">{file ? <>{fileIndex + 1}/{record!.changes.length} files · {file.previousPath ? `${file.previousPath} → ${file.path}` : file.path} · <Text color={statusColors[status(file)]}>{status(file)}</Text>{diffFocused && row ? ` · ${row.oldLine === undefined ? "" : `old ${row.oldLine}`}${row.oldLine !== undefined && row.newLine !== undefined ? " / " : ""}${row.newLine === undefined ? "" : `new ${row.newLine}`}` : ""}</> : !record && !error ? "Loading…" : " "}</Text>
     <Box flexDirection="row" height={patchRows + 1} flexShrink={0}>
       <Box flexDirection="column" width={sidebarWidth} flexShrink={0} paddingRight={1} overflowY="hidden"
@@ -219,8 +222,8 @@ export function FileDiffPanel({ store, session, width, height, onClose, onChange
         shellMode={false} placeholder="Comment on this line" onComplete={() => {}} width={width - 2} maxRows={2} />
     </Box> : null}
     {confirmation ? <Text color={theme.warning}>{confirmation === "accepted" ? "Accept" : "Reject"} all {record?.changes.length} files in this conversation? Y confirm · N/Esc cancel</Text>
-      : error ? <Text color={theme.error} wrap="truncate-end">{error}</Text> : <Text color={theme.muted} wrap="truncate-end">{busy ? "Saving…" : notice || " "}</Text>}
-    <Text color={theme.muted} wrap="truncate-end">{commenting ? "Enter send · Esc back · Shift+Enter newline" : locked() ? "Agent working · Accept/Reject/Undo disabled" : "a accept file · r reject file · u undo · Shift+A/R all"}</Text>
+      : error ? <Text color={theme.error} wrap="truncate-end">{error}</Text> : captureWarning ? <Text color={theme.warning} wrap="truncate-end">{captureWarning}</Text> : <Text color={theme.muted} wrap="truncate-end">{busy ? "Saving…" : notice || " "}</Text>}
+    <Text color={theme.muted} wrap="truncate-end">{commenting ? "Enter send · Esc back · Shift+Enter newline" : record?.overlapped ? "Overlapping conversations · Accept/Reject/Undo disabled" : locked() ? "Agent working · Accept/Reject/Undo disabled" : "a accept file · r reject file · u undo · Shift+A/R all"}</Text>
     <Text color={theme.muted} wrap="truncate-end">{diffFocused ? "↑/↓ line · c/Enter comment · ← files · →/Esc chat" : "↑/↓ file · Enter/Space diff · c comment · →/Esc chat"}</Text>
     <Text wrap="truncate-end"><Text color={statusColors.Created}>Created</Text> · <Text color={statusColors.Deleted}>Deleted</Text> · <Text color={statusColors.Moved}>Moved</Text> · <Text color={statusColors.Modified}>Modified</Text><Text color={theme.muted}> · PgUp/PgDn scroll</Text></Text>
   </Box>;

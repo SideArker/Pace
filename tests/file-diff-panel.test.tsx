@@ -209,6 +209,14 @@ it("shows empty history and still supports comments and Escape", async () => {
   await vi.waitFor(() => expect(ui.onClose).toHaveBeenCalledOnce());
 });
 
+it("explains why an older conversation has no saved edits when its capture was skipped", async () => {
+  session.turns[0]!.fileEdits = undefined;
+  session.turns[0]!.systemMessages = ["File undo unavailable: conversations overlapped in this project."];
+  const ui = await mount();
+  expect(ui.frame()).toContain("No saved file edits");
+  expect(ui.frame()).toContain("File undo unavailable: conversations overlapped in this project.");
+});
+
 it("undoes a rejected file after reloading the saved conversation", async () => {
   const ui = await mount();
   await ui.key("r");
@@ -373,6 +381,40 @@ it("refreshes the combined diff while the active agent changes files", async () 
     expect(ui.frame()).toContain("-before");
     expect(ui.onChange).not.toHaveBeenCalled();
   } finally { ui.instance.unmount(); await capture.finish(); }
+});
+
+it("shows overlapping edits during the first turn and after reopening, with browsing and comments available", async () => {
+  session.turns = [];
+  const first = await beginFileEdits(store, session);
+  const second = await beginFileEdits(store, newSession(project, "manual"));
+  await writeFile(join(project, "a.txt"), "overlapping content\n");
+  let ui: Awaited<ReturnType<typeof mount>> | undefined;
+  let recorded: Awaited<ReturnType<typeof first.finish>>;
+  try {
+    ui = await mount();
+    expect(ui.frame()).toContain("+overlapping content");
+    expect(ui.frame()).toContain("Workspace changes · overlapping conversations");
+    expect(ui.frame()).toContain("Accept/Reject/Undo disabled");
+  } finally {
+    ui?.instance.unmount();
+    recorded = await first.finish();
+    await second.finish();
+  }
+  session.turns.push({ prompt: "Change a", result: "done", at: "now", fileEdits: recorded.id });
+  await store.saveChanges(session);
+  session = (await store.load(project, session.id))!;
+  const reopened = await mount();
+  expect(reopened.frame()).toContain("+overlapping content");
+  expect(reopened.frame()).toContain("attribution unavailable");
+  for (const key of ["a", "r", "u", "A", "R"]) await reopened.key(key);
+  expect(reopened.onChange).not.toHaveBeenCalled();
+  expect(await readFile(join(project, "a.txt"), "utf8")).toBe("overlapping content\n");
+  await reopened.key("c"); await reopened.key("c");
+  await vi.waitFor(() => expect(reopened.frame()).toContain("Comment to agent"));
+  await reopened.key("Check this diff"); await reopened.key("", { return: true });
+  await vi.waitFor(() => expect(reopened.onComment).toHaveBeenCalledOnce());
+  await reopened.key("", { rightArrow: true });
+  expect(reopened.onClose).toHaveBeenCalledOnce();
 });
 
 it("numbers old and new source lines across hunks without numbering patch metadata", () => {

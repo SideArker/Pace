@@ -16,7 +16,7 @@ const restoring = new Map<string, Promise<void>>();
 type FileState = { hash: string; mode: number; kind: "file" | "symlink" };
 type Snapshot = { files: Map<string, FileState>; ignored: string[] };
 export type FileEdit = { path: string; before?: FileState; after?: FileState; undone: boolean };
-export type FileEditRecord = { version: 1; project: string; changes: FileEdit[] };
+export type FileEditRecord = { version: 1; project: string; changes: FileEdit[]; overlapped?: boolean };
 export type ConversationFileEdit = FileEdit & { review?: "accepted"; previousPath?: string };
 export type ConversationEdits = Omit<FileEditRecord, "changes"> & { changes: ConversationFileEdit[] };
 type RestoreStep = { id: string; direction: "undo" | "redo"; paths?: string[] };
@@ -25,7 +25,7 @@ const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === "E
 
 export function fileTurnActive(project: string): boolean { return !!active.get(resolve(project))?.size; }
 
-/** Concurrent turns keep running, but cannot safely attribute a shared workspace snapshot. */
+/** Overlapping workspace changes remain visible, but cannot safely be restored. */
 export async function beginFileEdits(store: PaceStore, session: Session) {
   const project = resolve(session.projectPath);
   while (restoring.has(project)) await restoring.get(project);
@@ -42,10 +42,9 @@ export async function beginFileEdits(store: PaceStore, session: Session) {
     return {
       async finish(): Promise<{ id?: string; skipped?: string }> {
         try {
-          if (token.overlapped) return { skipped: "File undo unavailable: conversations overlapped in this project." };
           const after = await edits.capture(before);
-          if (token.overlapped) return { skipped: "File undo unavailable: conversations overlapped in this project." };
-          return { id: await edits.record(before, after) };
+          const id = await edits.record(before, after, token);
+          return { id, ...(token.overlapped ? { skipped: "File undo unavailable: conversations overlapped in this project. Workspace changes remain visible in review." } : {}) };
         } finally { close(); }
       },
     };
@@ -166,15 +165,16 @@ export class FileEdits {
       .map(path => ({ path, before: before.files.get(path), after: after.files.get(path), undone: false }));
     return changes;
   }
-  async record(before: Snapshot, after: Snapshot): Promise<string | undefined> {
+  async record(before: Snapshot, after: Snapshot, capture?: { overlapped: boolean }): Promise<string | undefined> {
     const changes = await this.changes(before, after);
     if (!changes.length) return undefined;
     const id = randomUUID();
-    await atomicJson(join(this.directory, `${id}.json`), { version: 1, project: this.project, changes });
+    await atomicJson(join(this.directory, `${id}.json`), { version: 1, project: this.project, changes, ...(capture?.overlapped ? { overlapped: true } : {}) });
     return id;
   }
   async conversation(session: Session): Promise<ConversationEdits> {
     const combined = new Map<string, FileEdit & { review?: "accepted" }>();
+    let overlapped = false;
     const merge = (changes: FileEdit[], id?: string) => {
       for (const edit of changes) {
         let file = combined.get(edit.path);
@@ -188,12 +188,17 @@ export class FileEdits {
       }
     };
     for (const turn of session.turns) {
-      if (turn.fileEdits && turn.fileEdits !== "none") merge((await this.load(turn.fileEdits)).changes, turn.fileEdits);
+      if (turn.fileEdits && turn.fileEdits !== "none") {
+        const record = await this.load(turn.fileEdits);
+        overlapped ||= !!record.overlapped;
+        merge(record.changes, turn.fileEdits);
+      }
     }
     for (const capture of active.get(this.project) ?? []) {
-      if (capture.sessionId !== session.id || capture.overlapped || !capture.before) continue;
+      if (capture.sessionId !== session.id || !capture.before) continue;
       const changes = await this.changes(capture.before, await this.capture(capture.before));
-      if (!capture.overlapped) merge(changes);
+      overlapped ||= capture.overlapped;
+      merge(changes);
     }
     const changes = [...combined.values()].filter(edit => !same(edit.before, edit.after));
     const removed = new Map<string, ConversationFileEdit[]>(), added = new Map<string, ConversationFileEdit[]>();
@@ -215,7 +220,7 @@ export class FileEdits {
       moves.push({ ...target, before: source.before, previousPath: source.path,
         review: source.review === "accepted" && target.review === "accepted" ? "accepted" : undefined });
     }
-    return { version: 1, project: this.project, changes: [...changes.filter(edit => !paired.has(edit.path)), ...moves]
+    return { version: 1, project: this.project, ...(overlapped ? { overlapped: true } : {}), changes: [...changes.filter(edit => !paired.has(edit.path)), ...moves]
       .sort((a, b) => a.path.localeCompare(b.path)) };
   }
 
@@ -224,7 +229,7 @@ export class FileEdits {
     const record: FileEditRecord = JSON.parse(await readFile(join(this.directory, `${id}.json`), "utf8"));
     const validState = (value: FileState | undefined) => value === undefined || (value !== null && /^[a-f0-9]{64}$/.test(value.hash) &&
       Number.isInteger(value.mode) && value.mode >= 0 && value.mode <= 0o777 && ["file", "symlink"].includes(value.kind));
-    if (record.version !== 1 || record.project !== this.project || !Array.isArray(record.changes) || record.changes.length > 10_000 ||
+    if (record.version !== 1 || record.project !== this.project || (record.overlapped !== undefined && typeof record.overlapped !== "boolean") || !Array.isArray(record.changes) || record.changes.length > 10_000 ||
       !record.changes.every(edit => edit && typeof edit.path === "string" && typeof edit.undone === "boolean" &&
         validState(edit.before) && validState(edit.after) && (edit.before || edit.after))) throw new Error("Invalid file edit record.");
     for (const edit of record.changes) this.path(edit.path);
@@ -264,6 +269,7 @@ export class FileEdits {
     for (const { id, direction, paths } of steps) {
       if (!records.has(id)) {
         const record = await this.load(id);
+        if (record.overlapped) throw new Error("Cannot restore workspace changes from overlapping conversations.");
         records.set(id, { record, flags: record.changes.map(edit => edit.undone) });
       }
       const { record } = records.get(id)!;

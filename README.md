@@ -141,7 +141,7 @@ Press `c` on a file to select a line in its diff, then `c` or Enter to compose a
 
 Pace records project files before and after normal agent turns. Git projects include tracked and nonignored untracked files, preserving pre-existing uncommitted contents and leaving the Git index untouched. Without Git, Pace scans project files while excluding `.git`, `.pace`, `node_modules`, `dist`, `build`, `.next`, `.venv`, and `__pycache__`. Snapshots are stored under `~/.pace/sessions/`; trusted folders outside the project, ignored files, submodules, and standalone Bash commands are outside this history. Other edits made during an agent turn can be captured with that turn. A later manual change causes rejection or restoration to stop before changing any files.
 
-File snapshots are unavailable for turns that overlap in the same project, or snapshots exceeding 10,000 files, 8 MiB per file, or 64 MiB total. Pace reports when it cannot record a snapshot. Conversations saved before this feature have no file snapshots, so review displays no saved file edits.
+When turns overlap in the same project within a Pace process, review still shows live and saved workspace changes, with a warning that they cannot be attributed to one conversation. Browsing and comments remain available, but Accept, Reject, Undo and file restoration are disabled for these ambiguous snapshots. File snapshots are unavailable when they exceed 10,000 files, 8 MiB per file, or 64 MiB total. Pace reports when it cannot record a snapshot, and review shows the recorded reason when no saved changes are available. Older turns whose snapshots were discarded cannot recover their original diffs; new turns record them under these rules.
 
 ## Trusted folders and skills
 

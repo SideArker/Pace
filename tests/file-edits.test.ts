@@ -207,6 +207,84 @@ it("keeps concurrent conversations running but skips ambiguous file undo", async
   expect(fileTurnActive(project)).toBe(false);
 });
 
+it("retains overlapping workspace diffs live and after reload without allowing file restoration", async () => {
+  await writeFile(file("a"), "before\n");
+  const otherSession = newSession(project, "manual");
+  const first = await beginFileEdits(store, session);
+  const second = await beginFileEdits(store, otherSession);
+  let one: Awaited<ReturnType<typeof first.finish>>, two: Awaited<ReturnType<typeof second.finish>>;
+  try {
+    await writeFile(file("a"), "after\n");
+    const live = await edits.conversation(session);
+    expect(live.overlapped).toBe(true);
+    expect(live.changes.map(edit => edit.path)).toEqual(["a"]);
+    expect(await edits.diff(live.changes[0]!)).toContain("-before\n+after");
+    const other = await new FileEdits(store, otherSession).conversation(otherSession);
+    expect(other.overlapped).toBe(true);
+    expect(other.changes.map(edit => edit.path)).toEqual(["a"]);
+  } finally { one = await first.finish(); two = await second.finish(); }
+  expect(one.id).toBeDefined();
+  expect(two.id).toBeDefined();
+  expect(one.skipped).toContain("overlapped");
+  session.turns.push({ prompt: "Edit a", result: "done", at: "now", fileEdits: one.id });
+  await store.saveChanges(session);
+  const reloaded = (await store.load(project, session.id))!;
+  const combined = await new FileEdits(store, reloaded).conversation(reloaded);
+  expect(combined.overlapped).toBe(true);
+  expect(await edits.diff(combined.changes[0]!)).toContain("-before\n+after");
+  await expect(edits.restore(one.id!, "undo")).rejects.toThrow("overlapping conversations");
+  const { reviewFileHistory } = await import("../src/core/file-history.js");
+  for (const decision of ["accepted", "rejected"] as const) {
+    await expect(reviewFileHistory(store, reloaded, decision, "a")).rejects.toThrow("overlapping conversations");
+  }
+  expect(await text("a")).toBe("after\n");
+  expect(reloaded.fileReviews).toBeUndefined();
+});
+
+it("links overlapping file snapshots to completed turns", async () => {
+  const concurrent = await beginFileEdits(store, newSession(project, "manual"));
+  session.route = { ...DEFAULT_CONFIG.defaultRoute };
+  const orchestrator = new Orchestrator(store, { async run() {
+    await writeFile(file("agent.txt"), "changed by runner\n");
+    return { result: "done", completed: true, threadId: "thread" };
+  } });
+  try {
+    await orchestrator.turn("edit", session, { ...DEFAULT_CONFIG, skillFolder: null }, () => {});
+  } finally { await concurrent.finish(); }
+  const recorded = session.turns.at(-1)!;
+  expect(recorded.fileEdits).toMatch(/^[0-9a-f-]{36}$/);
+  expect(recorded.systemMessages).toContain("File undo unavailable: conversations overlapped in this project. Workspace changes remain visible in review.");
+  const reloaded = (await store.load(project, session.id))!;
+  const combined = await edits.conversation(reloaded);
+  expect(combined.overlapped).toBe(true);
+  expect(combined.changes.map(edit => edit.path)).toEqual(["agent.txt"]);
+});
+
+it("marks snapshots read-only when another conversation starts during recording", async () => {
+  const first = await beginFileEdits(store, session);
+  await writeFile(file("a"), "after\n");
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const original = FileEdits.prototype.record;
+  const recording = vi.spyOn(FileEdits.prototype, "record").mockImplementationOnce(async function (this: FileEdits, before, after, capture) {
+    await gate;
+    return original.call(this, before, after, capture);
+  });
+  const pending = first.finish();
+  let second: Awaited<ReturnType<typeof beginFileEdits>> | undefined;
+  let recorded: Awaited<ReturnType<typeof first.finish>>;
+  try {
+    await vi.waitFor(() => expect(recording).toHaveBeenCalledOnce());
+    second = await beginFileEdits(store, newSession(project, "manual"));
+  } finally {
+    release();
+    recorded = await pending;
+    await second?.finish();
+  }
+  expect((await edits.load(recorded.id!)).overlapped).toBe(true);
+  await expect(edits.restore(recorded.id!, "undo")).rejects.toThrow("overlapping conversations");
+});
+
 it.each([false, true])("records completed and failed Codex edits (failure: %s) and invalidates redo on new work", async failure => {
   session.route = { ...DEFAULT_CONFIG.defaultRoute };
   const config = { ...DEFAULT_CONFIG, skillFolder: null };

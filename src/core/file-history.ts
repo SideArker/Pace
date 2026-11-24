@@ -47,7 +47,9 @@ export async function reviewFileHistory(store: PaceStore, session: Session,
   decision: "accepted" | "rejected", path?: string): Promise<void> {
   if (fileTurnActive(session.projectPath)) throw new Error("Wait for running turns in this project before changing files.");
   const edits = new FileEdits(store, session);
-  const visible = new Set((await edits.conversation(session)).changes.filter(edit => !path || edit.path === path)
+  const conversation = await edits.conversation(session);
+  if (conversation.overlapped) throw new Error("Cannot review workspace changes from overlapping conversations; browsing and comments remain available.");
+  const visible = new Set(conversation.changes.filter(edit => !path || edit.path === path)
     .flatMap(edit => edit.previousPath ? [edit.previousPath, edit.path] : [edit.path]));
   const next = structuredClone(session);
   const records: FileReviewRecord[] = [];
